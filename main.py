@@ -224,9 +224,9 @@ class TradingApp(App):
 
     /* 반복 실행 관련 컨트롤 (추가) */
     #repeat-all { width: 10; height: 3; content-align: center middle; }  /* REPEAT/STOP 버튼 */
-    #repeat-count { width: 8; min-height: 3; }
-    #repeat-min   { width: 8; min-height: 3; }
-    #repeat-max   { width: 8; min-height: 3; }
+    #repeat-count { width: 15; min-height: 3; }
+    #repeat-min   { width: 15; min-height: 3; }
+    #repeat-max   { width: 15; min-height: 3; }
 
     #body-scroll {
         overflow-y: auto;              /* 세로 스크롤: 창을 줄여도 내용이 스크롤됨 */
