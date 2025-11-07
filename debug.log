@@ -1,0 +1,61 @@
+2025-11-07 20:15:49,218 - INFO - Application starting...
+2025-11-07 20:15:53,006 - INFO - [LIQUID] Updated - 📊 🟢 LONG 0.00991 | PnL: ❌ -8.54
+2025-11-07 20:15:53,069 - INFO - [LIQUID] Updated - 📊 🟢 LONG 0.00991 | PnL: ❌ -8.54
+2025-11-07 20:15:53,598 - INFO - [DEXARI] Updated - 📊 Position: No position
+2025-11-07 20:15:53,719 - INFO - [DEXARI] Updated - 📊 Position: No position
+2025-11-07 20:15:59,611 - INFO - [LIQUID] Updated - 📊 🟢 LONG 0.00991 | PnL: ❌ -9.44
+2025-11-07 20:16:01,973 - INFO - [DEXARI] Updated - 📊 Position: No position
+2025-11-07 20:16:03,798 - ERROR - Order execution error: hyperliquid  market orders require price to calculate the max slippage price. Default slippage can be set in options(default is 5%).
+Traceback (most recent call last):
+  File "/root/codes/perp_dex_hedge/main.py", line 478, in execute_order
+    order = await exchange.create_order(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/codes/perp_dex_hedge/.venv/lib/python3.12/site-packages/ccxt/async_support/hyperliquid.py", line 1548, in create_order
+    orders = await self.create_orders([order], globalParams)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/codes/perp_dex_hedge/.venv/lib/python3.12/site-packages/ccxt/async_support/hyperliquid.py", line 1563, in create_orders
+    request = self.create_orders_request(orders, params)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/codes/perp_dex_hedge/.venv/lib/python3.12/site-packages/ccxt/async_support/hyperliquid.py", line 1697, in create_orders_request
+    mainOrderObj: dict = self.create_order_request(symbol, type, side, amount, price, orderParams)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/codes/perp_dex_hedge/.venv/lib/python3.12/site-packages/ccxt/async_support/hyperliquid.py", line 1615, in create_order_request
+    raise ArgumentsRequired(self.id + '  market orders require price to calculate the max slippage price. Default slippage can be set in options(default is 5%).')
+ccxt.base.errors.ArgumentsRequired: hyperliquid  market orders require price to calculate the max slippage price. Default slippage can be set in options(default is 5%).
+2025-11-07 20:16:03,800 - ERROR - Order execution error: hyperliquid  market orders require price to calculate the max slippage price. Default slippage can be set in options(default is 5%).
+Traceback (most recent call last):
+  File "/root/codes/perp_dex_hedge/main.py", line 478, in execute_order
+    order = await exchange.create_order(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/codes/perp_dex_hedge/.venv/lib/python3.12/site-packages/ccxt/async_support/hyperliquid.py", line 1548, in create_order
+    orders = await self.create_orders([order], globalParams)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/codes/perp_dex_hedge/.venv/lib/python3.12/site-packages/ccxt/async_support/hyperliquid.py", line 1563, in create_orders
+    request = self.create_orders_request(orders, params)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/codes/perp_dex_hedge/.venv/lib/python3.12/site-packages/ccxt/async_support/hyperliquid.py", line 1697, in create_orders_request
+    mainOrderObj: dict = self.create_order_request(symbol, type, side, amount, price, orderParams)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/codes/perp_dex_hedge/.venv/lib/python3.12/site-packages/ccxt/async_support/hyperliquid.py", line 1615, in create_order_request
+    raise ArgumentsRequired(self.id + '  market orders require price to calculate the max slippage price. Default slippage can be set in options(default is 5%).')
+ccxt.base.errors.ArgumentsRequired: hyperliquid  market orders require price to calculate the max slippage price. Default slippage can be set in options(default is 5%).
+2025-11-07 20:16:09,797 - INFO - [LIQUID] Updated - 📊 🟢 LONG 0.00991 | PnL: ❌ -8.63
+2025-11-07 20:16:11,995 - INFO - [DEXARI] Updated - 📊 Position: No position
+2025-11-07 20:16:19,597 - INFO - [LIQUID] Updated - 📊 🟢 LONG 0.00991 | PnL: ❌ -8.63
+2025-11-07 20:16:21,966 - INFO - [DEXARI] Updated - 📊 Position: No position
+2025-11-07 20:16:29,993 - INFO - [LIQUID] Updated - 📊 🟢 LONG 0.00991 | PnL: ❌ -9.11
+2025-11-07 20:16:32,077 - INFO - [DEXARI] Updated - 📊 Position: No position
+2025-11-07 20:16:39,869 - INFO - [LIQUID] Updated - 📊 🟢 LONG 0.00991 | PnL: ❌ -8.61
+2025-11-07 20:16:41,956 - INFO - [DEXARI] Updated - 📊 Position: No position
+2025-11-07 20:16:49,692 - INFO - [LIQUID] Updated - 📊 🟢 LONG 0.00991 | PnL: ❌ -8.59
+2025-11-07 20:16:51,939 - INFO - [DEXARI] Updated - 📊 🔴 SHORT 0.01869 | PnL: ✅ 0.13
+2025-11-07 20:16:59,691 - INFO - [LIQUID] Updated - 📊 🟢 LONG 0.00991 | PnL: ❌ -8.52
+2025-11-07 20:17:02,191 - INFO - [DEXARI] Updated - 📊 🔴 SHORT 0.01869 | PnL: ✅ 0.22
+2025-11-07 20:17:09,687 - INFO - [LIQUID] Updated - 📊 🟢 LONG 0.00991 | PnL: ❌ -8.33
+2025-11-07 20:17:11,936 - INFO - [DEXARI] Updated - 📊 🔴 SHORT 0.01869 | PnL: ❌ -0.82
+2025-11-07 20:17:19,675 - INFO - [LIQUID] Updated - 📊 🟢 LONG 0.00991 | PnL: ❌ -7.71
+2025-11-07 20:17:21,925 - INFO - [DEXARI] Updated - 📊 🔴 SHORT 0.01869 | PnL: ❌ -1.93
+2025-11-07 20:17:29,618 - INFO - [LIQUID] Updated - 📊 🟢 LONG 0.00991 | PnL: ❌ -7.76
+2025-11-07 20:17:32,201 - INFO - [DEXARI] Updated - 📊 🔴 SHORT 0.01869 | PnL: ❌ -1.53
+2025-11-07 20:17:39,592 - INFO - [LIQUID] Updated - 📊 🟢 LONG 0.00991 | PnL: ❌ -7.11
+2025-11-07 20:17:41,949 - INFO - [DEXARI] Updated - 📊 🔴 SHORT 0.01869 | PnL: ❌ -2.95
