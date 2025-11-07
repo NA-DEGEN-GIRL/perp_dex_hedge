@@ -191,7 +191,7 @@ class ExchangeControl(Container):
             self._updating = False
 
 # --- 메인 앱 ---
-class TradingApp(App):
+class KimbapHeaven(App):
     CSS = """
     Screen { 
         layout: vertical; 
@@ -661,7 +661,7 @@ if __name__ == "__main__":
     )
     logging.info("Application starting...")
     try:
-        app = TradingApp(manager=ExchangeManager())
+        app = KimbapHeaven(manager=ExchangeManager())
         app.run()
     except Exception:
         logging.critical("CRITICAL APP ERROR", exc_info=True)
