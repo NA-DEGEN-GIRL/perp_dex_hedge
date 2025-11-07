@@ -2,3 +2,5 @@
 ai_models.txt
 .env
 *.png
+*.log
+test.py
