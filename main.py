@@ -1,5 +1,5 @@
 import os
-import asyncio
+import time, random, asyncio
 import configparser
 import logging
 import textwrap  # 줄바꿈용
@@ -16,7 +16,7 @@ from textual.reactive import reactive
 
 # --- 설정 로드 ---
 load_dotenv()
-config = configparser.ConfigParser()
+config = configparser.ConfigParser(interpolation=None)
 config.read("config.ini")
 
 EXCHANGES = sorted([section for section in config.sections()])
@@ -31,18 +31,38 @@ class ExchangeManager:
             if not builder_code or not wallet_address:
                 self.exchanges[exchange_name] = None
                 continue
+            logging.info(builder_code)
+            logging.info(f"{config.get(exchange_name, "fee_rate", fallback="")}")
             self.exchanges[exchange_name] = ccxt.hyperliquid(
-                {
+                {   
+                    # api키 발급 받을때 나오는 주소
                     "apiKey": os.getenv(f"{exchange_name.upper()}_AGENT_API_KEY"),
-                    # 환경과 ccxt 구현에 맞춰 privateKey 사용
+                    # 아래는 api키 발급받을때 나오는 secret key를 의미함. 
+                    # 지갑 자체 private key 사용해도 상관은 없으나, 보안상 api key 발급형태로 사용하길 바람
                     "privateKey": os.getenv(f"{exchange_name.upper()}_PRIVATE_KEY"),
+                    # 계정 주소
                     "walletAddress": wallet_address,
-                    "options": {
-                        "builder": builder_code,
-                        "feeRate": config.get(exchange_name, "fee_rate", fallback="") + "%",  # 문자열 퍼센트
-                    },
+                    'options': {
+                        'builder': builder_code,
+                        'feeInt': int(config.get(exchange_name,"fee_rate",fallback=0)),
+                        'builderFee': True,
+                        'approvedBuilderFee': True,
+                    }
                 }
             )
+
+    async def initialize_all(self):
+        # comment: 각 거래소의 initialize_client()를 병렬로 1회 호출
+        tasks = []
+        for ex in self.exchanges.values():
+            if ex:
+                tasks.append(ex.initialize_client())
+        if tasks:
+            try:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            except Exception as e:
+                # 초기화 실패 시에도 앱은 계속 동작하게 하고 경고만 남깁니다.
+                logging.warning(f"initialize_all error: {e}")
 
     async def close_all(self):
         tasks = [ex.close() for ex in self.exchanges.values() if ex]
@@ -68,6 +88,9 @@ class ExchangeControl(Container):
         self.exchange_name = exchange_name
         self.manager = manager
         self.exchange = self.manager.get_exchange(self.exchange_name)
+        self._updating = False              # [추가] 중복 실행 가드
+        self._last_pos = None               # [추가] 마지막 포지션 문자열 캐시
+        self._last_col = None               # [추가] 마지막 담보 문자열 캐시
 
     def compose(self) -> ComposeResult:
         is_configured = self.exchange is not None
@@ -100,56 +123,72 @@ class ExchangeControl(Container):
 
     async def on_mount(self) -> None:
         if self.exchange:
-            self.set_interval(1, self.update_info)
+            # [추가] 거래소별 시작 시점 분산 (0~700ms 지터)
+            await asyncio.sleep(random.uniform(0.0, 0.7))
+            self.set_interval(1.0, self.update_info)  # 1초 주기 그대로
             await self.update_info()
 
     async def update_info(self) -> None:
-        if not self.exchange:
+        if not self.exchange or self._updating:
             return
+        self._updating = True
+        t0 = time.perf_counter()
         symbol = self.app.symbol
         try:
-            balance = await self.exchange.fetch_balance()
-            total_collateral = balance.get("USDC", {}).get("total", 0)
-            collateral_info_str = f"💰 Collateral: {total_collateral:,.2f} USDC"
+            # [변경] 두 네트워크 호출을 동시에 실행
+            bal_coro = self.exchange.fetch_balance()
+            pos_coro = self.exchange.fetch_positions([f"{symbol}/USDC:USDC"])
+            balance, positions = await asyncio.gather(bal_coro, pos_coro, return_exceptions=False)
 
-            positions = await self.exchange.fetch_positions([f"{symbol}/USDC:USDC"])
-            position_info_str = "📊 Position: N/A"
+            # 담보 문자열 생성
+            total_collateral = balance.get('USDC', {}).get('total', 0) or 0
+            col_str = f"💰 Collateral: {total_collateral:,.2f} USDC"
+
+            # 포지션 문자열 생성
+            pos_str = "📊 Position: N/A"
             if positions and positions[0]:
                 p = positions[0]
                 size = 0.0
-                try:
-                    size = float(p.get("contracts", 0) or 0)
-                except Exception:
-                    size = 0.0
-                if size != 0:
-                    side = "LONG" if p.get("side") == "long" else "SHORT"
+                try: size = float(p.get('contracts') or 0)
+                except: size = 0.0
+                if size:
+                    side = "LONG" if p.get('side') == 'long' else "SHORT"
                     pnl = 0.0
-                    try:
-                        pnl = float(p.get("unrealizedPnl", 0) or 0)
-                    except Exception:
-                        pnl = 0.0
+                    try: pnl = float(p.get('unrealizedPnl') or 0)
+                    except: pnl = 0.0
                     side_color = "green" if side == "LONG" else "red"
                     pnl_color = "green" if pnl >= 0 else "red"
-                    position_info_str = f"📊 [{side_color}]{side}[/] {size:.5f} | PnL: [{pnl_color}]{pnl:,.2f}[/]"
+                    pos_str = f"📊 [{side_color}]{side}[/] {size:.5f} | PnL: [{pnl_color}]{pnl:,.2f}[/]"
 
-            self.post_message(
-                InfoUpdate(
+            # [추가] 변경된 경우에만 메시지 전송 → 불필요한 리렌더링/메시지 폭주 방지
+            if (pos_str != self._last_pos) or (col_str != self._last_col):
+                self._last_pos, self._last_col = pos_str, col_str
+                self.post_message(InfoUpdate(
                     exchange_name=self.exchange_name,
-                    collateral=collateral_info_str,
-                    position=position_info_str,
-                    collateral_val=total_collateral,
-                )
-            )
+                    collateral=col_str,
+                    position=pos_str,
+                    collateral_val=total_collateral
+                ))
+
+            # (선택) 성능 로깅
+            dt = (time.perf_counter() - t0) * 1000
+            if dt > 800:  # 800ms 이상이면 로그로 확인
+                logging.info(f"[{self.exchange_name.upper()}] update_info took {dt:.0f} ms")
+
         except Exception:
             logging.error(f"[{self.exchange_name.upper()}] UPDATE_INFO ERROR", exc_info=True)
-            self.post_message(
-                InfoUpdate(
+            # 에러 시에도 바뀌었을 때만 UI 갱신
+            err_pos, err_col = "📊 Position: Error", "💰 Collateral: Error"
+            if (err_pos != self._last_pos) or (err_col != self._last_col):
+                self._last_pos, self._last_col = err_pos, err_col
+                self.post_message(InfoUpdate(
                     exchange_name=self.exchange_name,
-                    collateral="💰 Collateral: Error",
-                    position="📊 Position: Error",
-                    collateral_val=0,
-                )
-            )
+                    collateral=err_col,
+                    position=err_pos,
+                    collateral_val=0
+                ))
+        finally:
+            self._updating = False
 
 # --- 메인 앱 ---
 class TradingApp(App):
@@ -182,6 +221,12 @@ class TradingApp(App):
     #total-collateral-display { height: 3; width: 22; content-align: left middle;}
     #exec-all { width: 12; height: 3; content-align: left middle;}
     #quit-button { width: 5; height: 3; content-align: left middle;}
+
+    /* 반복 실행 관련 컨트롤 (추가) */
+    #repeat-all { width: 10; height: 3; content-align: center middle; }  /* REPEAT/STOP 버튼 */
+    #repeat-count { width: 8; min-height: 3; }
+    #repeat-min   { width: 8; min-height: 3; }
+    #repeat-max   { width: 8; min-height: 3; }
 
     #body-scroll {
         overflow-y: auto;              /* 세로 스크롤: 창을 줄여도 내용이 스크롤됨 */
@@ -247,6 +292,9 @@ class TradingApp(App):
         self.manager = manager
         self._collateral_by_exchange = {name: 0 for name in EXCHANGES}
         self.exchange_enabled = {name: False for name in EXCHANGES}
+        self._updating_price = False
+        self._repeat_task: asyncio.Task | None = None
+        self._repeat_cancel = asyncio.Event()
 
     def compose(self) -> ComposeResult:
         yield Header(name="Hyperliquid Multi-DEX Trader")
@@ -258,11 +306,21 @@ class TradingApp(App):
                 yield Static(id="current-price-display")
                 yield Static(id="total-collateral-display")
 
-            with Horizontal(classes="hdr-row"):
+            with Horizontal(classes="hdr-row hdr-gap"):
                 yield Label("All Qty:", classes='tiny-label')
                 yield Input(id="all-qty-input")
                 yield Button("EXECUTE ALL", variant="warning", id="exec-all")
                 yield Button("종료", variant="error", id="quit-button")
+            
+            with Horizontal(classes="hdr-row"):
+                yield Button("REPEAT", variant="warning", id="repeat-all")
+                yield Label("Times:", classes='tiny-label')
+                yield Input(id="repeat-count")
+                yield Label("Interval(s):", classes='tiny-label')
+                yield Input(id="repeat-min")
+                yield Label("~", classes='tiny-label')
+                yield Input(id="repeat-max")
+                
 
         with Container(id="body-scroll"):  # 추가: 바디 전체 스크롤 래퍼
             with ScrollableContainer(id="exchanges-container"):
@@ -296,6 +354,10 @@ class TradingApp(App):
             logging.error(f"UI update failed for {message.exchange_name}", exc_info=True)
 
     async def on_mount(self) -> None:
+        try:
+            await self.manager.initialize_all()
+        except Exception as e:
+            logging.warning(f"initialize_all failed: {e}")
         self.set_interval(1, self.update_current_price)
         await self.update_all_exchange_info()
 
@@ -338,6 +400,10 @@ class TradingApp(App):
             self.log_write(f"[{ex_name.upper()}] 비활성화됨 (EXECUTE ALL 대상 제외)")
             return
 
+        if bid == "repeat-all":
+            await self._toggle_repeat()  # REPEAT ↔ STOP 토글
+            return
+        
         # Long/Short 누르면 자동 활성화
         if bid.startswith(("long_", "short_")):
             action, ex_name = bid.split("_", 1)
@@ -450,16 +516,20 @@ class TradingApp(App):
             self.log_write("[ALL] 실행할 거래소가 없습니다. (모두 비활성 또는 미선택)")
 
     async def update_current_price(self):
-        repr_ex = next((ex for ex in self.manager.exchanges.values() if ex), None)
-        if not repr_ex:
-            self.current_price = "N/A"
+        if self._updating_price:
             return
+        self._updating_price = True
         try:
-            t = await repr_ex.fetch_ticker(f"{self.symbol}/USDC:USDC")
+            repr_exchange = next((ex for ex in self.manager.exchanges.values() if ex), None)
+            if not repr_exchange:
+                self.current_price = "N/A"; return
+            t = await repr_exchange.fetch_ticker(f"{self.symbol}/USDC:USDC")
             self.current_price = f"{t['last']:,.2f}"
         except Exception:
             self.current_price = "Error"
             logging.error("Price fetch error", exc_info=True)
+        finally:
+            self._updating_price = False
 
     async def update_all_exchange_info(self):
         tasks = [c.update_info() for c in self.query(ExchangeControl) if c.exchange]
@@ -480,7 +550,102 @@ class TradingApp(App):
             pass
         return None
 
+    async def _toggle_repeat(self):
+        btn = self.query_one("#repeat-all", Button)
+        exec_btn = self.query_one("#exec-all", Button)
+
+        # 이미 실행 중이면 중지
+        if self._repeat_task and not self._repeat_task.done():
+            self._repeat_cancel.set()
+            self.log_write("[REPEAT] 중지 요청...")
+            try:
+                await self._repeat_task
+            except Exception:
+                pass
+            self._repeat_task = None
+            self._repeat_cancel.clear()
+            # UI 복구
+            btn.label = "REPEAT"
+            btn.variant = "warning"
+            exec_btn.disabled = False
+            self.log_write("[REPEAT] 중지 완료")
+            return
+
+        # 파라미터 파싱
+        try:
+            n_input = self.query_one("#repeat-count", Input).value or "0"
+            a_input = self.query_one("#repeat-min", Input).value or "0"
+            b_input = self.query_one("#repeat-max", Input).value or "0"
+            times = int(float(n_input))
+            a = float(a_input)
+            b = float(b_input)
+        except Exception:
+            self.log_write("[REPEAT] 입력값 파싱 실패 (Times/Interval)")
+            return
+
+        if times <= 0:
+            self.log_write("[REPEAT] Times는 1 이상이어야 합니다.")
+            return
+        if a < 0 or b < 0:
+            self.log_write("[REPEAT] Interval은 0 이상이어야 합니다.")
+            return
+        if b < a:
+            a, b = b, a  # swap
+
+        # 버튼/상태 전환
+        btn.label = "STOP"
+        btn.variant = "error"
+        exec_btn.disabled = True
+
+        # 반복 태스크 시작
+        self._repeat_cancel.clear()
+        self._repeat_task = asyncio.create_task(self._repeat_runner(times, a, b))
+
+    async def _repeat_runner(self, times: int, a: float, b: float):
+        self.log_write(f"[REPEAT] 시작: {times}회, 간격 {a:.2f}~{b:.2f}s 랜덤")
+        try:
+            for i in range(1, times + 1):
+                if self._repeat_cancel.is_set():
+                    self.log_write(f"[REPEAT] 취소됨 (진행 {i-1}/{times})")
+                    break
+
+                self.log_write(f"[REPEAT] 실행 {i}/{times}")
+                await self.execute_all_orders()
+
+                if i < times:
+                    delay = random.uniform(a, b)
+                    self.log_write(f"[REPEAT] 대기 {delay:.2f}s ...")
+                    # 취소 가능한 sleep
+                    try:
+                        await asyncio.wait_for(self._repeat_cancel.wait(), timeout=delay)
+                    except asyncio.TimeoutError:
+                        pass
+                    if self._repeat_cancel.is_set():
+                        self.log_write(f"[REPEAT] 취소됨 (대기 중)")
+                        break
+
+            self.log_write("[REPEAT] 완료")
+        finally:
+            # UI 복구
+            try:
+                btn = self.query_one("#repeat-all", Button)
+                exec_btn = self.query_one("#exec-all", Button)
+                btn.label = "REPEAT"
+                btn.variant = "warning"
+                exec_btn.disabled = False
+            except Exception:
+                pass
+            self._repeat_task = None
+            self._repeat_cancel.clear()    
+
     async def on_quit(self) -> None:
+        # 반복 태스크 종료
+        if self._repeat_task and not self._repeat_task.done():
+            self._repeat_cancel.set()
+            try:
+                await self._repeat_task
+            except Exception:
+                pass
         await self.manager.close_all()
 
     async def action_quit(self) -> None:
