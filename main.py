@@ -218,7 +218,7 @@ class TradingApp(App):
     #symbol-input { width: 10; min-height: 3;}     /* BTC 기본값 보이도록 폭 고정 */
     #all-qty-input { width: 13; min-height: 3;}    /* All Qty 축소 */
     #current-price-display { height: 3; width: 18; content-align: left middle;}
-    #total-collateral-display { height: 3; width: 22; content-align: left middle;}
+    #total-collateral-display { height: 3; width: 40; content-align: left middle;}
     #exec-all { width: 12; height: 3; content-align: left middle;}
     #quit-button { width: 5; height: 3; content-align: left middle;}
 
