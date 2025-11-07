@@ -68,9 +68,9 @@ py main.py
 `.env.example`을 `.env`로 복사한 후, 각 거래소별 값을 채웁니다:
 ```env
 # Dexari
-DEXARI_WALLET_ADDRESS=0x...
-DEXARI_AGENT_API_KEY=
-DEXARI_PRIVATE_KEY=0x...
+DEXARI_WALLET_ADDRESS=evm주소
+DEXARI_AGENT_API_KEY=api key 발급시 나오는 api key에 해당하는 주소
+DEXARI_PRIVATE_KEY=api key 발급시 나오는 private key에 해당 (지갑 private key도 대응가능)
 
 # Liquid
 LIQUID_WALLET_ADDRESS=0x...
@@ -98,7 +98,7 @@ SUPERSTACK_PRIVATE_KEY=0x...
 # NEWDEX_PRIVATE_KEY=...
 ```
 - 섹션명(예: `[dexari]`)을 대문자화한 접두사(`DEXARI_...`)가 키 이름에 사용됩니다.
-- 보안상 Private Key 대신 Agent API Key 사용을 권장합니다(둘 중 하나만 쓰면 됨).
+- 보안상 Private Key 대신 Agent API Key 생성시 나오는 private key 사용을 권장합니다 (둘 중 하나만 쓰면 됨).
 
 ### config.ini (빌더/수수료)
 이 앱은 Hyperliquid ccxt `options.feeInt`만 사용합니다.  
