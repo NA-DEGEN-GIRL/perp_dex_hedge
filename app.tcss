@@ -1,0 +1,88 @@
+Screen { 
+    layout: vertical; 
+    overflow-y: hidden;          /* 화면 자체는 세로 고정 */
+    overflow-x: auto;            /* 가로 스크롤 허용(압축 방지) */
+}
+
+#main-controls {
+    height: auto;
+    padding: 0 1;
+    border: round $primary;
+    background: $panel;
+    margin-bottom: 1;
+    overflow-x: auto;            /* 헤더 가로 스크롤 허용 */
+}
+.hdr-row { 
+    height: auto; 
+    align: left middle;          /* 수직 중앙 정렬 */
+    content-align: left middle;
+}
+.hdr-row > * { margin-right: 1; }
+.hdr-gap { margin-bottom: 1; }  /* 첫 번째 헤더 행 아래에 1칸 여백 */
+
+#symbol-input { width: 10; min-height: 3;}     /* BTC 기본값 보이도록 폭 고정 */
+#all-qty-input { width: 13; min-height: 3;}    /* All Qty 축소 */
+#current-price-display { height: 3; width: 18; content-align: left middle;}
+#total-collateral-display { height: 3; width: 40; content-align: left middle;}
+#exec-all { width: 12; height: 3; content-align: left middle;}
+#quit-button { width: 5; height: 3; content-align: left middle;}
+
+/* 반복 실행 관련 컨트롤 (추가) */
+#repeat-all { width: 10; height: 3; content-align: center middle; }  /* REPEAT/STOP 버튼 */
+#repeat-count { width: 15; min-height: 3; }
+#repeat-min   { width: 15; min-height: 3; }
+#repeat-max   { width: 15; min-height: 3; }
+
+#body-scroll {
+    overflow-y: auto;              /* 세로 스크롤: 창을 줄여도 내용이 스크롤됨 */
+    overflow-x: auto;              /* 가로 스크롤: 폭이 부족할 때 찌그러짐 방지 */
+    padding: 0 1;
+}
+
+#exchanges-container { height: auto; }
+
+.exchange-box {
+    height: auto;
+    border: round $panel;
+    padding: 0 0;
+    margin: 0 0 0 0;
+}
+.exchange-header { 
+    min-height: 1;
+    height: 1; 
+    color: $primary; 
+    content-align: left middle; 
+    padding: 0;
+    margin: 0;
+}
+
+.btn-off { min-height: 3; height: 3; min-width: 6; content-align: center middle; }
+
+.row-compact {
+    height: auto;
+    align: left middle;
+    content-align: left middle;
+    padding: 0;
+    margin: 0 0 0 0;
+    overflow-x: auto;            /* 가로 스크롤(버튼/라디오 압축 방지) */
+}
+
+.tiny-label { min-height: 3; content-align: right middle;}
+.ipt-qty { width: 13; }
+.ipt-price { width: 14; }
+
+.radio-inline { layout: horizontal; width: auto; }
+.radio-inline RadioButton { width: 7; padding: 0; margin: 0; content-align: center middle; }
+
+.btn-mini { min-height: 3; height: 3; min-width: 8; margin-left: 1; content-align: center middle; }  /* 더 좁게 */
+.btn-mini.exec { min-height: 3; height: 3; min-width: 8;  }
+
+.info-line { margin: 0 0 0 0; color: $text-muted; content-align: left middle;}
+.error-text { color: $error; }
+
+#log { 
+    height: 8; 
+    border: round $primary; 
+    margin: 0 1; 
+    overflow-x: hidden;          /* 가로 스크롤 숨김: 줄바꿈으로 해결 */
+}
