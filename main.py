@@ -310,6 +310,7 @@ class KimbapHeaven(App):
                 yield Label("All Qty:", classes='tiny-label')
                 yield Input(id="all-qty-input")
                 yield Button("EXECUTE ALL", variant="warning", id="exec-all")
+                yield Button("REVERSE", variant="primary", id="reverse-all")
                 yield Button("종료", variant="error", id="quit-button")
             
             with Horizontal(classes="hdr-row"):
@@ -402,6 +403,33 @@ class KimbapHeaven(App):
 
         if bid == "repeat-all":
             await self._toggle_repeat()  # REPEAT ↔ STOP 토글
+            return
+
+        if bid == "reverse-all":
+            reversed_count = 0
+            for name in EXCHANGES:
+                # OFF(비활성) 또는 미설정 거래소는 건너뜀
+                if not self.exchange_enabled.get(name, False):
+                    continue
+                side = self.get_selected_side(name)
+                if not side:
+                    continue  # 방향 미선택은 그대로
+
+                try:
+                    long_b = self.query_one(f"#{name} #long_{name}", Button)
+                    short_b = self.query_one(f"#{name} #short_{name}", Button)
+                    if side == "buy":   # LONG 선택 중 → SHORT로
+                        long_b.variant = "default"
+                        short_b.variant = "error"
+                        reversed_count += 1
+                    elif side == "sell":  # SHORT 선택 중 → LONG으로
+                        long_b.variant = "success"
+                        short_b.variant = "default"
+                        reversed_count += 1
+                except Exception:
+                    pass
+
+            self.log_write(f"[ALL] REVERSE 완료: {reversed_count}개 거래소 방향 반전")
             return
         
         # Long/Short 누르면 자동 활성화
