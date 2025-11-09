@@ -374,7 +374,7 @@ class UrwidApp:
         # Logs 제목은 pack(1줄), 로그 박스는 fixed(10줄)
         logs_panel = urwid.Pile([
             ('pack',  urwid.AttrMap(urwid.Text("Logs"), 'title')),
-            ('fixed', 10, urwid.LineBox(self.log_box)),
+            ('fixed', 6, urwid.LineBox(self.log_box)),
         ])
 
         # Footer는 Exchanges 박스(고정 높이 4줄: 콘텐츠 2 + 테두리 2), Logs 패널은 pack
@@ -404,8 +404,8 @@ class UrwidApp:
                     try:
                         t = await ex.fetch_ticker(f"{self.symbol}/USDC:USDC")
                         self.current_price = f"{t['last']:,.2f}"
-                    except Exception:
-                        self._log(f"[Error] 가격 fetch error")
+                    except Exception as e:
+                        self._log(f"[Error] 가격 fetch error {e}")
                         # 그냥 pass 해서 이전 데이터 쓰도록
 
                 self.price_text.set_text(("info", f"Price: {self.current_price}"))
