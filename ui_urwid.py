@@ -62,11 +62,21 @@ class UrwidApp:
         # 자동 스크롤(맨 아래로 포커스 이동)
         if self.log_box is not None and len(self.log_list) > 0:
             self.log_box.set_focus(len(self.log_list) - 1)
-        if self.loop:
-            self.loop.draw_screen()
+        # 화면 다시 그리기 요청
+        self._request_redraw()
 
     def _collateral_sum(self) -> float:
         return sum(self.collateral.values())
+
+
+    def _request_redraw(self):
+        """다음 틱에 화면을 다시 그리도록 스케줄합니다."""
+        if self.loop:
+            try:
+                # 0초 뒤 알람 → urwid idle 진입 시 redraw
+                self.loop.set_alarm_in(0, lambda loop, data: None)
+            except Exception:
+                pass
 
     # ---------------------- 헤더(3행) ----------------------
     def _hdr_widgets(self):
@@ -249,6 +259,9 @@ class UrwidApp:
                 total = self._collateral_sum()
                 self.total_text.set_text(("info", f"Total: {total:,.2f} USDC"))
 
+                # 화면 다시 그리기 요청 (입력 없이도 즉시 반영)
+                self._request_redraw()
+
                 await asyncio.sleep(1.0)
             except asyncio.CancelledError:
                 break
@@ -263,6 +276,7 @@ class UrwidApp:
                 ex = self.mgr.get_exchange(name)
                 if not ex:
                     self.info_text[name].set_text(("info", "📘 Position: N/A  |  💰 Collateral: N/A"))
+                    self._request_redraw()  # ← 추가
                     await asyncio.sleep(1.0)
                     continue
 
@@ -288,7 +302,7 @@ class UrwidApp:
                             (None, f" {sz:.5f}  |  PnL: "),
                             ("pnl_pos" if pnl >= 0 else "pnl_neg", f"{pnl:,.2f}"),
                             (None, f"  |  💰 Collateral: {total_collateral:,.2f} USDC"),
-                        ]
+                            ]
                     else:
                         parts = [(None, f"📘 Position: N/A  |  💰 Collateral: {total_collateral:,.2f} USDC")]
                 else:
@@ -299,6 +313,9 @@ class UrwidApp:
                 # 헤더 Total 갱신
                 total = self._collateral_sum()
                 self.total_text.set_text(("info", f"Total: {total:,.2f} USDC"))
+
+                # 화면 다시 그리기 요청
+                self._request_redraw()
 
                 await asyncio.sleep(1.0)
             except asyncio.CancelledError:
@@ -484,6 +501,8 @@ class UrwidApp:
             def ticker_changed(edit, new):
                 self.symbol = (new or "BTC").upper()
             urwid.connect_signal(self.ticker_edit, "change", ticker_changed)
+
+            self._request_redraw()
 
         loop.run_until_complete(_bootstrap())
 

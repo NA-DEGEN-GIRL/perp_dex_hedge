@@ -2,6 +2,7 @@
 import time, random, asyncio
 import logging
 import textwrap
+from pathlib import Path
 
 from textual.message import Message
 from textual.app import App, ComposeResult
@@ -12,6 +13,7 @@ from textual.widgets import (
 from textual.reactive import reactive
 
 from core import ExchangeManager, EXCHANGES  # 핵심: 코어에서 가져옴
+from trading_service import TradingService   # 공통 거래 서비스
 
 # --- 메시지 ---
 class InfoUpdate(Message):
@@ -76,30 +78,8 @@ class ExchangeControl(Container):
         t0 = time.perf_counter()
         symbol = self.app.symbol
         try:
-            # 두 네트워크 호출을 동시에 실행
-            bal_coro = self.exchange.fetch_balance()
-            pos_coro = self.exchange.fetch_positions([f"{symbol}/USDC:USDC"])
-            balance, positions = await asyncio.gather(bal_coro, pos_coro, return_exceptions=False)
-
-            # 담보 문자열 생성
-            total_collateral = balance.get('USDC', {}).get('total', 0) or 0
-            col_str = f"💰 Collateral: {total_collateral:,.2f} USDC"
-
-            # 포지션 문자열 생성
-            pos_str = "📊 Position: N/A"
-            if positions and positions[0]:
-                p = positions[0]
-                size = 0.0
-                try: size = float(p.get('contracts') or 0)
-                except: size = 0.0
-                if size:
-                    side = "LONG" if p.get('side') == 'long' else "SHORT"
-                    pnl = 0.0
-                    try: pnl = float(p.get('unrealizedPnl') or 0)
-                    except: pnl = 0.0
-                    side_color = "green" if side == "LONG" else "red"
-                    pnl_color = "green" if pnl >= 0 else "red"
-                    pos_str = f"📊 [{side_color}]{side}[/] {size:.5f} | PnL: [{pnl_color}]{pnl:,.2f}[/]"
+            # 서비스 호출
+            pos_str, col_str, col_val = await self.app.service.fetch_status(self.exchange_name, symbol)
 
             # 변경된 경우에만 메시지 전송 → 불필요한 리렌더링/메시지 폭주 방지
             if (pos_str != self._last_pos) or (col_str != self._last_col):
@@ -108,7 +88,7 @@ class ExchangeControl(Container):
                     exchange_name=self.exchange_name,
                     collateral=col_str,
                     position=pos_str,
-                    collateral_val=total_collateral
+                    collateral_val=col_val
                 ))
 
             # 성능 로깅(선택)
@@ -133,97 +113,7 @@ class ExchangeControl(Container):
 
 # --- 메인 앱 ---
 class KimbapHeaven(App):
-    CSS = """
-    Screen { 
-        layout: vertical; 
-        overflow-y: hidden;          /* 화면 자체는 세로 고정 */
-        overflow-x: auto;            /* 가로 스크롤 허용(압축 방지) */
-    }
-
-    #main-controls {
-        height: auto;
-        padding: 0 1;
-        border: round $primary;
-        background: $panel;
-        margin-bottom: 1;
-        overflow-x: auto;            /* 헤더 가로 스크롤 허용 */
-    }
-    .hdr-row { 
-        height: auto; 
-        align: left middle;          /* 수직 중앙 정렬 */
-        content-align: left middle;
-    }
-    .hdr-row > * { margin-right: 1; }
-    .hdr-gap { margin-bottom: 1; }  /* 첫 번째 헤더 행 아래에 1칸 여백 */
-
-    #symbol-input { width: 10; min-height: 3;}     /* BTC 기본값 보이도록 폭 고정 */
-    #all-qty-input { width: 13; min-height: 3;}    /* All Qty 축소 */
-    #current-price-display { height: 3; width: 18; content-align: left middle;}
-    #total-collateral-display { height: 3; width: 40; content-align: left middle;}
-    #exec-all { width: 12; height: 3; content-align: left middle;}
-    #quit-button { width: 5; height: 3; content-align: left middle;}
-
-    /* 반복 실행 관련 컨트롤 */
-    #repeat-all { width: 10; height: 3; content-align: center middle; }  /* REPEAT/STOP 버튼 */
-    #repeat-count { width: 15; min-height: 3; }
-    #repeat-min   { width: 15; min-height: 3; }
-    #repeat-max   { width: 15; min-height: 3; }
-
-    #body-scroll {
-        overflow-y: auto;              /* 세로 스크롤 */
-        overflow-x: auto;              /* 가로 스크롤 */
-        padding: 0 1;
-    }
-
-    #exchanges-container { height: auto; }
-
-    .exchange-box {
-        height: auto;
-        border: round $panel;
-        padding: 0 0;
-        margin: 0 0 0 0;
-    }
-    .exchange-header { 
-        min-height: 1;
-        height: 1; 
-        color: $primary; 
-        content-align: left middle; 
-        padding: 0;
-        margin: 0;
-    }
-    
-    .btn-off { min-height: 3; height: 3; min-width: 6; content-align: center middle; }
-
-    .row-compact {
-        height: auto;
-        align: left middle;
-        content-align: left middle;
-        padding: 0;
-        margin: 0 0 0 0;
-        overflow-x: auto;            /* 가로 스크롤(버튼/라디오 압축 방지) */
-    }
-
-    .tiny-label { min-height: 3; content-align: right middle;}
-    .ipt-qty { width: 13; }
-    .ipt-price { width: 14; }
-
-    .radio-inline { layout: horizontal; width: auto; }
-    .radio-inline RadioButton { width: 7; padding: 0; margin: 0; content-align: center middle; }
-
-    .btn-mini { min-height: 3; height: 3; min-width: 8; margin-left: 1; content-align: center middle; }  /* 더 좁게 */
-    .btn-mini.exec { min-height: 3; height: 3; min-width: 8;  }
-
-    .info-line { margin: 0 0 0 0; color: $text-muted; content-align: left middle;}
-    .error-text { color: $error; }
-
-    #log { 
-        height: 8; 
-        border: round $primary; 
-        margin: 0 1; 
-        overflow-x: hidden;          /* 가로 스크롤 숨김: 줄바꿈으로 해결 */
-    }
-    """
-
+    CSS_PATH = Path(__file__).with_name("app.tcss")
     symbol = reactive("BTC")
     current_price = reactive("...")
     total_collateral = reactive(0.0)
@@ -231,6 +121,7 @@ class KimbapHeaven(App):
     def __init__(self, manager: ExchangeManager):
         super().__init__()
         self.manager = manager
+        self.service = TradingService(manager)  # 공통 서비스
         self._collateral_by_exchange = {name: 0 for name in EXCHANGES}
         self.exchange_enabled = {name: False for name in EXCHANGES}
         self._updating_price = False
@@ -407,8 +298,7 @@ class KimbapHeaven(App):
                 pass
 
     async def execute_order(self, exchange_name: str) -> None:
-        exchange = self.manager.get_exchange(exchange_name)
-        if not exchange:
+        if not self.manager.get_exchange(exchange_name):
             self.log_write(f"[{exchange_name.upper()}] 주문 불가: 설정 없음")
             return
         try:
@@ -421,18 +311,13 @@ class KimbapHeaven(App):
                 return
             amount = float(qty_input.value)
             order_type = "market" if (type_set.pressed_index in (None, 0)) else "limit"
-            price = float(price_input.value) if (order_type == "limit" and price_input.value) else float(self.current_price.replace(",",""))
+            price = float(price_input.value) if (order_type == "limit" and price_input.value) else None
             if not side:
                 self.log_write(f"[{exchange_name.upper()}] LONG/SHORT 선택을 하세요.")
                 return
             self.log_write(f"[{exchange_name.upper()}] {side.upper()} {amount} {self.symbol} @ {order_type}")
-            order = await exchange.create_order(
-                symbol=f"{self.symbol}/USDC:USDC",
-                type=order_type,
-                side=side,  # 'buy' or 'sell'
-                amount=amount,
-                price=price,
-            )
+            # 서비스 호출
+            order = await self.service.execute_order(exchange_name, self.symbol, amount, order_type, side, price)
             self.log_write(f"[{exchange_name.upper()}] 주문 성공: #{order['id']}")
             await self.query_one(f"#{exchange_name}", ExchangeControl).update_info()
         except Exception as e:
@@ -463,14 +348,7 @@ class KimbapHeaven(App):
             return
         self._updating_price = True
         try:
-            repr_exchange = next((ex for ex in self.manager.exchanges.values() if ex), None)
-            if not repr_exchange:
-                self.current_price = "N/A"; return
-            t = await repr_exchange.fetch_ticker(f"{self.symbol}/USDC:USDC")
-            self.current_price = f"{t['last']:,.2f}"
-        except Exception:
-            self.current_price = "Error"
-            logging.error("Price fetch error", exc_info=True)
+            self.current_price = await self.service.fetch_current_price(self.symbol)
         finally:
             self._updating_price = False
 
