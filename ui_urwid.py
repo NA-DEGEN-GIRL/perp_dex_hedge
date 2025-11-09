@@ -358,17 +358,18 @@ class UrwidApp:
                         t = await ex.fetch_ticker(f"{self.symbol}/USDC:USDC")
                         self.current_price = f"{t['last']:,.2f}"
                     except Exception:
-                        self.current_price = "Error"
+                        self._log(f"[Error] 가격 fetch error")
+                        # 그냥 pass 해서 이전 데이터 쓰도록
 
                 self.price_text.set_text(("info", f"Price: {self.current_price}"))
                 self.total_text.set_text(("info", f"Total: {self._collateral_sum():,.2f} USDC"))
                 self._request_redraw()
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(2.5)
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logging.error(f"price loop: {e}")
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(2.5)
 
     async def _status_loop(self, name: str):
         await asyncio.sleep(random.uniform(0.0, 0.7))
