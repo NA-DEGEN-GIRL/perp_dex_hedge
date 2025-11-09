@@ -68,6 +68,35 @@ class UrwidApp:
         # REPEAT
         self.repeat_task = None
         self.repeat_cancel = asyncio.Event()
+    
+    def _set_initial_focus(self, loop=None, data=None):
+        """앱 시작 후 즉시 'All Qty' 입력칸에 포커스를 맞춘다."""
+        try:
+            if not self.loop:
+                return
+            frame: urwid.Frame = self.loop.widget
+            # 1) 전체 포커스 영역을 헤더로
+            frame.focus_part = "header"
+
+            # 2) 헤더(LineBox → Pile)에서 2번째 행(row2 = All Qty/EXEC/REVERSE)로 포커스
+            header_widget = frame.header
+            header_pile = header_widget.original_widget if isinstance(header_widget, urwid.LineBox) else header_widget
+            if isinstance(header_pile, urwid.Pile):
+                header_pile.focus_position = 1  # row2
+
+                # 3) row2는 Columns: 첫 컬럼(All Qty)로 포커스
+                row2 = header_pile.contents[1][0]
+                if isinstance(row2, urwid.Columns):
+                    row2.focus_position = 0  # All Qty Edit
+
+            # 4) 커서를 All Qty 텍스트 끝으로 이동(선택사항)
+            if self.allqty_edit is not None:
+                self.allqty_edit.set_edit_pos(len(self.allqty_edit.edit_text or ""))
+
+            # 즉시 다시 그리기
+            self._request_redraw()
+        except Exception:
+            pass
 
     # --------- 유틸/화면 갱신 ----------
     def _request_redraw(self):
@@ -99,7 +128,7 @@ class UrwidApp:
             [
                 (18, self.ticker_edit),
                 (20, self.price_text),
-                (22, self.total_text),
+                (28, self.total_text),
                 (8, quit_btn),
             ],
             dividechars=1,
@@ -119,15 +148,15 @@ class UrwidApp:
         )
         # 3행
         self.repeat_times = urwid.Edit(("label", "Times: "))
-        self.repeat_min = urwid.Edit(("label", "a(s): "))
-        self.repeat_max = urwid.Edit(("label", "b(s): "))
+        self.repeat_min = urwid.Edit(("label", "min(s): "))
+        self.repeat_max = urwid.Edit(("label", "max(s): "))
         repeat_btn = urwid.AttrMap(urwid.Button("REPEAT", on_press=self._on_repeat_toggle), "btn_exec", "btn_focus")
 
         row3 = urwid.Columns(
             [
                 (14, self.repeat_times),
-                (10, self.repeat_min),
-                (10, self.repeat_max),
+                (13, self.repeat_min),
+                (13, self.repeat_max),
                 (10, repeat_btn),
             ],
             dividechars=1,
@@ -698,6 +727,7 @@ class UrwidApp:
             self._request_redraw()
 
         loop.run_until_complete(_bootstrap())
+        self.loop.set_alarm_in(0, self._set_initial_focus)
 
         try:
             self.loop.run()

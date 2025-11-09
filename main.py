@@ -9,7 +9,7 @@ from ui_urwid import UrwidApp  # urwid UI도 선택 가능하게 추가
 # 기본 UI를 손쉽게 바꾸고 싶다면, 아래 환경변수로도 제어할 수 있습니다.
 #   export PDEX_UI_DEFAULT=urwid   # Linux/macOS/WSL
 #   set PDEX_UI_DEFAULT=urwid      # Windows PowerShell
-DEFAULT_UI = os.getenv("PDEX_UI_DEFAULT", "textual")  # textual / urwid
+DEFAULT_UI = os.getenv("PDEX_UI_DEFAULT", "urwid")  # textual / urwid
 
 def main():
     logging.basicConfig(
