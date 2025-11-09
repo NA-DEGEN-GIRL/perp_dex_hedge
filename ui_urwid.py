@@ -9,7 +9,8 @@ import urwid
 from urwid.widget.pile import PileWarning  # urwid 레이아웃 경고 제거용
 
 from core import ExchangeManager
-
+import sys
+import os
 
 # urwid의 레이아웃 경고(PileWarning)를 화면에 출력하지 않도록 억제
 warnings.simplefilter("ignore", PileWarning)
@@ -1294,7 +1295,33 @@ class UrwidApp:
             ("pnl_neg",     "light red",      ""),
         ]
 
+        def _supports_vt(self) -> bool:
+            # Windows에서 VT 지원 여부 추정 (Windows Terminal, ConEmu, ANSICON 등)
+            env = os.environ
+            if env.get("WT_SESSION"):      # Windows Terminal
+                return True
+            if env.get("ConEmuANSI") == "ON":
+                return True
+            if env.get("ANSICON"):
+                return True
+            # PowerShell + 최신 ConHost는 보통 지원하지만 안전하게 False
+            return os.name != 'nt'  # 비 Windows는 True 취급
+
         root = self.build()
+
+        handle_mouse = True
+        if os.name == 'nt' and not self._supports_vt():
+            handle_mouse = False
+            logging.warning("[ui] VT mouse unsupported terminal detected → handle_mouse=False")
+
+        self.loop = urwid.MainLoop(
+            root, palette=palette,
+            event_loop=event_loop,
+            unhandled_input=self._on_key,
+            handle_mouse=handle_mouse   # ← 여기서 제어
+        )
+
+
         self.loop = urwid.MainLoop(root,
             palette=palette,
             event_loop=event_loop,
@@ -1334,6 +1361,13 @@ class UrwidApp:
         try:
             self.loop.run()
         finally:
+            # 마우스 트래킹/커서/색 복구
+            try:
+                # SGR mouse off, 커서 보이기, 스타일 리셋
+                sys.stdout.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?25h\x1b[0m')
+                sys.stdout.flush()
+            except Exception:
+                pass
             try:
                 loop.run_until_complete(self.mgr.close_all())
             except Exception:
