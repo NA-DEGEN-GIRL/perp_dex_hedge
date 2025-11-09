@@ -10,7 +10,43 @@ from dotenv import load_dotenv
 # --- 설정 로드 ---
 load_dotenv()
 config = configparser.ConfigParser(interpolation=None)
-config.read("config.ini")
+def load_config_with_encodings(path: str) -> configparser.ConfigParser:
+    """
+    config.ini를 여러 인코딩으로 안전하게 로드합니다.
+    우선순위: UTF-8 → UTF-8-SIG → CP949 → EUC-KR → MBCS(Windows 기본).
+    """
+    encodings = ("utf-8", "utf-8-sig", "cp949", "euc-kr", "mbcs")
+    last_err = None
+    cfg = configparser.ConfigParser(interpolation=None)
+
+    for enc in encodings:
+        try:
+            with open(path, "r", encoding=enc) as f:
+                cfg.read_file(f)
+            logging.info(f"[config] loaded '{path}' with encoding='{enc}'")
+            return cfg
+        except UnicodeDecodeError as e:
+            last_err = e
+            continue
+        except FileNotFoundError:
+            logging.critical(f"[config] file not found: {path}")
+            raise
+        except Exception as e:
+            # 예기치 못한 에러는 바로 올립니다(잘못된 INI 문법 등)
+            logging.exception(f"[config] load error with encoding='{enc}': {e}")
+            raise
+
+    # 모든 인코딩 시도 실패
+    if last_err:
+        logging.critical(f"[config] failed to decode '{path}' with tried encodings {encodings}")
+        raise last_err
+    else:
+        # 이론상 도달하지 않지만 안전상
+        raise RuntimeError(f"[config] unknown error while reading '{path}'")
+
+# config.ini 경로(실행 위치와 무관하게 파일 위치 기준)
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.ini")
+config = load_config_with_encodings(CONFIG_PATH)
 
 EXCHANGES = sorted([section for section in config.sections()])
 
