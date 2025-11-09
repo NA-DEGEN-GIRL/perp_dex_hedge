@@ -11,13 +11,6 @@ from urwid.widget.pile import PileWarning  # urwid 레이아웃 경고 제거용
 from core import ExchangeManager
 import sys
 import os
-# Windows에서 urwid가 필요로 하는 add_reader를 쓰려면 Selector 정책으로 전환 필요
-if os.name == 'nt':
-    try:
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-        logging.info("[ui] WindowsSelectorEventLoopPolicy 적용")
-    except Exception as e:
-        logging.warning(f"[ui] 이벤트 루프 정책 설정 실패: {e}")
 
 # urwid의 레이아웃 경고(PileWarning)를 화면에 출력하지 않도록 억제
 warnings.simplefilter("ignore", PileWarning)
@@ -100,6 +93,34 @@ class UrwidApp:
 
         # 거래소별 status 루프 태스크 관리
         self._status_tasks: Dict[str, asyncio.Task] = {}
+
+    def _enable_win_vt(self):
+        """Windows 콘솔에서 VT 입력/출력을 가능한 한 활성화."""
+        if os.name != "nt":
+            return
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            # 핸들: 입력/출력
+            STD_INPUT_HANDLE  = -10
+            STD_OUTPUT_HANDLE = -11
+            ENABLE_VIRTUAL_TERMINAL_INPUT       = 0x0200
+            ENABLE_VIRTUAL_TERMINAL_PROCESSING  = 0x0004
+
+            # 입력 모드
+            hIn = kernel32.GetStdHandle(STD_INPUT_HANDLE)
+            in_mode = ctypes.c_uint()
+            if kernel32.GetConsoleMode(hIn, ctypes.byref(in_mode)):
+                kernel32.SetConsoleMode(hIn, in_mode.value | ENABLE_VIRTUAL_TERMINAL_INPUT)
+
+            # 출력 모드
+            hOut = kernel32.GetStdHandle(STD_OUTPUT_HANDLE)
+            out_mode = ctypes.c_uint()
+            if kernel32.GetConsoleMode(hOut, ctypes.byref(out_mode)):
+                kernel32.SetConsoleMode(hOut, out_mode.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING)
+        except Exception:
+            # 실패해도 조용히 넘어감(하위 콘솔이면 어차피 mouse off 처리됨)
+            pass
 
     def _set_initial_focus(self, loop=None, data=None):
         """앱 시작 후 즉시 'All Qty' 입력칸에 포커스를 맞춘다."""
@@ -1273,24 +1294,52 @@ class UrwidApp:
         return None
     
     def _supports_vt(self) -> bool:
-        # Windows에서 VT 지원 여부 추정 (Windows Terminal, ConEmu, ANSICON 등)
+        """
+        Windows에서 VT(ANSI) 입력/출력 지원을 최대한 보수적이되 실용적으로 감지.
+        - 환경변수 오버라이드(PDEX_FORCE_MOUSE / PDEX_DISABLE_MOUSE)
+        - VS Code / Windows Terminal / ConEmu / ANSICON / TERM=xterm-*
+        - 기본적으로 Linux/WSL/macOS는 True
+        """
+        # 환경변수 오버라이드
+        if os.environ.get("PDEX_DISABLE_MOUSE") == "1":
+            return False
+        if os.environ.get("PDEX_FORCE_MOUSE") == "1":
+            return True
+
+        if os.name != "nt":
+            return True  # 비 Windows는 기본 OK
+
         env = os.environ
-        if env.get("WT_SESSION"):      # Windows Terminal
+        # Windows Terminal
+        if env.get("WT_SESSION"):
             return True
-        if env.get("ConEmuANSI") == "ON":
+        # VS Code(내장 터미널)
+        if env.get("TERM_PROGRAM") == "vscode" or env.get("VSCODE_PID"):
             return True
-        if env.get("ANSICON"):
+        # ConEmu/ANSICON(ANSI on)
+        if env.get("ConEmuANSI") == "ON" or env.get("ANSICON"):
             return True
-        # PowerShell + 최신 ConHost는 보통 지원하지만 안전하게 False
-        return os.name != 'nt'  # 비 Windows는 True 취급
+        # msys/git bash 등 xterm 류
+        term = (env.get("TERM") or "").lower()
+        if term.startswith("xterm") or "vt100" in term:
+            return True
+
+        return False
     
     # --------- 실행/루프 ----------
     def run(self):
-        
+        if os.name == 'nt':
+            try:
+                asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+            except Exception:
+                pass
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         event_loop = urwid.AsyncioEventLoop(loop=loop)
+
+        # VT 모드 활성 시도 (Windows)
+        self._enable_win_vt()
 
         palette = [
             ("label",       "light cyan",     ""),
@@ -1323,9 +1372,8 @@ class UrwidApp:
         root = self.build()
 
         handle_mouse = True
-        if os.name == 'nt' and not self._supports_vt():
+        if not self._supports_vt():
             handle_mouse = False
-            logging.warning("[ui] VT mouse unsupported terminal detected → handle_mouse=False")
 
         self.loop = urwid.MainLoop(
             root, palette=palette,
