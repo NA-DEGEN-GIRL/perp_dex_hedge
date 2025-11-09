@@ -413,6 +413,7 @@ class UrwidApp:
 
     # --------- 주문 실행 ----------
     async def _exec_one(self, name: str):
+        max_retry = 3
         ex = self.mgr.get_exchange(name)
         if not ex:
             self._log(f"[{name.upper()}] 설정 없음"); return
@@ -422,37 +423,32 @@ class UrwidApp:
         if not side:
             self._log(f"[{name.upper()}] LONG/SHORT 미선택"); return
 
-        try:
-            qty_text = (self.qty_edit[name].edit_text or "").strip()
-            if not qty_text:
-                self._log(f"[{name.upper()}] 수량 없음"); return
-            amount = float(qty_text)
+        for retry in range(0,max_retry):
+            try:
+                qty_text = (self.qty_edit[name].edit_text or "").strip()
+                if not qty_text:
+                    self._log(f"[{name.upper()}] 수량 없음"); return
+                amount = float(qty_text)
 
-            otype = self.order_type[name]
-            price = None
-            if otype == "limit":
-                p_txt = (self.price_edit[name].edit_text or "").strip()
-                if not p_txt:
-                    self._log(f"[{name.upper()}] 가격 없음"); return
-                price = float(p_txt)
-            else:
-                try:
-                    t = await ex.fetch_ticker(f"{self.symbol}/USDC:USDC")
-                    price = t.get("last")
-                except Exception:
-                    price = None
+                otype = self.order_type[name]
 
-            self._log(f"[{name.upper()}] {side.upper()} {amount} {self.symbol} @ {otype}")
-            order = await ex.create_order(
-                symbol=f"{self.symbol}/USDC:USDC",
-                type=otype,
-                side=side,
-                amount=amount,
-                price=price,
-            )
-            self._log(f"[{name.upper()}] 주문 성공: #{order['id']}")
-        except Exception as e:
-            self._log(f"[{name.upper()}] 주문 실패: {e}")
+                # do not fetch again, just re-use it
+                price = float(str(self.current_price).replace(',',''))
+                
+                self._log(f"[{name.upper()}] {side.upper()} {amount} {self.symbol} @ {otype}")
+                order = await ex.create_order(
+                    symbol=f"{self.symbol}/USDC:USDC",
+                    type=otype,
+                    side=side,
+                    amount=amount,
+                    price=price,
+                )
+                self._log(f"[{name.upper()}] 주문 성공: #{order['id']}")
+                break
+            except Exception as e:
+                self._log(f"[{name.upper()}] 주문 실패: {e}")
+                self._log(f"[{name.upper()}] 주문 재시도...{retry+1} | {max_retry}")
+                await asyncio.sleep(0.5)
 
     async def _exec_all(self):
         self._log("[ALL] 동시 주문 시작")

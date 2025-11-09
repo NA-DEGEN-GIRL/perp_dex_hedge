@@ -46,8 +46,6 @@ class ExchangeManager:
                     "apiKey": os.getenv(f"{exchange_name.upper()}_AGENT_API_KEY"),
                     "privateKey": os.getenv(f"{exchange_name.upper()}_PRIVATE_KEY"),
                     "walletAddress": wallet_address,
-                    "enableRateLimit": True,
-                    "timeout": 15000,
                     "options": {
                         "builder": builder_code,
                         "feeInt": fee_int,
