@@ -2,36 +2,37 @@
 import logging
 from typing import Tuple, Optional
 
-from core import ExchangeManager  # 타입 힌트 목적 (선택)
+from core import ExchangeManager
 
 
 class TradingService:
     """
-    UI에서 직접 ccxt를 다루지 않도록 감싸는 공통 서비스.
-    - fetch_current_price(symbol) -> str
-    - fetch_status(exchange_name, symbol) -> (pos_str, col_str, col_val)
-    - execute_order(exchange_name, symbol, amount, order_type, side, price) -> order(dict)
-    - is_configured(name) -> bool
+    UI에서 거래소(ccxt) 호출을 공통 처리:
+    - fetch_hl_price(symbol) : hl=True 거래소 중 하나에서 현재가 1회 조회
+    - fetch_status(name, symbol) : 포지션/담보 조회 문자열 + 수치 반환
+    - execute_order(...)     : 주문 실행(시장가 price None이면 last로 보정 시도)
+    - is_configured(name)    : 연결/설정 여부
+    - is_hl(name)            : hl 엔진 여부
     """
-
     def __init__(self, manager: ExchangeManager):
         self.manager = manager
 
     def is_configured(self, name: str) -> bool:
-        ex = self.manager.get_exchange(name)
-        return ex is not None
+        return self.manager.get_exchange(name) is not None
 
-    async def fetch_current_price(self, symbol: str) -> str:
-        ex = next((e for e in self.manager.exchanges.values() if e), None)
+    def is_hl(self, name: str) -> bool:
+        return bool(self.manager.get_meta(name).get("hl", False))
+
+    async def fetch_hl_price(self, symbol: str) -> str:
+        ex = self.manager.first_hl_exchange()
         if not ex:
             return "N/A"
         try:
             t = await ex.fetch_ticker(f"{symbol}/USDC:USDC")
             return f"{t['last']:,.2f}"
         except Exception as e:
-            logging.error(f"Price fetch error: {e}", exc_info=True)
-            # just pass to use previous price
-            #return "Error"
+            logging.error(f"HL price fetch error: {e}", exc_info=True)
+            return "Error"
 
     async def fetch_status(self, exchange_name: str, symbol: str) -> Tuple[str, str, float]:
         """
@@ -42,16 +43,14 @@ class TradingService:
         if not ex:
             return "📊 Position: N/A", "💰 Collateral: N/A", 0.0
         try:
-            # 동시 호출
-            bal_coro = ex.fetch_balance()
-            pos_coro = ex.fetch_positions([f"{symbol}/USDC:USDC"])
-            balance, positions = await bal_coro, await pos_coro  # 순차보다 명확한 예외 전파를 위해 분리
-            total_collateral = balance.get("USDC", {}).get("total", 0) or 0
+            bal = await ex.fetch_balance()
+            pos = await ex.fetch_positions([f"{symbol}/USDC:USDC"])
+            total_collateral = bal.get("USDC", {}).get("total", 0) or 0
             col_str = f"💰 Collateral: {total_collateral:,.2f} USDC"
 
             pos_str = "📊 Position: N/A"
-            if positions and positions[0]:
-                p = positions[0]
+            if pos and pos[0]:
+                p = pos[0]
                 sz = 0.0
                 try:
                     sz = float(p.get("contracts") or 0)
@@ -82,10 +81,6 @@ class TradingService:
         side: str,        # 'buy' or 'sell'
         price: Optional[float] = None,
     ) -> dict:
-        """
-        ccxt create_order 감싸기
-        - market 주문이고 price가 None이면 ticker last를 price로 시도
-        """
         ex = self.manager.get_exchange(exchange_name)
         if not ex:
             raise RuntimeError(f"{exchange_name} not configured")

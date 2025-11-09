@@ -14,13 +14,27 @@ config.read("config.ini")
 
 EXCHANGES = sorted([section for section in config.sections()])
 
+
 class ExchangeManager:
+    """
+    - exchanges[name] : ccxt 인스턴스 또는 None
+    - meta[name]      : {'show': bool, 'hl': bool}
+    - visible_names() : show=True 인 거래소 목록
+    - first_hl_exchange(): hl=True 이면서 설정/연결된 첫 거래소 인스턴스
+    """
     def __init__(self):
         self.exchanges = {}
+        self.meta = {}
         for exchange_name in EXCHANGES:
+            show = config.get(exchange_name, "show", fallback="True").strip().lower() == "true"
+            hl = config.get(exchange_name, "hl", fallback="True").strip().lower() == "true"
+            self.meta[exchange_name] = {"show": show, "hl": hl}
+
             builder_code = config.get(exchange_name, "builder_code", fallback=None)
             wallet_address = os.getenv(f"{exchange_name.upper()}_WALLET_ADDRESS")
-            if not builder_code or not wallet_address:
+
+            # 하이퍼리퀴드 엔진 거래소만 현재 인스턴스 생성 (hl=True + 키/설정 유효)
+            if not hl or not builder_code or not wallet_address:
                 self.exchanges[exchange_name] = None
                 continue
 
@@ -29,13 +43,11 @@ class ExchangeManager:
 
             self.exchanges[exchange_name] = ccxt.hyperliquid(
                 {
-                    # api키 발급 받을때 나오는 주소
                     "apiKey": os.getenv(f"{exchange_name.upper()}_AGENT_API_KEY"),
-                    # 아래는 api키 발급받을때 나오는 secret key를 의미함.
-                    # 지갑 자체 private key 사용해도 상관은 없으나, 보안상 api key 발급형태로 사용하길 바람
                     "privateKey": os.getenv(f"{exchange_name.upper()}_PRIVATE_KEY"),
-                    # 계정 주소
                     "walletAddress": wallet_address,
+                    "enableRateLimit": True,
+                    "timeout": 15000,
                     "options": {
                         "builder": builder_code,
                         "feeInt": fee_int,
@@ -55,7 +67,6 @@ class ExchangeManager:
             try:
                 await asyncio.gather(*tasks, return_exceptions=True)
             except Exception as e:
-                # 초기화 실패 시에도 앱은 계속 동작하게 하고 경고만 남김
                 logging.warning(f"initialize_all error: {e}")
 
     async def close_all(self):
@@ -65,3 +76,20 @@ class ExchangeManager:
 
     def get_exchange(self, name: str):
         return self.exchanges.get(name)
+
+    def get_meta(self, name: str):
+        return self.meta.get(name, {"show": False, "hl": False})
+
+    def visible_names(self):
+        return [n for n in EXCHANGES if self.meta.get(n, {}).get("show", False)]
+
+    def all_names(self):
+        return list(EXCHANGES)
+
+    def first_hl_exchange(self):
+        """hl=True 이고 설정된 첫 ccxt 인스턴스 반환"""
+        for n in EXCHANGES:
+            m = self.meta.get(n, {})
+            if m.get("hl", False) and self.exchanges.get(n):
+                return self.exchanges[n]
+        return None

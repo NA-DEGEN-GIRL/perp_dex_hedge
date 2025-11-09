@@ -12,10 +12,10 @@ from textual.widgets import (
 )
 from textual.reactive import reactive
 
-from core import ExchangeManager, EXCHANGES  # 핵심: 코어에서 가져옴
-from trading_service import TradingService   # 공통 거래 서비스
+from core import ExchangeManager  # 가시성/메타는 manager에서 제공
+from trading_service import TradingService
 
-# --- 메시지 ---
+
 class InfoUpdate(Message):
     def __init__(self, exchange_name: str, collateral: str, position: str, collateral_val: float) -> None:
         self.exchange_name = exchange_name
@@ -24,16 +24,16 @@ class InfoUpdate(Message):
         self.collateral_value = collateral_val
         super().__init__()
 
-# --- 거래소 UI 위젯 ---
+
 class ExchangeControl(Container):
-    def __init__(self, exchange_name: str, manager: ExchangeManager, **kwargs) -> None:
+    def __init__(self, exchange_name: str, app_ref: "KimbapHeaven", **kwargs) -> None:
         super().__init__(**kwargs)
         self.exchange_name = exchange_name
-        self.manager = manager
-        self.exchange = self.manager.get_exchange(self.exchange_name)
-        self._updating = False              # 중복 실행 가드
-        self._last_pos = None              # 마지막 포지션 문자열 캐시
-        self._last_col = None              # 마지막 담보 문자열 캐시
+        self.app_ref = app_ref
+        self.exchange = self.app_ref.manager.get_exchange(self.exchange_name)
+        self._updating = False
+        self._last_pos = None
+        self._last_col = None
 
     def compose(self) -> ComposeResult:
         is_configured = self.exchange is not None
@@ -44,7 +44,6 @@ class ExchangeControl(Container):
                 yield Static("해당 거래소 설정이 없음", classes="error-text")
                 return
 
-            # 한 줄: Q/P + 주문타입 + 버튼들
             with Horizontal(classes="row-compact"):
                 yield Label("Q:", classes="tiny-label")
                 yield Input(id=f"qty_{self.exchange_name}", classes="ipt-qty")
@@ -58,7 +57,6 @@ class ExchangeControl(Container):
                 yield Button("L", variant="success", id=f"long_{self.exchange_name}", classes="btn-mini")
                 yield Button("S", variant="error", id=f"short_{self.exchange_name}", classes="btn-mini")
                 yield Button("EX", variant="primary", id=f"exec_{self.exchange_name}", classes="btn-mini exec")
-                # 비활성 버튼
                 yield Button("OFF", variant="warning", id=f"disable_{self.exchange_name}", classes="btn-off")
 
             yield Static("📊 Position: N/A", id=f"pos_{self.exchange_name}", classes="info-line")
@@ -66,22 +64,16 @@ class ExchangeControl(Container):
 
     async def on_mount(self) -> None:
         if self.exchange:
-            # 거래소별 시작 시점 분산 (0~700ms 지터)
             await asyncio.sleep(random.uniform(0.0, 0.7))
-            self.set_interval(1.0, self.update_info)  # 1초 주기 그대로
+            self.set_interval(1.0, self.update_info)
             await self.update_info()
 
     async def update_info(self) -> None:
         if not self.exchange or self._updating:
             return
         self._updating = True
-        t0 = time.perf_counter()
-        symbol = self.app.symbol
         try:
-            # 서비스 호출
-            pos_str, col_str, col_val = await self.app.service.fetch_status(self.exchange_name, symbol)
-
-            # 변경된 경우에만 메시지 전송 → 불필요한 리렌더링/메시지 폭주 방지
+            pos_str, col_str, col_val = await self.app_ref.service.fetch_status(self.exchange_name, self.app_ref.symbol)
             if (pos_str != self._last_pos) or (col_str != self._last_col):
                 self._last_pos, self._last_col = pos_str, col_str
                 self.post_message(InfoUpdate(
@@ -90,28 +82,12 @@ class ExchangeControl(Container):
                     position=pos_str,
                     collateral_val=col_val
                 ))
-
-            # 성능 로깅(선택)
-            dt = (time.perf_counter() - t0) * 1000
-            if dt > 800:
-                logging.info(f"[{self.exchange_name.upper()}] update_info took {dt:.0f} ms")
-
         except Exception:
-            logging.error(f"[{self.exchange_name.upper()}] UPDATE_INFO ERROR", exc_info=True)
-            # 에러 시에도 바뀌었을 때만 UI 갱신
-            err_pos, err_col = "📊 Position: Error", "💰 Collateral: Error"
-            if (err_pos != self._last_pos) or (err_col != self._last_col):
-                self._last_pos, self._last_col = err_pos, err_col
-                self.post_message(InfoUpdate(
-                    exchange_name=self.exchange_name,
-                    collateral=err_col,
-                    position=err_pos,
-                    collateral_val=0
-                ))
+            logging.error(f"[{self.exchange_name}] update_info error", exc_info=True)
         finally:
             self._updating = False
 
-# --- 메인 앱 ---
+
 class KimbapHeaven(App):
     CSS_PATH = Path(__file__).with_name("app.tcss")
     symbol = reactive("BTC")
@@ -121,9 +97,9 @@ class KimbapHeaven(App):
     def __init__(self, manager: ExchangeManager):
         super().__init__()
         self.manager = manager
-        self.service = TradingService(manager)  # 공통 서비스
-        self._collateral_by_exchange = {name: 0 for name in EXCHANGES}
-        self.exchange_enabled = {name: False for name in EXCHANGES}
+        self.service = TradingService(manager)
+        self._collateral_by_exchange = {name: 0 for name in self.manager.visible_names()}
+        self.exchange_enabled = {name: False for name in self.manager.visible_names()}
         self._updating_price = False
         self._repeat_task: asyncio.Task | None = None
         self._repeat_cancel = asyncio.Event()
@@ -144,7 +120,7 @@ class KimbapHeaven(App):
                 yield Button("EXECUTE ALL", variant="warning", id="exec-all")
                 yield Button("REVERSE", variant="primary", id="reverse-all")
                 yield Button("종료", variant="error", id="quit-button")
-            
+
             with Horizontal(classes="hdr-row"):
                 yield Button("REPEAT", variant="warning", id="repeat-all")
                 yield Label("Times:", classes='tiny-label')
@@ -156,8 +132,8 @@ class KimbapHeaven(App):
 
         with Container(id="body-scroll"):
             with ScrollableContainer(id="exchanges-container"):
-                for name in EXCHANGES:
-                    yield ExchangeControl(name, self.manager, id=name)
+                for name in self.manager.visible_names():
+                    yield ExchangeControl(name, self, id=name)
 
         yield Log(id="log", highlight=True)
         yield Footer()
@@ -202,7 +178,7 @@ class KimbapHeaven(App):
             if event.value:
                 self.symbol = event.value.upper()
         elif event.input.id == "all-qty-input":
-            for name in EXCHANGES:
+            for name in self.manager.visible_names():
                 try:
                     self.query_one(f"#{name} #qty_{name}", Input).value = event.value
                 except Exception:
@@ -219,11 +195,6 @@ class KimbapHeaven(App):
                 long_b.variant, short_b.variant = "default", "default"
             except Exception:
                 pass
-            try:
-                off_b = self.query_one(f"#{ex_name} #disable_{ex_name}", Button)
-                off_b.variant = "warning"
-            except Exception:
-                pass
             self.log_write(f"[{ex_name.upper()}] 비활성화됨 (EXECUTE ALL 대상 제외)")
             return
 
@@ -233,7 +204,7 @@ class KimbapHeaven(App):
 
         if bid == "reverse-all":
             reversed_count = 0
-            for name in EXCHANGES:
+            for name in self.manager.visible_names():
                 if not self.exchange_enabled.get(name, False):
                     continue
                 side = self.get_selected_side(name)
@@ -243,13 +214,10 @@ class KimbapHeaven(App):
                     long_b = self.query_one(f"#{name} #long_{name}", Button)
                     short_b = self.query_one(f"#{name} #short_{name}", Button)
                     if side == "buy":
-                        long_b.variant = "default"
-                        short_b.variant = "error"
-                        reversed_count += 1
+                        long_b.variant = "default"; short_b.variant = "error"
                     elif side == "sell":
-                        long_b.variant = "success"
-                        short_b.variant = "default"
-                        reversed_count += 1
+                        long_b.variant = "success"; short_b.variant = "default"
+                    reversed_count += 1
                 except Exception:
                     pass
             self.log_write(f"[ALL] REVERSE 완료: {reversed_count}개 거래소 방향 반전")
@@ -265,23 +233,16 @@ class KimbapHeaven(App):
                 else:
                     long_b.variant, short_b.variant = "default", "error"
                 self.exchange_enabled[ex_name] = True
-                off_b = self.query_one(f"#{ex_name} #disable_{ex_name}", Button)
-                off_b.variant = "default"
             except Exception:
                 pass
             return
 
         if bid.startswith("exec_"):
-            await self.execute_order(bid.split("_", 1)[1])
-            return
-
+            await self.execute_order(bid.split("_", 1)[1]); return
         if bid == "exec-all":
-            await self.execute_all_orders()
-            return
-
+            await self.execute_all_orders(); return
         if bid == "quit-button":
-            await self.action_quit()
-            return
+            await self.action_quit(); return
 
     def on_radio_set_changed(self, event: RadioSet.Changed) -> None:
         if event.radio_set.id.startswith("type_"):
@@ -299,24 +260,20 @@ class KimbapHeaven(App):
 
     async def execute_order(self, exchange_name: str) -> None:
         if not self.manager.get_exchange(exchange_name):
-            self.log_write(f"[{exchange_name.upper()}] 주문 불가: 설정 없음")
-            return
+            self.log_write(f"[{exchange_name.upper()}] 주문 불가: 설정 없음"); return
         try:
             qty_input = self.query_one(f"#{exchange_name} #qty_{exchange_name}", Input)
             type_set = self.query_one(f"#{exchange_name} #type_{exchange_name}", RadioSet)
             price_input = self.query_one(f"#{exchange_name} #price_{exchange_name}", Input)
             side = self.get_selected_side(exchange_name)
             if not qty_input.value:
-                self.log_write(f"[{exchange_name.upper()}] 수량을 입력하세요.")
-                return
+                self.log_write(f"[{exchange_name.upper()}] 수량을 입력하세요."); return
             amount = float(qty_input.value)
             order_type = "market" if (type_set.pressed_index in (None, 0)) else "limit"
             price = float(price_input.value) if (order_type == "limit" and price_input.value) else None
             if not side:
-                self.log_write(f"[{exchange_name.upper()}] LONG/SHORT 선택을 하세요.")
-                return
+                self.log_write(f"[{exchange_name.upper()}] LONG/SHORT 선택을 하세요."); return
             self.log_write(f"[{exchange_name.upper()}] {side.upper()} {amount} {self.symbol} @ {order_type}")
-            # 서비스 호출
             order = await self.service.execute_order(exchange_name, self.symbol, amount, order_type, side, price)
             self.log_write(f"[{exchange_name.upper()}] 주문 성공: #{order['id']}")
             await self.query_one(f"#{exchange_name}", ExchangeControl).update_info()
@@ -327,16 +284,14 @@ class KimbapHeaven(App):
     async def execute_all_orders(self):
         self.log_write("[ALL] 모든 거래소 동시 주문 실행...")
         tasks = []
-        for name in EXCHANGES:
+        for name in self.manager.visible_names():
             if not self.manager.get_exchange(name):
                 continue
             if not self.exchange_enabled.get(name, False):
-                self.log_write(f"[ALL] {name.upper()} 건너뜀: 비활성")
-                continue
+                self.log_write(f"[ALL] {name.upper()} 건너뜀: 비활성"); continue
             side = self.get_selected_side(name)
             if not side:
-                self.log_write(f"[ALL] {name.upper()} 건너뜀: LONG/SHORT 미선택")
-                continue
+                self.log_write(f"[ALL] {name.upper()} 건너뜀: LONG/SHORT 미선택"); continue
             tasks.append(self.execute_order(name))
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -348,12 +303,16 @@ class KimbapHeaven(App):
             return
         self._updating_price = True
         try:
-            self.current_price = await self.service.fetch_current_price(self.symbol)
+            # HL 가격 공유 사용
+            self.current_price = await self.service.fetch_hl_price(self.symbol)
         finally:
             self._updating_price = False
 
     async def update_all_exchange_info(self):
-        tasks = [c.update_info() for c in self.query(ExchangeControl) if c.exchange]
+        tasks = []
+        for c in self.query(ExchangeControl):
+            if c.exchange:
+                tasks.append(c.update_info())
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
