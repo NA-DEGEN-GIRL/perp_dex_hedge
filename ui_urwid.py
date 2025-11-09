@@ -11,6 +11,13 @@ from urwid.widget.pile import PileWarning  # urwid 레이아웃 경고 제거용
 from core import ExchangeManager
 import sys
 import os
+# Windows에서 urwid가 필요로 하는 add_reader를 쓰려면 Selector 정책으로 전환 필요
+if os.name == 'nt':
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        logging.info("[ui] WindowsSelectorEventLoopPolicy 적용")
+    except Exception as e:
+        logging.warning(f"[ui] 이벤트 루프 정책 설정 실패: {e}")
 
 # urwid의 레이아웃 경고(PileWarning)를 화면에 출력하지 않도록 억제
 warnings.simplefilter("ignore", PileWarning)
@@ -1278,6 +1285,8 @@ class UrwidApp:
     
     # --------- 실행/루프 ----------
     def run(self):
+        
+
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         event_loop = urwid.AsyncioEventLoop(loop=loop)
