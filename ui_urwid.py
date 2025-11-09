@@ -1,4 +1,3 @@
-# ui_urwid.py
 import asyncio
 import random
 import logging
@@ -23,7 +22,7 @@ class UrwidApp:
         # UI 레퍼런스
         self.loop = None
         self.header = None
-        self.body_list = None
+        self.body_list: urwid.ListBox = None
         self.footer = None
 
         self.ticker_edit = None
@@ -38,19 +37,20 @@ class UrwidApp:
         self.qty_edit: Dict[str, urwid.Edit] = {}
         self.price_edit: Dict[str, urwid.Edit] = {}
         self.type_btn: Dict[str, urwid.Button] = {}
-        self.type_btn_wrap: Dict[str, urwid.AttrMap] = {}
+        self.type_btn_wrap: Dict[str, urwid.Widget] = {}
         self.long_btn: Dict[str, urwid.Button] = {}
-        self.long_btn_wrap: Dict[str, urwid.AttrMap] = {}
+        self.long_btn_wrap: Dict[str, urwid.Widget] = {}
         self.short_btn: Dict[str, urwid.Button] = {}
-        self.short_btn_wrap: Dict[str, urwid.AttrMap] = {}
+        self.short_btn_wrap: Dict[str, urwid.Widget] = {}
         self.off_btn: Dict[str, urwid.Button] = {}
-        self.off_btn_wrap: Dict[str, urwid.AttrMap] = {}
+        self.off_btn_wrap: Dict[str, urwid.Widget] = {}
         self.ex_btn: Dict[str, urwid.Button] = {}
-        self.ex_btn_wrap: Dict[str, urwid.AttrMap] = {}
+        self.ex_btn_wrap: Dict[str, urwid.Widget] = {}
         self.info_text: Dict[str, urwid.Text] = {}
 
         # 로그
         self.log_list = urwid.SimpleListWalker([])
+        self.log_box: urwid.ListBox | None = None
 
         # REPEAT
         self.repeat_task = None
@@ -59,57 +59,71 @@ class UrwidApp:
     # ---------------------- 유틸/로그 ----------------------
     def _log(self, msg: str):
         self.log_list.append(urwid.Text(msg))
+        # 자동 스크롤(맨 아래로 포커스 이동)
+        if self.log_box is not None and len(self.log_list) > 0:
+            self.log_box.set_focus(len(self.log_list) - 1)
         if self.loop:
             self.loop.draw_screen()
 
     def _collateral_sum(self) -> float:
         return sum(self.collateral.values())
 
-    # ---------------------- 헤더/행 빌더 ----------------------
+    # ---------------------- 헤더(3행) ----------------------
     def _hdr_widgets(self):
-        # 입력/표시
+        # 1행: Ticker / Price / Total / QUIT
         self.ticker_edit = urwid.Edit(("label", "Ticker: "), self.symbol)
-        self.price_text = urwid.Text(("info", f"  Price: {self.current_price}"))
-        self.total_text = urwid.Text(("info", "  Total: 0.00 USDC"))
-        self.allqty_edit = urwid.Edit(("label", "  All Qty: "), "")
+        self.price_text = urwid.Text(("info", f"Price: {self.current_price}"))
+        self.total_text = urwid.Text(("info", "Total: 0.00 USDC"))
+        quit_btn = urwid.AttrMap(urwid.Button("QUIT", on_press=self._on_quit), "btn_warn", "btn_focus")
 
-        # 버튼(폭 고정으로 줄바꿈 방지)
-        exec_btn = urwid.Button("EXECUTE ALL", on_press=self._on_exec_all)
-        reverse_btn = urwid.Button("REVERSE", on_press=self._on_reverse)
-        repeat_btn = urwid.Button("REPEAT", on_press=self._on_repeat_toggle)
-        quit_btn = urwid.Button("QUIT", on_press=self._on_quit)
-
-        # 반복 실행 입력
-        self.repeat_times = urwid.Edit(("label", "  Times: "), "10")
-        self.repeat_min = urwid.Edit(("label", "  a(s): "), "3")
-        self.repeat_max = urwid.Edit(("label", "  b(s): "), "7")
-
-        # 구분선
-        sep = urwid.Text(("sep", "│"))
-
-        cols = urwid.Columns(
+        row1 = urwid.Columns(
             [
-                self.ticker_edit,
-                self.price_text,
-                self.total_text,
-                sep,
-                self.allqty_edit,
-                (16, urwid.AttrMap(exec_btn, "btn", "btn_focus")),
-                (12, urwid.AttrMap(reverse_btn, "btn", "btn_focus")),
-                (10, urwid.AttrMap(repeat_btn, "btn", "btn_focus")),
-                self.repeat_times,
-                self.repeat_min,
-                self.repeat_max,
-                (8, urwid.AttrMap(quit_btn, "btn_warn", "btn_focus")),
+                (18, self.ticker_edit),
+                (20, self.price_text),
+                (22, self.total_text),
+                (8, quit_btn),
             ],
             dividechars=1,
         )
-        return cols
 
+        # 2행: All Qty / EXECUTE ALL / REVERSE
+        self.allqty_edit = urwid.Edit(("label", "All Qty: "), "")
+        exec_btn = urwid.AttrMap(urwid.Button("EXECUTE ALL", on_press=self._on_exec_all), "btn", "btn_focus")
+        reverse_btn = urwid.AttrMap(urwid.Button("REVERSE", on_press=self._on_reverse), "btn", "btn_focus")
+
+        row2 = urwid.Columns(
+            [
+                (18, self.allqty_edit),
+                (15, exec_btn),
+                (11, reverse_btn),
+            ],
+            dividechars=1,
+        )
+
+        # 3행: REPEAT (Times / a(s) / b(s) / REPEAT)
+        self.repeat_times = urwid.Edit(("label", "Times: "))
+        self.repeat_min = urwid.Edit(("label", "a(s): "))
+        self.repeat_max = urwid.Edit(("label", "b(s): "))
+        repeat_btn = urwid.AttrMap(urwid.Button("REPEAT", on_press=self._on_repeat_toggle), "btn", "btn_focus")
+
+        row3 = urwid.Columns(
+            [
+                (14, self.repeat_times),
+                (10, self.repeat_min),
+                (10, self.repeat_max),
+                (10, repeat_btn),
+            ],
+            dividechars=1,
+        )
+
+        # 헤더 전체는 Pile로 3행 구성
+        return urwid.Pile([('pack', row1), ('pack', row2), ('pack', row3)])
+
+    # ---------------------- 거래소 카드 ----------------------
     def _row(self, name: str):
-        # 입력칸: 캡션은 label 팔레트, 입력은 edit 팔레트
+        # 입력칸: 포커스 시 배경으로 구분
         qty = urwid.AttrMap(urwid.Edit(("label", "Q:"), ""), "edit", "edit_focus")
-        price = urwid.AttrMap(urwid.Edit(("label", " P:"), ""), "edit", "edit_focus")
+        price = urwid.AttrMap(urwid.Edit(("label", "P:"), ""), "edit", "edit_focus")
         self.qty_edit[name] = qty.base_widget
         self.price_edit[name] = price.base_widget
 
@@ -123,7 +137,7 @@ class UrwidApp:
         self.type_btn[name] = type_btn
         self.type_btn_wrap[name] = type_wrap
 
-        # L/S/OFF/EX
+        # L / S / OFF / EX
         def on_long(btn, n=name):
             self.side[n] = "buy"; self.enabled[n] = True; self._refresh_side(n)
 
@@ -151,38 +165,32 @@ class UrwidApp:
         self.off_btn[name],   self.off_btn_wrap[name]    = off_b,   off_wrap
         self.ex_btn[name],    self.ex_btn_wrap[name]     = ex_b,    ex_wrap
 
-        # 상태 표시(색상은 set_text 시에 마크업으로 부여)
+        # 상태 표시
         info = urwid.Text(("info", "📊 Position: N/A | 💰 Collateral: N/A"))
         self.info_text[name] = info
 
+        # 컨트롤 열 폭을 넉넉히(라벨 줄바꿈 방지)
         controls = urwid.Columns(
             [
                 (12, urwid.Text(("title", f"[{name.upper()}]"))),
-                (12, qty),     # AttrMap(Edit)
-                (12, price),   # AttrMap(Edit)
-                (5,  type_wrap),
-                (5,  long_wrap),
-                (5,  short_wrap),
-                (7,  off_wrap),
-                (5,  ex_wrap),
+                (14, qty),        # Q
+                (14, price),      # P
+                (7,  type_wrap),  # <MKT>/<LMT> 한 줄
+                (5,  long_wrap),  # <L>
+                (5,  short_wrap), # <S>
+                (7,  off_wrap),   # <OFF>
+                (6,  ex_wrap),    # <EX>
             ],
             dividechars=1,
         )
 
-        # 변경 전: LineBox + ('fixed', 1)로 한 줄 고정 → 좁은 터미널에서 2~3줄 렌더되며 충돌
-        # 변경 후: 전부 FLOW(자동 높이)로 구성
-        row = urwid.Pile([
-            controls,   # FLOW
-            info,       # FLOW
-        ])
-
-        return row
+        # 거래소 카드: FLOW로 2줄(controls + info), 카드 사이 Divider는 build()에서 추가
+        return urwid.Pile([controls, info])
 
     def _refresh_type_label(self, name: str):
         self.type_btn[name].set_label("LMT" if self.order_type[name] == "limit" else "MKT")
 
     def _refresh_side(self, name: str):
-        # 선택 상태에 따라 버튼 색 변경
         if self.side[name] == "buy":
             self.long_btn_wrap[name].set_attr_map({None: "btn_long_on"})
             self.short_btn_wrap[name].set_attr_map({None: "btn_short"})
@@ -192,14 +200,13 @@ class UrwidApp:
         else:
             self.long_btn_wrap[name].set_attr_map({None: "btn_long"})
             self.short_btn_wrap[name].set_attr_map({None: "btn_short"})
-        # OFF 버튼은 항상 노랑
         self.off_btn_wrap[name].set_attr_map({None: "btn_off"})
 
     # ---------------------- 화면 구성 ----------------------
     def build(self):
         self.header = self._hdr_widgets()
 
-        # 각 거래소 행을 FLOW로 구성하고, 사이에 Divider로 구분
+        # 각 거래소 행을 FLOW로 구성하고, 사이에 Divider(색 적용)로 구분
         rows = []
         for i, n in enumerate(EXCHANGES):
             rows.append(self._row(n))
@@ -208,17 +215,16 @@ class UrwidApp:
 
         self.body_list = urwid.ListBox(urwid.SimpleListWalker(rows))
 
-        log_box = urwid.ListBox(self.log_list)
-
-        # 제목은 pack(한 줄), 로그 박스는 남는 공간(weight=1)
+        # Logs
+        self.log_box = urwid.ListBox(self.log_list)
         self.footer = urwid.Pile([
             ('pack',  urwid.AttrMap(urwid.Text("Logs"), 'title')),
-            ('fixed', 8, urwid.LineBox(log_box)),
+            ('fixed', 10, urwid.LineBox(self.log_box)),   # 고정 10줄 + 자동 스크롤
         ])
 
         frame = urwid.Frame(
             header=urwid.LineBox(self.header),
-            body=self.body_list,
+            body=self.body_list,  # 거래소가 많아지면 자동 세로 스크롤 가능
             footer=self.footer,
         )
         return frame
@@ -237,10 +243,12 @@ class UrwidApp:
                         self.current_price = f"{t['last']:,.2f}"
                     except Exception:
                         self.current_price = "Error"
+
                 # 헤더 가격/총 담보 업데이트
-                self.price_text.set_text(("info", f"  Price: {self.current_price}"))
+                self.price_text.set_text(("info", f"Price: {self.current_price}"))
                 total = self._collateral_sum()
-                self.total_text.set_text(("info", f"  Total: {total:,.2f} USDC"))
+                self.total_text.set_text(("info", f"Total: {total:,.2f} USDC"))
+
                 await asyncio.sleep(1.0)
             except asyncio.CancelledError:
                 break
@@ -254,7 +262,7 @@ class UrwidApp:
             try:
                 ex = self.mgr.get_exchange(name)
                 if not ex:
-                    self.info_text[name].set_text(("info", "📊 Position: N/A | 💰 Collateral: N/A"))
+                    self.info_text[name].set_text(("info", "📘 Position: N/A  |  💰 Collateral: N/A"))
                     await asyncio.sleep(1.0)
                     continue
 
@@ -265,48 +273,32 @@ class UrwidApp:
                 total_collateral = balance.get("USDC", {}).get("total", 0) or 0
                 self.collateral[name] = float(total_collateral)
 
-                # 포지션 마크업(색상)
-                parts = []
-                emoji_book = "📘"
-                emoji_coin = "💰"
-
                 if positions and positions[0]:
                     p = positions[0]
                     sz = 0.0
-                    try:
-                        sz = float(p.get("contracts") or 0)
-                    except Exception:
-                        sz = 0.0
+                    try: sz = float(p.get("contracts") or 0)
+                    except: sz = 0.0
                     if sz:
                         side = "LONG" if p.get("side") == "long" else "SHORT"
                         pnl = 0.0
-                        try:
-                            pnl = float(p.get("unrealizedPnl") or 0)
-                        except Exception:
-                            pnl = 0.0
-                        side_attr = "long_col" if side == "LONG" else "short_col"
-                        pnl_attr = "pnl_pos" if pnl >= 0 else "pnl_neg"
+                        try: pnl = float(p.get("unrealizedPnl") or 0)
+                        except: pnl = 0.0
                         parts = [
-                            (None, f"{emoji_book} "),
-                            (side_attr, side),
-                            (None, f" {sz:.5f} | PnL: "),
-                            (pnl_attr, f"{pnl:,.2f}"),
-                            (None, f"  | {emoji_coin} Collateral: {total_collateral:,.2f} USDC"),
+                            (None, "📘 "), ("long_col" if side == "LONG" else "short_col", side),
+                            (None, f" {sz:.5f}  |  PnL: "),
+                            ("pnl_pos" if pnl >= 0 else "pnl_neg", f"{pnl:,.2f}"),
+                            (None, f"  |  💰 Collateral: {total_collateral:,.2f} USDC"),
                         ]
                     else:
-                        parts = [
-                            (None, f"{emoji_book} Position: N/A  | {emoji_coin} Collateral: {total_collateral:,.2f} USDC")
-                        ]
+                        parts = [(None, f"📘 Position: N/A  |  💰 Collateral: {total_collateral:,.2f} USDC")]
                 else:
-                    parts = [
-                        (None, f"{emoji_book} Position: N/A  | {emoji_coin} Collateral: {total_collateral:,.2f} USDC")
-                    ]
+                    parts = [(None, f"📘 Position: N/A  |  💰 Collateral: {total_collateral:,.2f} USDC")]
 
                 self.info_text[name].set_text(parts)
 
-                # 헤더의 총 담보 합계도 갱신
+                # 헤더 Total 갱신
                 total = self._collateral_sum()
-                self.total_text.set_text(("info", f"  Total: {total:,.2f} USDC"))
+                self.total_text.set_text(("info", f"Total: {total:,.2f} USDC"))
 
                 await asyncio.sleep(1.0)
             except asyncio.CancelledError:
@@ -325,11 +317,9 @@ class UrwidApp:
             if not self.enabled.get(n, False):
                 continue
             if self.side.get(n) == "buy":
-                self.side[n] = "sell"
-                cnt += 1
+                self.side[n] = "sell"; cnt += 1
             elif self.side.get(n) == "sell":
-                self.side[n] = "buy"
-                cnt += 1
+                self.side[n] = "buy";  cnt += 1
             self._refresh_side(n)
         self._log(f"[ALL] REVERSE 완료: {cnt}개")
 
@@ -347,15 +337,14 @@ class UrwidApp:
                 self._log("[REPEAT] 입력 파싱 실패"); return
             if times <= 0 or a < 0 or b < 0:
                 self._log("[REPEAT] Times>=1, Interval>=0 필요"); return
-            if b < a:
-                a, b = b, a
+            if b < a: a, b = b, a
             self.repeat_cancel.clear()
             self.repeat_task = loop.create_task(self._repeat_runner(times, a, b))
 
     def _on_quit(self, btn):
         raise urwid.ExitMainLoop()
 
-    # ---------------------- 실행 로직 ----------------------
+    # ---------------------- 주문 실행 ----------------------
     async def _exec_one(self, name: str):
         ex = self.mgr.get_exchange(name)
         if not ex:
@@ -372,7 +361,7 @@ class UrwidApp:
                 self._log(f"[{name.upper()}] 수량 없음"); return
             amount = float(qty_text)
 
-            otype = self.order_type[name]  # 'market' or 'limit'
+            otype = self.order_type[name]
             price = None
             if otype == "limit":
                 p_txt = (self.price_edit[name].edit_text or "").strip()
@@ -380,7 +369,6 @@ class UrwidApp:
                     self._log(f"[{name.upper()}] 가격 없음"); return
                 price = float(p_txt)
             else:
-                # 시장가: 슬리피지 계산용 가격 필요 → 현재가 사용 시도
                 try:
                     t = await ex.fetch_ticker(f"{self.symbol}/USDC:USDC")
                     price = t.get("last")
@@ -403,14 +391,11 @@ class UrwidApp:
         self._log("[ALL] 동시 주문 시작")
         tasks = []
         for n in EXCHANGES:
-            if not self.mgr.get_exchange(n):
-                continue
+            if not self.mgr.get_exchange(n): continue
             if not self.enabled.get(n, False):
-                self._log(f"[ALL] {n.upper()} 건너뜀: 비활성")
-                continue
+                self._log(f"[ALL] {n.upper()} 건너뜀: 비활성"); continue
             if not self.side.get(n):
-                self._log(f"[ALL] {n.upper()} 건너뜀: 방향 미선택")
-                continue
+                self._log(f"[ALL] {n.upper()} 건너뜀: 방향 미선택"); continue
             tasks.append(self._exec_one(n))
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -423,8 +408,7 @@ class UrwidApp:
         try:
             for i in range(1, times + 1):
                 if self.repeat_cancel.is_set():
-                    self._log(f"[REPEAT] 취소됨 (진행 {i-1}/{times})")
-                    break
+                    self._log(f"[REPEAT] 취소됨 (진행 {i-1}/{times})"); break
                 self._log(f"[REPEAT] 실행 {i}/{times}")
                 await self._exec_all()
                 if i < times:
@@ -435,8 +419,7 @@ class UrwidApp:
                     except asyncio.TimeoutError:
                         pass
                     if self.repeat_cancel.is_set():
-                        self._log("[REPEAT] 취소됨 (대기 중)")
-                        break
+                        self._log("[REPEAT] 취소됨 (대기 중)"); break
             self._log("[REPEAT] 완료")
         finally:
             self.repeat_task = None
@@ -444,14 +427,10 @@ class UrwidApp:
 
     # ---------------------- 실행/루프 ----------------------
     def run(self):
-        # Python 3.12: 현재 루프 없음 → 새 루프 생성/등록
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-
-        # urwid + asyncio 연동
         event_loop = urwid.AsyncioEventLoop(loop=loop)
 
-        # 팔레트(색상 테마)
         palette = [
             ("label",       "light cyan",     ""),
             ("info",        "light gray",     ""),
@@ -461,8 +440,6 @@ class UrwidApp:
             # 입력(Edit) 스타일
             ("edit",        "white",          ""),
             ("edit_focus",  "black",          "light gray"),
-            ("editcp",      "light cyan",     ""),
-            ("editbx",      "dark gray",      ""),
 
             # 버튼
             ("btn",         "black",          "light gray"),
@@ -487,7 +464,6 @@ class UrwidApp:
         root = self.build()
         self.loop = urwid.MainLoop(root, palette=palette, event_loop=event_loop)
 
-        # 초기화(비동기) → 가격/상태 루프 시작
         async def _bootstrap():
             try:
                 await self.mgr.initialize_all()
@@ -497,7 +473,7 @@ class UrwidApp:
             for n in EXCHANGES:
                 loop.create_task(self._status_loop(n))
 
-            # All Qty 동기화
+            # All Qty → 각 카드 Q 동기화
             def allqty_changed(edit, new):
                 for n in EXCHANGES:
                     if n in self.qty_edit:
