@@ -14,6 +14,22 @@ from core import ExchangeManager
 # urwid의 레이아웃 경고(PileWarning)를 화면에 출력하지 않도록 억제
 warnings.simplefilter("ignore", PileWarning)
 
+class CustomFrame(urwid.Frame):
+    """Tab/Shift+Tab을 앱 핸들러로만 보내고 기본 동작 차단"""
+    def __init__(self, *args, app_ref=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.app_ref = app_ref
+
+    def keypress(self, size, key):
+        # Tab/Shift+Tab은 우리 앱 핸들러로만 보내고 여기서 차단
+        if key in ('tab', 'shift tab'):
+            if self.app_ref and self.app_ref._on_key:
+                result = self.app_ref._on_key(key)
+                # 처리됐으면(True) None 반환 → urwid가 더 이상 처리 안 함
+                if result:
+                    return None
+        # 그 외 키는 부모(기본 Frame)에 위임
+        return super().keypress(size, key)
 
 class UrwidApp:
     def __init__(self, manager: ExchangeManager):
@@ -136,7 +152,7 @@ class UrwidApp:
         # 2행
         self.allqty_edit = urwid.Edit(("label", "All Qty: "), "")
         exec_btn = urwid.AttrMap(urwid.Button("EXECUTE ALL", on_press=self._on_exec_all), "btn_exec", "btn_focus")
-        reverse_btn = urwid.AttrMap(urwid.Button("REVERSE", on_press=self._on_reverse), "btn", "btn_focus")
+        reverse_btn = urwid.AttrMap(urwid.Button("REVERSE", on_press=self._on_reverse), "btn_reverse", "btn_focus")
 
         row2 = urwid.Columns(
             [
@@ -320,10 +336,11 @@ class UrwidApp:
             ('pack',  logs_panel),    # Logs는 내부에서 고정 높이를 이미 줌
         ])
 
-        frame = urwid.Frame(
+        frame = CustomFrame(
             header=urwid.LineBox(self.header),
             body=self.body_list,
             footer=self.footer,
+            app_ref=self  # self 참조 전달
         )
         return frame
 
@@ -545,20 +562,200 @@ class UrwidApp:
                 pass
 
     def _focus_footer(self):
-        if self.loop:
-            frame: urwid.Frame = self.loop.widget
-            frame.focus_part = "footer"
+        if not self.loop:
+            return
+        frame: urwid.Frame = self.loop.widget
+        frame.focus_part = "footer"
+        # Exchanges 박스(LineBox→Pile→row1 Columns)의 첫 칸으로
+        switcher_pile = self._get_switcher_pile()
+        if switcher_pile:
+            try:
+                switcher_pile.focus_position = 0  # row1
+                row1 = switcher_pile.contents[0][0]
+                if isinstance(row1, urwid.Columns):
+                    row1.focus_position = 0
+            except Exception:
+                pass
 
     # ---------- 키 핸들러 ----------
+   # ====================== 선택 가능 판정/언랩 유틸 ======================
+    def _unwrap(self, w):
+        try:
+            while True:
+                if isinstance(w, urwid.AttrMap):   w = w.original_widget
+                elif isinstance(w, urwid.Padding): w = w.original_widget
+                elif isinstance(w, urwid.LineBox): w = w.original_widget
+                elif isinstance(w, urwid.BoxAdapter): w = w._original_widget
+                elif isinstance(w, urwid.Filler):  w = w.body
+                else: break
+        except Exception:
+            pass
+        return w
+
+    def _is_selectable_widget(self, w) -> bool:
+        base = self._unwrap(w)
+        try:
+            return bool(base.selectable())
+        except Exception:
+            return False
+        
+    # ====================== Columns 내부 탐색 헬퍼 ======================
+    def _first_selectable_index(self, columns: urwid.Columns):
+        for i, (w, _) in enumerate(columns.contents):
+            if self._is_selectable_widget(w):
+                return i
+        return None
+
+    def _last_selectable_index(self, columns: urwid.Columns):
+        for i in range(len(columns.contents) - 1, -1, -1):
+            if self._is_selectable_widget(columns.contents[i][0]):
+                return i
+        return None
+
+    def _current_col_index(self, columns: urwid.Columns):
+        try:
+            return columns.focus_position
+        except Exception:
+            _, idx = columns.get_focus()
+            return 0 if idx is None else idx
+
+    def _next_selectable_index(self, columns: urwid.Columns, idx: int):
+        n = len(columns.contents)
+        for j in range(idx + 1, n):
+            if self._is_selectable_widget(columns.contents[j][0]):
+                return j
+        return None
+
+    def _prev_selectable_index(self, columns: urwid.Columns, idx: int):
+        for j in range(idx - 1, -1, -1):
+            if self._is_selectable_widget(columns.contents[j][0]):
+                return j
+        return None
+
+    def _get_header_pile(self):
+        try:
+            frame: urwid.Frame = self.loop.widget
+            header_widget = frame.header
+            header_pile = header_widget.original_widget if isinstance(header_widget, urwid.LineBox) else header_widget
+            return header_pile if isinstance(header_pile, urwid.Pile) else None
+        except Exception:
+            return None
+
+    # 2) Columns 내부 포커스 한 칸 이동(선택 가능한 칸만) ---------
+
+    def _columns_focus_step(self, columns: urwid.Columns, forward: bool = True) -> bool:
+        """Columns에서 다음/이전 '선택 가능한' 칸으로 이동. 이동하면 True."""
+        try:
+            try:
+                idx = columns.focus_position
+            except Exception:
+                _, idx = columns.get_focus()
+                if idx is None:
+                    idx = 0
+
+            n = len(columns.contents)
+            if n == 0:
+                return False
+
+            # 현재 위치 기준으로 앞/뒤로 순회하며 selectable()인 칸을 찾는다
+            for step in range(1, n + 1):
+                j = (idx + step) % n if forward else (idx - step) % n
+                w = columns.contents[j][0]
+                if self._is_selectable_widget(w):
+                    columns.focus_position = j
+                    return True
+            return False
+        except Exception:
+            return False
+
+    # 3) 헤더 내부 Tab 이동(행은 유지, 입력/버튼만 순회) ------------
+
+    def _tab_header_next(self):
+        pile = self._get_header_pile()
+        if not pile: return
+        r = pile.focus_position
+        row = pile.contents[r][0]
+        if not isinstance(row, urwid.Columns): return
+        idx = self._current_col_index(row)
+        nxt = self._next_selectable_index(row, idx)
+        if nxt is not None:
+            row.focus_position = nxt
+            return
+        # 행 끝 → 다음 행 첫 선택항목
+        r_next = (r + 1) % len(pile.contents)
+        pile.focus_position = r_next
+        next_row = pile.contents[r_next][0]
+        if isinstance(next_row, urwid.Columns):
+            f = self._first_selectable_index(next_row)
+            if f is not None:
+                next_row.focus_position = f
+
+    def _tab_header_prev(self):
+        pile = self._get_header_pile()
+        if not pile: return
+        r = pile.focus_position
+        row = pile.contents[r][0]
+        if not isinstance(row, urwid.Columns): return
+        idx = self._current_col_index(row)
+        prv = self._prev_selectable_index(row, idx)
+        if prv is not None:
+            row.focus_position = prv
+            return
+        # 행 처음 → 이전 행 마지막 선택항목
+        r_prev = (r - 1) % len(pile.contents)
+        pile.focus_position = r_prev
+        prev_row = pile.contents[r_prev][0]
+        if isinstance(prev_row, urwid.Columns):
+            l = self._last_selectable_index(prev_row)
+            if l is not None:
+                prev_row.focus_position = l
+
+    # 1) 카드 행(구분선 제외) 인덱스 목록/현재 카드 위치 얻기 ------------------
+
+    def _card_row_indices(self) -> list[int]:
+        """body_list 안에서 '카드(Pile)'가 있는 행 인덱스만 추려서 반환(구분선/텍스트 제외)."""
+        rows = []
+        if not self.body_list or not getattr(self.body_list, "body", None):
+            return rows
+        for i, w in enumerate(self.body_list.body):
+            base = getattr(w, "base_widget", w)
+            if isinstance(base, urwid.Pile):
+                # 카드 Pile: 첫 콘텐츠가 Columns(controls) 인지 확인
+                try:
+                    if isinstance(base.contents[0][0], urwid.Columns):
+                        rows.append(i)
+                except Exception:
+                    pass
+        return rows
+
+    def _current_card_info(self):
+        """(현재카드행인덱스, 카드행순번(0..n-1), 전체카드행인덱스리스트, 현재카드의 controls Columns) 반환."""
+        focus_widget, pos = self.body_list.get_focus()
+        indices = self._card_row_indices()
+        if pos not in indices:
+            # 만약 포커스가 구분선에 있으면 가장 가까운 카드로 보정
+            try:
+                # 위쪽으로
+                up = max([i for i in indices if i <= pos], default=None)
+                if up is None:
+                    up = min(indices) if indices else None
+                if up is not None:
+                    self.body_list.set_focus(up)
+                    focus_widget, pos = self.body_list.get_focus()
+            except Exception:
+                pass
+        if pos not in indices:
+            return None, None, indices, None
+        k = indices.index(pos)  # 현재 카드의 순번
+        base = getattr(focus_widget, "base_widget", focus_widget)
+        controls = base.contents[0][0] if isinstance(base, urwid.Pile) else None
+        return pos, k, indices, controls
+
+    # 2) 본문에서 Tab → 다음 카드의 Q 로 래핑 이동 -----------------------------
     def _tab_body_next(self):
-        """본문(거래소) 영역에서 현재 줄(controls Columns) 내부 포커스를 오른쪽으로 이동"""
+        """본문(거래소 카드)에서 Tab → 줄 끝이면 다음 카드의 Q로 이동"""
         try:
-            # 현재 바디 포커스: Pile([controls, info])
-            try:
-                focus_widget = self.body_list.focus              # 새 표준 속성
-            except AttributeError:
-                focus_widget, _ = self.body_list.get_focus()     # 구식 API(예외적 폴백)
-
+            focus_widget, pos = self.body_list.get_focus()
             if not isinstance(focus_widget, urwid.Pile):
                 return
 
@@ -566,41 +763,145 @@ class UrwidApp:
             if not isinstance(controls, urwid.Columns):
                 return
 
-            try:
-                idx = controls.focus_position                    # 새 표준 속성
-            except AttributeError:
-                _, idx = controls.get_focus()                    # 폴백
+            # 1) 같은 줄 내에서 다음 selectable 칸으로 이동 시도
+            idx = self._current_col_index(controls)
+            nxt = self._next_selectable_index(controls, idx)
+            if nxt is not None:
+                controls.focus_position = nxt
+                return
 
-            n = len(controls.contents)
-            controls.focus_position = (idx + 1) % n              # 새 표준 속성으로 설정
-        except Exception:
-            pass
+            # 2) 줄 끝 → 다음 카드로 이동
+            indices = self._card_row_indices()
+            if pos not in indices:
+                return
+            k = indices.index(pos)
+            k_next = (k + 1) % len(indices)
+            row_next = indices[k_next]
 
+            # 다음 카드로 포커스 이동
+            self.body_list.set_focus(row_next)
 
+            # [핵심] 위젯 렌더링 완료 후 Q로 포커스를 설정하도록 지연 예약
+            def _finalize_focus_to_q(loop, data):
+                try:
+                    # 지금 포커스된 카드 다시 가져오기
+                    current_widget, _ = self.body_list.get_focus()
+                    base = getattr(current_widget, "base_widget", current_widget)
+                    if isinstance(base, urwid.Pile):
+                        base.focus_position = 0  # controls 확정
+                        cols = base.contents[0][0]
+                        if isinstance(cols, urwid.Columns):
+                            # Q=1로 강제
+                            cols.focus_position = 1
+                            self._request_redraw()
+                except Exception as e:
+                    logging.error(f"Tab next finalize error: {e}")
+
+            # 0.01초 후 finalize (위젯 렌더 완료 대기)
+            self.loop.set_alarm_in(0.05, _finalize_focus_to_q)
+
+        except Exception as e:
+            logging.error(f"Tab next exception: {e}", exc_info=True)
+
+    # 3) 본문에서 Shift+Tab → 이전 카드의 EX(마지막 selectable)로 래핑 이동 ----
     def _tab_body_prev(self):
-        """본문(거래소) 영역에서 현재 줄(controls Columns) 내부 포커스를 왼쪽으로 이동"""
+        """본문(거래소 카드)에서 Shift+Tab: 줄 처음이면 이전 카드의 EX(마지막 selectable)로 래핑 이동."""
         try:
-            try:
-                focus_widget = self.body_list.focus
-            except AttributeError:
-                focus_widget, _ = self.body_list.get_focus()
-
-            if not isinstance(focus_widget, urwid.Pile):
+            pos, k, indices, controls = self._current_card_info()
+            if controls is None:
                 return
 
-            controls = focus_widget.contents[0][0]
-            if not isinstance(controls, urwid.Columns):
+            # 1) 같은 카드 내 이전 selectable 칸으로 이동 시도
+            idx = self._current_col_index(controls)
+            prv = self._prev_selectable_index(controls, idx)
+            if prv is not None:
+                controls.focus_position = prv
                 return
 
-            try:
-                idx = controls.focus_position
-            except AttributeError:
-                _, idx = controls.get_focus()
+            # 2) 줄 처음 → 이전 카드로 (래핑)
+            if not indices:
+                return
+            k_prev = (k - 1) % len(indices)
+            row_prev = indices[k_prev]
 
-            n = len(controls.contents)
-            controls.focus_position = (idx - 1) % n
+            # 이전 카드로 포커스 이동
+            self.body_list.set_focus(row_prev)
+            logging.info(f"Tab prev: moving from card {k} to card {k_prev}, row {row_prev}")
+
+            # [핵심] 위젯 렌더링 완료 후 EX(마지막 selectable)로 포커스를 설정하도록 지연 예약
+            def _finalize_focus_to_ex(loop, data):
+                try:
+                    # 지금 포커스된 카드 다시 가져오기
+                    current_widget, _ = self.body_list.get_focus()
+                    base = getattr(current_widget, "base_widget", current_widget)
+                    if isinstance(base, urwid.Pile):
+                        base.focus_position = 0  # controls 확정
+                        cols = base.contents[0][0]
+                        if isinstance(cols, urwid.Columns):
+                            # 마지막 selectable(EX)로 강제
+                            last_idx = self._last_selectable_index(cols)
+                            if last_idx is not None:
+                                cols.focus_position = last_idx
+                                self._request_redraw()
+                except Exception as e:
+                    logging.error(f"Tab prev finalize error: {e}")
+
+            # 0.01초 후 finalize (위젯 렌더 완료 대기)
+            self.loop.set_alarm_in(0.05, _finalize_focus_to_ex)
+
+        except Exception as e:
+            logging.error(f"Tab prev exception: {e}", exc_info=True)
+    # ====================== Exchanges(푸터) Tab 이동 ======================
+    def _get_switcher_pile(self):
+        try:
+            frame: urwid.Frame = self.loop.widget
+            footer_pile = frame.footer if isinstance(frame.footer, urwid.Pile) else None
+            if not footer_pile: return None
+            switcher = footer_pile.contents[0][0]          # ('fixed', 4, LineBox)
+            inner = switcher.original_widget if isinstance(switcher, urwid.LineBox) else switcher  # Pile([row1,row2])
+            return inner if isinstance(inner, urwid.Pile) else None
         except Exception:
-            pass
+            return None
+
+    def _tab_switcher_next(self):
+        pile = self._get_switcher_pile()
+        if not pile: return
+        r = pile.focus_position  # 0 or 1
+        row = pile.contents[r][0]
+        if isinstance(row, urwid.Columns):
+            idx = self._current_col_index(row)
+            nxt = self._next_selectable_index(row, idx)
+            if nxt is not None:
+                row.focus_position = nxt
+                return
+            # 행 끝 → 다음 행 첫 칸
+            r_next = (r + 1) % len(pile.contents)
+            pile.focus_position = r_next
+            next_row = pile.contents[r_next][0]
+            if isinstance(next_row, urwid.Columns):
+                f = self._first_selectable_index(next_row)
+                if f is not None:
+                    next_row.focus_position = f
+
+    def _tab_switcher_prev(self):
+        pile = self._get_switcher_pile()
+        if not pile: return
+        r = pile.focus_position
+        row = pile.contents[r][0]
+        if isinstance(row, urwid.Columns):
+            idx = self._current_col_index(row)
+            prv = self._prev_selectable_index(row, idx)
+            if prv is not None:
+                row.focus_position = prv
+                return
+            # 행 처음 → 이전 행 마지막 칸
+            r_prev = (r - 1) % len(pile.contents)
+            pile.focus_position = r_prev
+            prev_row = pile.contents[r_prev][0]
+            if isinstance(prev_row, urwid.Columns):
+                l = self._last_selectable_index(prev_row)
+                if l is not None:
+                    prev_row.focus_position = l
 
     def _on_key(self, key):
         """
@@ -610,23 +911,21 @@ class UrwidApp:
         # 0) 마우스/비문자 입력(urwid는 mouse press 등을 tuple로 전달) → 무시
         if not isinstance(key, str):
             return
-
         k = key.lower().strip()
 
-        # 현재 포커스 영역
         try:
             frame: urwid.Frame = self.loop.widget
             part = frame.focus_part  # 'header' | 'body' | 'footer'
         except Exception:
             part = None
 
-        # 영역 전환 유틸
+        # 영역 순환 유틸
         def to_next_region():
             if part == 'header':
                 self._focus_body_first()
             elif part == 'body':
                 self._focus_footer()
-            else:  # footer or None
+            else:
                 self._focus_header()
 
         def to_prev_region():
@@ -634,32 +933,48 @@ class UrwidApp:
                 self._focus_body_first()
             elif part == 'body':
                 self._focus_header()
-            else:  # header or None
+            else:
                 self._focus_footer()
 
-        # 1) 영역 전환: 여러 조합 허용 (Ctrl/Alt/Shift+Arrow, PageUp/Down, Ctrl+J/K, F6)
+        # 1) 영역 전환
         next_keys = {'ctrl down', 'meta down', 'shift down', 'page down', 'ctrl j', 'f6'}
         prev_keys = {'ctrl up',   'meta up',   'shift up',   'page up',   'ctrl k'}
-
         if k in next_keys:
             to_next_region()
-            return
+            return True
         if k in prev_keys:
             to_prev_region()
-            return
+            return True
 
-        # 2) Tab / Shift+Tab: 본문(거래소 카드 1행) 내부 칸 이동만 처리
+        # 2) Tab / Shift+Tab: 포커스 영역별 내부 이동 (처리 시 True 반환)
         if k in {'tab', '\t'}:
+            if part == 'header':
+                self._tab_header_next()
+                return True
             if part == 'body':
                 self._tab_body_next()
-                return
+                return True
+            if part == 'footer':
+                if self._get_switcher_pile():
+                    self._tab_switcher_next()
+                    return True
+            return None  # footer에 switcher 없음 등 → 기본 처리 허용
+
         if k in {'shift tab', 'backtab'}:
+            if part == 'header':
+                self._tab_header_prev()
+                return True
             if part == 'body':
                 self._tab_body_prev()
-                return
+                return True
+            if part == 'footer':
+                if self._get_switcher_pile():
+                    self._tab_switcher_prev()
+                    return True
+            return None
 
-        # 그 외 키는 urwid 기본 동작(방향키/엔터 등)에 맡김
-        return
+        # 그 외는 urwid 기본 동작에 맡김
+        return None
     
     # --------- 실행/루프 ----------
     def run(self):
@@ -677,6 +992,7 @@ class UrwidApp:
             ("edit_focus",  "black",          "light gray"),
 
             ("btn",         "black",          "light gray"),
+            ("btn_reverse", "white",          ""),
             ("btn_focus",   "black",          "light blue"),
             ("btn_warn",    "black",          "yellow"),
             ("btn_type",    "black",          "dark cyan"),
