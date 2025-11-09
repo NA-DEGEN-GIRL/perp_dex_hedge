@@ -721,6 +721,7 @@ class UrwidApp:
                     round_idx += 1
                 else:
                     # 무한 반복
+                    round_idx += 1
                     continue
 
             self._log("[BURN] 완료")
