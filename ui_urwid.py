@@ -89,7 +89,10 @@ class UrwidApp:
         self.repeat_cancel = asyncio.Event()
         self.burn_task = None
         self.burn_cancel = asyncio.Event() 
-    
+
+        # 거래소별 status 루프 태스크 관리
+        self._status_tasks: Dict[str, asyncio.Task] = {}
+
     def _set_initial_focus(self, loop=None, data=None):
         """앱 시작 후 즉시 'All Qty' 입력칸에 포커스를 맞춘다."""
         try:
@@ -307,16 +310,39 @@ class UrwidApp:
 
     def _on_toggle_show(self, chk: urwid.CheckBox, state: bool):
         # meta 갱신
+        toggled_name = None
         for n, c in self.switch_checks.items():
             if c is chk:
                 self.mgr.meta[n]["show"] = bool(state)
+                toggled_name = n
                 if not state:
                     # OFF 간주
                     self.enabled[n] = False
                     self.side[n] = None
                 break
-        # 바디 재구성
+
+        # 바디 재구성 (위젯 생성/제거)
         self._rebuild_body_rows()
+
+        # NEW: 토글된 거래소의 status 루프 동적 관리
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = None
+
+        if toggled_name:
+            # ON → status 루프 시작 (exchange가 있는 경우에만)
+            if state and self.mgr.get_exchange(toggled_name):
+                t = self._status_tasks.get(toggled_name)
+                if not t or t.done():
+                    if loop:
+                        self._status_tasks[toggled_name] = loop.create_task(self._status_loop(toggled_name))
+            # OFF → status 루프 취소
+            if not state:
+                t = self._status_tasks.pop(toggled_name, None)
+                if t and not t.done():
+                    t.cancel()
+
         self._request_redraw()
 
     def _rebuild_body_rows(self):
@@ -1284,7 +1310,9 @@ class UrwidApp:
             # 가격/상태 주기 작업 시작 (표시 중인 거래소만 상태 루프)
             loop.create_task(self._price_loop())
             for n in self.mgr.visible_names():
-                loop.create_task(self._status_loop(n))
+                # 태스크 딕셔너리에 관리 (중복 방지)
+                if n not in self._status_tasks or self._status_tasks[n].done():
+                    self._status_tasks[n] = loop.create_task(self._status_loop(n))
 
             # All Qty → 각 카드 Q 동기화
             def allqty_changed(edit, new):
