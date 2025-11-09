@@ -313,29 +313,45 @@ class UrwidApp:
 
     # --------- Exchanges 토글 박스 (GridFlow로 가로 나열) ----------
     def _build_switcher(self):
-        # 체크박스 만들기
+        """
+        Exchanges 토글 박스: 두 줄, 균일 폭 셀.
+        - 각 체크박스를 ('given', cell_w, widget)으로 전달해 고정 폭으로 배치
+        - 이름 길이에 따라 cell_w를 동적으로 산정(최소 12)
+        """
         self.switch_checks = {}
-        cells = []
-        for name in self.mgr.all_names():
+
+        names = self.mgr.all_names()
+        if not names:
+            return urwid.LineBox(urwid.Text("no exchanges"), title="Exchanges")
+
+        # 라벨 최대 길이에 여유분(브래킷·공백 등) 더해 셀 폭 산정
+        max_label = max(len(n.upper()) for n in names)
+        cell_w = max(12, max_label + 6)  # 최소 12칸, 보통 [ ] + 공백 여유 6
+
+        # 두 줄로 균등 분할
+        half = (len(names) + 1) // 2
+        row1_widgets, row2_widgets = [], []
+
+        for idx, name in enumerate(names):
             show = self.mgr.get_meta(name).get("show", False)
             chk = urwid.CheckBox(name.upper(), state=show, on_state_change=self._on_toggle_show)
             self.switch_checks[name] = chk
-            # 폭이 들쭉날쭉하지 않게 Padding으로 약간 여유
-            cells.append(urwid.Padding(chk, width=('relative', 100)))  # 나중에 Columns에 넣을 것
+            # Columns에 'given' 폭으로 직접 넘깁니다 (Padding 불필요)
+            if idx < half:
+                row1_widgets.append(('given', cell_w, chk))
+            else:
+                row2_widgets.append(('given', cell_w, chk))
 
-        # 2줄로 고정: 상단 절반, 하단 절반
-        half = (len(cells) + 1) // 2
-        row1_cells = cells[:half]
-        row2_cells = cells[half:]
+        def to_columns(cells):
+            if not cells:
+                return urwid.Text("")
+            # dividechars로 셀 간 간격만 주면 모두 같은 폭으로 정렬됩니다.
+            return urwid.Columns(cells, dividechars=2)
 
-        # 가로로 쭉 나열 (여백 2칸)
-        row1 = urwid.Columns(row1_cells, dividechars=2)
-        row2 = urwid.Columns(row2_cells, dividechars=2) if row2_cells else urwid.Text("")
+        row1 = to_columns(row1_widgets)
+        row2 = to_columns(row2_widgets)
 
-        # 2줄을 Pile로 묶고 박스로 감싸 시각적 구분
-        box_body = urwid.Pile([row1, row2])
-        box = urwid.LineBox(box_body, title="Exchanges")
-        return box
+        return urwid.LineBox(urwid.Pile([row1, row2]), title="Exchanges")
 
     def _on_toggle_show(self, chk: urwid.CheckBox, state: bool):
         # meta 갱신
@@ -411,7 +427,7 @@ class UrwidApp:
 
         # Footer는 Exchanges 박스(고정 높이 4줄: 콘텐츠 2 + 테두리 2), Logs 패널은 pack
         self.footer = urwid.Pile([
-            ('fixed', 4, switcher),   # 2줄 고정 박스
+            ('fixed', 4, switcher),   # 2줄 + 테두리 2줄 = 4
             ('pack',  logs_panel),    # Logs는 내부에서 고정 높이를 이미 줌
         ])
 
@@ -1420,6 +1436,15 @@ class UrwidApp:
                 # SGR mouse off, 커서 보이기, 스타일 리셋
                 sys.stdout.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?25h\x1b[0m')
                 sys.stdout.flush()
+                # Windows 콘솔 VT 모드 원복(실패해도 무시)
+                if os.name == "nt":
+                    import ctypes
+                    kernel32 = ctypes.windll.kernel32
+                    STD_INPUT_HANDLE  = -10
+                    STD_OUTPUT_HANDLE = -11
+                    hIn = kernel32.GetStdHandle(STD_INPUT_HANDLE)
+                    hOut = kernel32.GetStdHandle(STD_OUTPUT_HANDLE)
+                    mode = ctypes.c_uint()
             except Exception:
                 pass
             try:
