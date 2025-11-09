@@ -93,6 +93,7 @@ class UrwidApp:
 
         # 거래소별 status 루프 태스크 관리
         self._status_tasks: Dict[str, asyncio.Task] = {}
+        self._price_task: asyncio.Task | None = None      # 가격 루프 태스크 보관
 
     def _enable_win_vt(self):
         """Windows 콘솔에서 VT 입력/출력을 가능한 한 활성화."""
@@ -1342,6 +1343,46 @@ class UrwidApp:
 
         return False
     
+    async def _shutdown_tasks(self):
+        """백그라운드 태스크를 모두 정리(cancel & await)해 'pending task' 경고 제거."""
+        # (1) 반복/번 태스크 중단 신호
+        self.repeat_cancel.set()
+        self.burn_cancel.set()
+
+        # (2) 실행 중 태스크 목록 수집
+        tasks: list[asyncio.Task] = []
+
+        if self.repeat_task and not self.repeat_task.done():
+            tasks.append(self.repeat_task)
+        if self.burn_task and not self.burn_task.done():
+            tasks.append(self.burn_task)
+
+        # 상태 루프들
+        for name, t in list(self._status_tasks.items()):
+            if t and not t.done():
+                t.cancel()
+                tasks.append(t)
+        self._status_tasks.clear()
+
+        # 가격 루프
+        if self._price_task and not self._price_task.done():
+            self._price_task.cancel()
+            tasks.append(self._price_task)
+        self._price_task = None
+
+        # (3) 실제 취소 대기 (CancelledError 억제)
+        if tasks:
+            try:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            except Exception:
+                pass
+
+        # (4) 추가로 Manager도 닫기(이미 run() finally에서 호출해도 좋음)
+        try:
+            await self.mgr.close_all()
+        except Exception:
+            pass
+
     # --------- 실행/루프 ----------
     def run(self):
         if os.name == 'nt':
@@ -1405,7 +1446,7 @@ class UrwidApp:
                 logging.warning(f"initialize_all failed: {e}")
 
             # 가격/상태 주기 작업 시작 (표시 중인 거래소만 상태 루프)
-            loop.create_task(self._price_loop())
+            self._price_task = loop.create_task(self._price_loop())
             for n in self.mgr.visible_names():
                 # 태스크 딕셔너리에 관리 (중복 방지)
                 if n not in self._status_tasks or self._status_tasks[n].done():
@@ -1447,10 +1488,12 @@ class UrwidApp:
                     mode = ctypes.c_uint()
             except Exception:
                 pass
+
             try:
-                loop.run_until_complete(self.mgr.close_all())
+                loop.run_until_complete(self._shutdown_tasks())
             except Exception:
                 pass
+
             loop.stop()
             loop.close()
 
