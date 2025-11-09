@@ -510,12 +510,12 @@ class UrwidApp:
                     self.info_text[name].set_text(parts)
                 self.total_text.set_text(("info", f"Total: {self._collateral_sum():,.2f} USDC"))
                 self._request_redraw()
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(2.5)
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logging.error(f"status loop {name}: {e}")
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(2.5)
 
     # --------- 버튼 핸들러 ----------
     def _on_exec_all(self, btn):
@@ -1342,7 +1342,44 @@ class UrwidApp:
             return True
 
         return False
-    
+    async def _kill_ccxt_throttlers(self):
+        """
+        ccxt async_support가 띄운 Throttler.looper 태스크를 강제로 정리.
+        close_all() 이후에도 간헐적으로 남는 경우가 있어 전수 검사해 취소/대기합니다.
+        """
+        try:
+            current = asyncio.current_task()
+        except Exception:
+            current = None
+
+        # 현재 루프의 모든 태스크 중에서 Throttler.looper만 추려서 취소
+        throttlers = []
+        for t in asyncio.all_tasks():
+            if t is current:
+                continue
+            try:
+                cr = t.get_coro()
+                qn = getattr(cr, "__qualname__", "")
+                rn = repr(cr)
+                if "Throttler.looper" in qn or "Throttler.looper" in rn:
+                    if not t.done():
+                        try:
+                            t.cancel()
+                        except Exception:
+                            pass
+                        throttlers.append(t)
+            except Exception:
+                continue
+
+        if throttlers:
+            try:
+                await asyncio.gather(*throttlers, return_exceptions=True)
+            except Exception:
+                pass
+
+        # 한 틱 흘려보내기(취소 전파)
+        await asyncio.sleep(0)
+        
     async def _shutdown_tasks(self):
         """백그라운드 태스크를 모두 정리(cancel & await)해 'pending task' 경고 제거."""
         # (1) 반복/번 태스크 중단 신호
@@ -1382,7 +1419,13 @@ class UrwidApp:
             await self.mgr.close_all()
         except Exception:
             pass
+        
+        # (4) 한 틱 흘려보내고, ccxt Throttler.looper를 한 번 더 강제 수거
         await asyncio.sleep(0)
+        try:
+            await self._kill_ccxt_throttlers()
+        except Exception:
+            pass
 
         # (6) 남은 모든 태스크(특히 ccxt Throttler)를 전수 cancel+await
         try:
@@ -1519,7 +1562,7 @@ class UrwidApp:
                 loop.run_until_complete(loop.shutdown_asyncgens())
             except Exception:
                 pass
-            
+
             loop.stop()
             loop.close()
 
