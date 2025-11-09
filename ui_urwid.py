@@ -1382,6 +1382,25 @@ class UrwidApp:
             await self.mgr.close_all()
         except Exception:
             pass
+        await asyncio.sleep(0)
+
+        # (6) 남은 모든 태스크(특히 ccxt Throttler)를 전수 cancel+await
+        try:
+            current = asyncio.current_task()
+        except Exception:
+            current = None
+
+        pending = [t for t in asyncio.all_tasks() if t is not current]
+        if pending:
+            for t in pending:
+                try:
+                    t.cancel()
+                except Exception:
+                    pass
+            try:
+                await asyncio.gather(*pending, return_exceptions=True)
+            except Exception:
+                pass
 
     # --------- 실행/루프 ----------
     def run(self):
@@ -1488,12 +1507,19 @@ class UrwidApp:
                     mode = ctypes.c_uint()
             except Exception:
                 pass
-
+            
+            # (A) 모든 백그라운드 태스크 정리(우리 태스크 + ccxt Throttler)
             try:
                 loop.run_until_complete(self._shutdown_tasks())
             except Exception:
                 pass
-
+            
+            # (B) async generator 정리
+            try:
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            except Exception:
+                pass
+            
             loop.stop()
             loop.close()
 
