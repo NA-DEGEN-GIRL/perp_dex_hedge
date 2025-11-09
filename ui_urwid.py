@@ -342,7 +342,10 @@ class UrwidApp:
             if not state:
                 t = self._status_tasks.pop(toggled_name, None)
                 if t and not t.done():
-                    t.cancel()
+                    try:
+                        t.cancel()
+                    except Exception:
+                        pass
 
         self._request_redraw()
 
@@ -1261,6 +1264,18 @@ class UrwidApp:
         # 그 외는 urwid 기본 동작에 맡김
         return None
     
+    def _supports_vt(self) -> bool:
+        # Windows에서 VT 지원 여부 추정 (Windows Terminal, ConEmu, ANSICON 등)
+        env = os.environ
+        if env.get("WT_SESSION"):      # Windows Terminal
+            return True
+        if env.get("ConEmuANSI") == "ON":
+            return True
+        if env.get("ANSICON"):
+            return True
+        # PowerShell + 최신 ConHost는 보통 지원하지만 안전하게 False
+        return os.name != 'nt'  # 비 Windows는 True 취급
+    
     # --------- 실행/루프 ----------
     def run(self):
         loop = asyncio.new_event_loop()
@@ -1295,18 +1310,6 @@ class UrwidApp:
             ("pnl_neg",     "light red",      ""),
         ]
 
-        def _supports_vt(self) -> bool:
-            # Windows에서 VT 지원 여부 추정 (Windows Terminal, ConEmu, ANSICON 등)
-            env = os.environ
-            if env.get("WT_SESSION"):      # Windows Terminal
-                return True
-            if env.get("ConEmuANSI") == "ON":
-                return True
-            if env.get("ANSICON"):
-                return True
-            # PowerShell + 최신 ConHost는 보통 지원하지만 안전하게 False
-            return os.name != 'nt'  # 비 Windows는 True 취급
-
         root = self.build()
 
         handle_mouse = True
@@ -1319,13 +1322,6 @@ class UrwidApp:
             event_loop=event_loop,
             unhandled_input=self._on_key,
             handle_mouse=handle_mouse   # ← 여기서 제어
-        )
-
-
-        self.loop = urwid.MainLoop(root,
-            palette=palette,
-            event_loop=event_loop,
-            unhandled_input=self._on_key  # [추가] 키 핸들러 연결
         )
         
         async def _bootstrap():
