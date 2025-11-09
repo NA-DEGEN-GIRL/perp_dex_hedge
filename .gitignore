@@ -4,3 +4,5 @@ ai_models.txt
 *.png
 *.log
 test.py
+__pycache__/
+*.pyc
