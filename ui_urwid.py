@@ -57,6 +57,9 @@ class UrwidApp:
         self.repeat_times = None
         self.repeat_min = None
         self.repeat_max = None
+        self.burn_count = None           # burn 횟수 (1이면 repeat와 동일)
+        self.burn_min = None             # burn interval min(s)
+        self.burn_max = None             # burn interval max(s)
 
         # 거래소별 위젯
         self.qty_edit: Dict[str, urwid.Edit] = {}
@@ -81,9 +84,11 @@ class UrwidApp:
         self.log_list = urwid.SimpleListWalker([])
         self.log_box: urwid.ListBox | None = None
 
-        # REPEAT
+        # REPEAT/BURN 태스크
         self.repeat_task = None
         self.repeat_cancel = asyncio.Event()
+        self.burn_task = None
+        self.burn_cancel = asyncio.Event() 
     
     def _set_initial_focus(self, loop=None, data=None):
         """앱 시작 후 즉시 'All Qty' 입력칸에 포커스를 맞춘다."""
@@ -153,12 +158,14 @@ class UrwidApp:
         self.allqty_edit = urwid.Edit(("label", "All Qty: "), "")
         exec_btn = urwid.AttrMap(urwid.Button("EXECUTE ALL", on_press=self._on_exec_all), "btn_exec", "btn_focus")
         reverse_btn = urwid.AttrMap(urwid.Button("REVERSE", on_press=self._on_reverse), "btn_reverse", "btn_focus")
+        close_positions_btn = urwid.AttrMap(urwid.Button("CLOSE ALL", on_press=self._on_close_positions), "btn_reverse", "btn_focus")
 
         row2 = urwid.Columns(
             [
                 (18, self.allqty_edit),
                 (15, exec_btn),
                 (11, reverse_btn),
+                (13, close_positions_btn),
             ],
             dividechars=1,
         )
@@ -167,7 +174,6 @@ class UrwidApp:
         self.repeat_min = urwid.Edit(("label", "min(s): "))
         self.repeat_max = urwid.Edit(("label", "max(s): "))
         repeat_btn = urwid.AttrMap(urwid.Button("REPEAT", on_press=self._on_repeat_toggle), "btn_exec", "btn_focus")
-
         row3 = urwid.Columns(
             [
                 (14, self.repeat_times),
@@ -177,8 +183,23 @@ class UrwidApp:
             ],
             dividechars=1,
         )
+
+        self.burn_count = urwid.Edit(("label", "Burn: "))
+        self.burn_min   = urwid.Edit(("label", "min(s): ")) 
+        self.burn_max   = urwid.Edit(("label", "max(s): "))
+        burn_btn = urwid.AttrMap(urwid.Button("BURN", on_press=self._on_burn_toggle), "btn_short_on", "btn_focus")
+        row4 = urwid.Columns(
+            [
+                (14, self.burn_count),
+                (13, self.burn_min),
+                (13, self.burn_max),
+                (8, burn_btn),
+            ],
+            dividechars=1,
+        )
+
         # pack 대신 기본(FLOW)로 두어 경고 제거
-        return urwid.Pile([row1, row2, row3])
+        return urwid.Pile([row1, row2, row3, row4])
 
     # --------- 거래소 카드 ----------
     def _row(self, name: str):
@@ -439,6 +460,13 @@ class UrwidApp:
 
     def _on_repeat_toggle(self, btn):
         loop = asyncio.get_event_loop()
+        
+        # burn 돌고 있으면 먼저 멈춤
+        if self.burn_task and not self.burn_task.done():
+            self.burn_cancel.set()
+            self._log("[BURN] 중지 요청")
+        
+        # repeat 돌고 있으면 먼저 멈춤
         if self.repeat_task and not self.repeat_task.done():
             self.repeat_cancel.set()
             self._log("[REPEAT] 중지 요청")
@@ -455,11 +483,53 @@ class UrwidApp:
             self.repeat_cancel.clear()
             self.repeat_task = loop.create_task(self._repeat_runner(times, a, b))
 
+    def _on_burn_toggle(self, btn):
+        loop = asyncio.get_event_loop()
+        # 먼저 기존 repeat/burn 정리
+        if self.repeat_task and not self.repeat_task.done():
+            self.repeat_cancel.set()
+            self._log("[REPEAT] 중지 요청")
+
+        if self.burn_task and not self.burn_task.done():
+            self.burn_cancel.set()
+            self._log("[BURN] 중지 요청")
+            return  # 누르면 중지 동작으로 동작
+
+        # 입력값 파싱
+        try:
+            base_times = int(self.repeat_times.edit_text or "0")
+            rep_min = float(self.repeat_min.edit_text or "0")
+            rep_max = float(self.repeat_max.edit_text or "0")
+            burn_times = int(self.burn_count.edit_text or "0")
+            burn_min = float(self.burn_min.edit_text or "0")
+            burn_max = float(self.burn_max.edit_text or "0")
+        except Exception:
+            self._log("[BURN] 입력 파싱 실패"); return
+        if base_times <= 0 or rep_min < 0 or rep_max < 0 or burn_min < 0 or burn_max < 0:
+            self._log("[BURN] Times>=1, Interval>=0 필요"); return
+        if rep_max < rep_min:
+            rep_min, rep_max = rep_max, rep_min
+        if burn_max < burn_min:
+            burn_min, burn_max = burn_max, burn_min
+
+        # 태스크 시작
+        self.burn_cancel.clear()
+        self.burn_task = loop.create_task(
+            self._burn_runner(burn_times, base_times, rep_min, rep_max, burn_min, burn_max)
+        )
+    
+    def _on_close_positions(self, btn):
+        asyncio.get_event_loop().create_task(self._close_all_positions())
+
     def _on_quit(self, btn):
         raise urwid.ExitMainLoop()
 
     # --------- 주문 실행 ----------
     async def _exec_one(self, name: str):
+        # 반복/번 해제 신호가 이미 켜져 있으면 즉시 반환
+        if self.repeat_cancel.is_set() or self.burn_cancel.is_set():
+            return
+        
         max_retry = 3
         ex = self.mgr.get_exchange(name)
         if not ex:
@@ -471,6 +541,9 @@ class UrwidApp:
             self._log(f"[{name.upper()}] LONG/SHORT 미선택"); return
 
         for attempt in range(1,max_retry+1):
+            # 루프 중에도 즉시 중단
+            if self.repeat_cancel.is_set() or self.burn_cancel.is_set():
+                return
             try:
                 qty_text = (self.qty_edit[name].edit_text or "").strip()
                 if not qty_text:
@@ -509,15 +582,27 @@ class UrwidApp:
                 await asyncio.sleep(0.5)
 
     async def _exec_all(self):
+        # 즉시 중단 체크
+        if self.repeat_cancel.is_set() or self.burn_cancel.is_set():
+            self._log("[ALL] 취소됨")
+            return
+        
         self._log("[ALL] 동시 주문 시작")
         tasks = []
         for n in self.mgr.visible_names():
-            if not self.mgr.get_exchange(n): continue
+            if self.repeat_cancel.is_set() or self.burn_cancel.is_set():
+                self._log("[ALL] 취소됨(준비 중)")
+                break
+
+            if not self.mgr.get_exchange(n): 
+                continue
             if not self.enabled.get(n, False):
                 self._log(f"[ALL] {n.upper()} 건너뜀: 비활성"); continue
             if not self.side.get(n):
                 self._log(f"[ALL] {n.upper()} 건너뜀: 방향 미선택"); continue
+            
             tasks.append(self._exec_one(n))
+
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
             self._log("[ALL] 완료")
@@ -527,24 +612,196 @@ class UrwidApp:
     async def _repeat_runner(self, times: int, a: float, b: float):
         self._log(f"[REPEAT] 시작: {times}회, 간격 {a:.2f}~{b:.2f}s 랜덤")
         try:
-            for i in range(1, times + 1):
-                if self.repeat_cancel.is_set():
-                    self._log(f"[REPEAT] 취소됨 (진행 {i-1}/{times})"); break
+            i = 1
+            while i <= times:
+                # 즉시 중단 체크 (BURN 취소 또는 REPEAT 취소)
+                if self.repeat_cancel.is_set() or self.burn_cancel.is_set():
+                    self._log(f"[REPEAT] 취소됨 (진행 {i-1}/{times})")
+                    break
+
                 self._log(f"[REPEAT] 실행 {i}/{times}")
                 await self._exec_all()
-                if i < times:
-                    delay = random.uniform(a, b)
-                    self._log(f"[REPEAT] 대기 {delay:.2f}s ...")
-                    try:
-                        await asyncio.wait_for(self.repeat_cancel.wait(), timeout=delay)
-                    except asyncio.TimeoutError:
-                        pass
-                    if self.repeat_cancel.is_set():
-                        self._log("[REPEAT] 취소됨 (대기 중)"); break
+
+                if i >= times:
+                    break
+
+                # sleep도 cancel 즉시 반영
+                delay = random.uniform(a, b)
+                self._log(f"[REPEAT] 대기 {delay:.2f}s ...")
+                try:
+                    # 둘 중 하나라도 켜지면 즉시 리턴
+                    await asyncio.wait_for(self._wait_cancel_any(), timeout=delay)
+                except asyncio.TimeoutError:
+                    pass
+
+                if self.repeat_cancel.is_set() or self.burn_cancel.is_set():
+                    self._log(f"[REPEAT] 취소됨 (대기 중)")
+                    break
+
+                i += 1
+
             self._log("[REPEAT] 완료")
         finally:
             self.repeat_task = None
             self.repeat_cancel.clear()
+
+    async def _burn_runner(self, burn_times: int, base_times: int, rep_min: float, rep_max: float, burn_min: float, burn_max: float):
+        """
+        burn_times=1 → repeat(base_times) 한 번만
+        burn_times>=2 → repeat(base_times) → (sleep c~d → reverse → repeat(2*base_times)) × (burn_times-1)
+        burn_times<0  → repeat(base_times) → 이후 무한 루프 [sleep c~d → reverse → repeat(2*base_times)]
+        """
+        self._log(f"[BURN] 시작: burn_times={burn_times}, base={base_times}, repeat_interval={rep_min}~{rep_max}, burn_interval={burn_min}~{burn_max}")
+        try:
+            # 1) 첫 라운드: repeat(base_times)
+            if self.burn_cancel.is_set(): return
+            await self._repeat_runner(base_times, rep_min, rep_max)
+            if self.burn_cancel.is_set(): return
+
+            # 2) 이후 라운드: 2*base_times, 방향 반전, burn interval 휴식
+            round_idx = 2
+            while True:
+                if burn_times > 0 and round_idx > burn_times:
+                    break
+                # burn interval 대기
+                delay = random.uniform(burn_min, burn_max)
+                self._log(f"[BURN] interval 대기 {delay:.2f}s ... (round {round_idx}/{burn_times if burn_times>0 else '∞'})")
+                try:
+                    await asyncio.wait_for(asyncio.shield(self._wait_cancel_any()), timeout=delay)
+                except asyncio.TimeoutError:
+                    pass
+                if self.burn_cancel.is_set(): break
+
+                # reverse
+                self._reverse_enabled()
+                if self.burn_cancel.is_set(): break
+
+                # repeat 2×base_times
+                await self._repeat_runner(2 * base_times, rep_min, rep_max)
+                if self.burn_cancel.is_set(): break
+
+                if burn_times > 0:
+                    round_idx += 1
+                else:
+                    # 무한 반복
+                    continue
+
+            self._log("[BURN] 완료")
+
+        finally:
+            self.burn_task = None
+            self.burn_cancel.clear()
+
+    async def _wait_cancel_any(self):
+        # 단순 event wait (실제 wait_for의 timeout과 함께 사용)
+        # cancel 이벤트가 켜지면 즉시 반환
+        while not (self.repeat_cancel.is_set() or self.burn_cancel.is_set()):
+            await asyncio.sleep(0.05)
+
+    def _reverse_enabled(self):
+        """활성(enabled=True) + 방향 선택된 거래소만 LONG↔SHORT 토글."""
+        cnt = 0
+        for n in self.mgr.visible_names():
+            if not self.enabled.get(n, False):
+                continue
+            cur = self.side.get(n)
+            if cur == "buy":
+                self.side[n] = "sell"
+                cnt += 1
+            elif cur == "sell":
+                self.side[n] = "buy"
+                cnt += 1
+            # 버튼 색/상태 갱신
+            try:
+                if n in self.long_btn_wrap and n in self.short_btn_wrap:
+                    if self.side[n] == "buy":
+                        self.long_btn_wrap[n].set_attr_map({None: "btn_long_on"})
+                        self.short_btn_wrap[n].set_attr_map({None: "btn_short"})
+                    elif self.side[n] == "sell":
+                        self.long_btn_wrap[n].set_attr_map({None: "btn_long"})
+                        self.short_btn_wrap[n].set_attr_map({None: "btn_short_on"})
+                    else:
+                        self.long_btn_wrap[n].set_attr_map({None: "btn_long"})
+                        self.short_btn_wrap[n].set_attr_map({None: "btn_short"})
+            except Exception:
+                pass
+        self._log(f"[ALL] REVERSE 완료: {cnt}개")
+
+    async def _close_all_positions(self):
+        """
+        show=True & enabled=True 거래소만 대상으로,
+        현재 포지션의 반대 방향으로 '시장가' 주문을 넣어 포지션을 0으로 만든다.
+        - 포지션 없으면 건너뜀
+        - 지정가/가격 입력과 무관하게 항상 시장가(price=현재가) 사용
+        """
+        self._log("[CLOSE] CLOSE ALL 시작")
+        tasks = []
+        for n in self.mgr.visible_names():
+            # OFF는 건너뜀
+            if not self.enabled.get(n, False):
+                self._log(f"[CLOSE] {n.upper()} 건너뜀: 비활성(OFF)")
+                continue
+            ex = self.mgr.get_exchange(n)
+            if not ex:
+                self._log(f"[CLOSE] {n.upper()} 건너뜀: 설정 없음")
+                continue
+            tasks.append(self._close_one_position(n, ex))
+
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            ok = sum(1 for r in results if not isinstance(r, Exception))
+            self._log(f"[CLOSE] 완료: 성공 {ok}/{len(tasks)}")
+        else:
+            self._log("[CLOSE] 실행할 거래소가 없습니다.")
+
+    async def _close_one_position(self, name: str, ex):
+        """단일 거래소 청산(시장가) 헬퍼."""
+        max_retry = 3
+        for attempt in range(1,max_retry+1):
+            try:
+                # 현재 포지션 조회
+                positions = await ex.fetch_positions([f"{self.symbol}/USDC:USDC"])
+                if not positions or not positions[0]:
+                    self._log(f"[{name.upper()}] 포지션 없음")
+                    return
+
+                p = positions[0]
+                size = 0.0
+                try:
+                    size = float(p.get("contracts") or 0)
+                except Exception:
+                    size = 0.0
+
+                if not size:
+                    self._log(f"[{name.upper()}] 포지션 0")
+                    return
+
+                cur_side = "long" if p.get("side") == "long" else "short"
+                close_side = "sell" if cur_side == "long" else "buy"
+                amount = abs(size)
+
+                # 시장가 price: 현재가 사용 (파싱 실패 시 보조 조회)
+                price = float(str(self.current_price).replace(",", ""))
+                
+                self._log(f"[{name.upper()}] CLOSE: {cur_side.upper()} {size} → {close_side.upper()} {amount} {self.symbol} @ market")
+                order = await ex.create_order(
+                    symbol=f"{self.symbol}/USDC:USDC",
+                    type="market",
+                    side=close_side,
+                    amount=amount,
+                    price=price,
+                    params = {"reduceOnly":True}
+                )
+                self._log(f"[{name.upper()}] CLOSE 성공: #{order.get('id','?')}")
+                break
+
+            except Exception as e:
+                self._log(f"[{name.upper()}] CLOSE 실패: {e}")
+                self._log(f"[{name.upper()}] CLOSE 재시도...{attempt} | {max_retry}")
+                if attempt >= max_retry:
+                    self._log(f"[{name.upper()}] 재시도 한도 초과, 중단")
+                    return
+                await asyncio.sleep(0.5)
 
     def _focus_header(self):
         if self.loop:
