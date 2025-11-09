@@ -106,7 +106,7 @@ class UrwidApp:
         )
         # 2행
         self.allqty_edit = urwid.Edit(("label", "All Qty: "), "")
-        exec_btn = urwid.AttrMap(urwid.Button("EXECUTE ALL", on_press=self._on_exec_all), "btn", "btn_focus")
+        exec_btn = urwid.AttrMap(urwid.Button("EXECUTE ALL", on_press=self._on_exec_all), "btn_exec", "btn_focus")
         reverse_btn = urwid.AttrMap(urwid.Button("REVERSE", on_press=self._on_reverse), "btn", "btn_focus")
 
         row2 = urwid.Columns(
@@ -121,7 +121,7 @@ class UrwidApp:
         self.repeat_times = urwid.Edit(("label", "Times: "))
         self.repeat_min = urwid.Edit(("label", "a(s): "))
         self.repeat_max = urwid.Edit(("label", "b(s): "))
-        repeat_btn = urwid.AttrMap(urwid.Button("REPEAT", on_press=self._on_repeat_toggle), "btn", "btn_focus")
+        repeat_btn = urwid.AttrMap(urwid.Button("REPEAT", on_press=self._on_repeat_toggle), "btn_exec", "btn_focus")
 
         row3 = urwid.Columns(
             [
@@ -423,17 +423,25 @@ class UrwidApp:
         if not side:
             self._log(f"[{name.upper()}] LONG/SHORT 미선택"); return
 
-        for retry in range(0,max_retry):
+        for attempt in range(1,max_retry+1):
             try:
                 qty_text = (self.qty_edit[name].edit_text or "").strip()
                 if not qty_text:
                     self._log(f"[{name.upper()}] 수량 없음"); return
                 amount = float(qty_text)
 
-                otype = self.order_type[name]
+                otype = (self.order_type[name] or "").lower()
 
-                # do not fetch again, just re-use it
-                price = float(str(self.current_price).replace(',',''))
+                if otype == "limit":
+                    # [수정] 지정가: 입력된 가격을 사용
+                    p_txt = (self.price_edit[name].edit_text or "").strip()
+                    if not p_txt:
+                        self._log(f"[{name.upper()}] 지정가(Price) 없음")
+                        return
+                    price = float(p_txt)
+                else:
+                    # 시장가: 캐시된 현재가 사용
+                    price = float(str(self.current_price).replace(",", ""))
                 
                 self._log(f"[{name.upper()}] {side.upper()} {amount} {self.symbol} @ {otype}")
                 order = await ex.create_order(
@@ -447,7 +455,10 @@ class UrwidApp:
                 break
             except Exception as e:
                 self._log(f"[{name.upper()}] 주문 실패: {e}")
-                self._log(f"[{name.upper()}] 주문 재시도...{retry+1} | {max_retry}")
+                self._log(f"[{name.upper()}] 주문 재시도...{attempt} | {max_retry}")
+                if attempt >= max_retry:
+                    self._log(f"[{name.upper()}] 재시도 한도 초과, 중단")
+                    return
                 await asyncio.sleep(0.5)
 
     async def _exec_all(self):
@@ -488,6 +499,139 @@ class UrwidApp:
             self.repeat_task = None
             self.repeat_cancel.clear()
 
+    def _focus_header(self):
+        if self.loop:
+            frame: urwid.Frame = self.loop.widget
+            frame.focus_part = "header"
+
+    def _focus_body_first(self):
+        if self.loop and self.body_list:
+            frame: urwid.Frame = self.loop.widget
+            frame.focus_part = "body"
+            try:
+                # 첫 가시 거래소 카드로 이동
+                if len(self.body_list.body) > 0:
+                    self.body_list.set_focus(0)
+            except Exception:
+                pass
+
+    def _focus_footer(self):
+        if self.loop:
+            frame: urwid.Frame = self.loop.widget
+            frame.focus_part = "footer"
+
+    # ---------- 키 핸들러 ----------
+    def _tab_body_next(self):
+        """본문(거래소) 영역에서 현재 줄(controls Columns) 내부 포커스를 오른쪽으로 이동"""
+        try:
+            # 현재 바디 포커스: Pile([controls, info])
+            try:
+                focus_widget = self.body_list.focus              # 새 표준 속성
+            except AttributeError:
+                focus_widget, _ = self.body_list.get_focus()     # 구식 API(예외적 폴백)
+
+            if not isinstance(focus_widget, urwid.Pile):
+                return
+
+            controls = focus_widget.contents[0][0]
+            if not isinstance(controls, urwid.Columns):
+                return
+
+            try:
+                idx = controls.focus_position                    # 새 표준 속성
+            except AttributeError:
+                _, idx = controls.get_focus()                    # 폴백
+
+            n = len(controls.contents)
+            controls.focus_position = (idx + 1) % n              # 새 표준 속성으로 설정
+        except Exception:
+            pass
+
+
+    def _tab_body_prev(self):
+        """본문(거래소) 영역에서 현재 줄(controls Columns) 내부 포커스를 왼쪽으로 이동"""
+        try:
+            try:
+                focus_widget = self.body_list.focus
+            except AttributeError:
+                focus_widget, _ = self.body_list.get_focus()
+
+            if not isinstance(focus_widget, urwid.Pile):
+                return
+
+            controls = focus_widget.contents[0][0]
+            if not isinstance(controls, urwid.Columns):
+                return
+
+            try:
+                idx = controls.focus_position
+            except AttributeError:
+                _, idx = controls.get_focus()
+
+            n = len(controls.contents)
+            controls.focus_position = (idx - 1) % n
+        except Exception:
+            pass
+
+    def _on_key(self, key):
+        """
+        탭/시프트탭 + Ctrl/Alt/Shift+위·아래 + PageUp/Down + F6 + Ctrl+J/K.
+        마우스 이벤트(tuple)는 무시.
+        """
+        # 0) 마우스/비문자 입력(urwid는 mouse press 등을 tuple로 전달) → 무시
+        if not isinstance(key, str):
+            return
+
+        k = key.lower().strip()
+
+        # 현재 포커스 영역
+        try:
+            frame: urwid.Frame = self.loop.widget
+            part = frame.focus_part  # 'header' | 'body' | 'footer'
+        except Exception:
+            part = None
+
+        # 영역 전환 유틸
+        def to_next_region():
+            if part == 'header':
+                self._focus_body_first()
+            elif part == 'body':
+                self._focus_footer()
+            else:  # footer or None
+                self._focus_header()
+
+        def to_prev_region():
+            if part == 'footer':
+                self._focus_body_first()
+            elif part == 'body':
+                self._focus_header()
+            else:  # header or None
+                self._focus_footer()
+
+        # 1) 영역 전환: 여러 조합 허용 (Ctrl/Alt/Shift+Arrow, PageUp/Down, Ctrl+J/K, F6)
+        next_keys = {'ctrl down', 'meta down', 'shift down', 'page down', 'ctrl j', 'f6'}
+        prev_keys = {'ctrl up',   'meta up',   'shift up',   'page up',   'ctrl k'}
+
+        if k in next_keys:
+            to_next_region()
+            return
+        if k in prev_keys:
+            to_prev_region()
+            return
+
+        # 2) Tab / Shift+Tab: 본문(거래소 카드 1행) 내부 칸 이동만 처리
+        if k in {'tab', '\t'}:
+            if part == 'body':
+                self._tab_body_next()
+                return
+        if k in {'shift tab', 'backtab'}:
+            if part == 'body':
+                self._tab_body_prev()
+                return
+
+        # 그 외 키는 urwid 기본 동작(방향키/엔터 등)에 맡김
+        return
+    
     # --------- 실행/루프 ----------
     def run(self):
         loop = asyncio.new_event_loop()
@@ -522,8 +666,12 @@ class UrwidApp:
         ]
 
         root = self.build()
-        self.loop = urwid.MainLoop(root, palette=palette, event_loop=event_loop)
-
+        self.loop = urwid.MainLoop(root,
+            palette=palette,
+            event_loop=event_loop,
+            unhandled_input=self._on_key  # [추가] 키 핸들러 연결
+        )
+        
         async def _bootstrap():
             try:
                 await self.mgr.initialize_all()
@@ -561,7 +709,7 @@ class UrwidApp:
             loop.stop()
             loop.close()
 
-
+'''
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
@@ -574,3 +722,4 @@ if __name__ == "__main__":
         app.run()
     except KeyboardInterrupt:
         pass
+'''    
