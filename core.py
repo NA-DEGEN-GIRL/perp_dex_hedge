@@ -64,7 +64,11 @@ class ExchangeManager:
         for exchange_name in EXCHANGES:
             show = config.get(exchange_name, "show", fallback="True").strip().lower() == "true"
             hl = config.get(exchange_name, "hl", fallback="True").strip().lower() == "true"
-            self.meta[exchange_name] = {"show": show, "hl": hl}
+            # FrontendMarket 플래그 로딩
+            fm_raw = config.get(exchange_name, "FrontendMarket", fallback="False")
+            frontend_market = (fm_raw or "").strip().lower() == "true"
+
+            self.meta[exchange_name] = {"show": show, "hl": hl, "frontend_market": frontend_market}
 
             builder_code = config.get(exchange_name, "builder_code", fallback=None)
             wallet_address = os.getenv(f"{exchange_name.upper()}_WALLET_ADDRESS")
@@ -112,7 +116,7 @@ class ExchangeManager:
         return self.exchanges.get(name)
 
     def get_meta(self, name: str):
-        return self.meta.get(name, {"show": False, "hl": False})
+        return self.meta.get(name, {"show": False, "hl": False, "frontend_market": False})
 
     def visible_names(self):
         return [n for n in EXCHANGES if self.meta.get(n, {}).get("show", False)]

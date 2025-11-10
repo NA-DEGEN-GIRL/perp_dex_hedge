@@ -9,8 +9,11 @@ import urwid
 from urwid.widget.pile import PileWarning  # urwid 레이아웃 경고 제거용
 
 from core import ExchangeManager
+from trading_service import TradingService
 import sys
 import os
+import contextlib
+import re
 
 # urwid의 레이아웃 경고(PileWarning)를 화면에 출력하지 않도록 억제
 warnings.simplefilter("ignore", PileWarning)
@@ -81,6 +84,9 @@ class UrwidApp:
         self.switcher_list_walker: urwid.SimpleListWalker | None = None
         self.switch_checks: Dict[str, urwid.CheckBox] = {}
 
+        # trading service
+        self.service = TradingService(self.mgr)
+
         # 로그
         self.log_list = urwid.SimpleListWalker([])
         self.log_box: urwid.ListBox | None = None
@@ -95,6 +101,45 @@ class UrwidApp:
         self._status_tasks: Dict[str, asyncio.Task] = {}
         self._price_task: asyncio.Task | None = None      # 가격 루프 태스크 보관
 
+
+    def _status_bracket_to_urwid(self, pos_str: str, col_str: str):
+        """
+        trading_service.fetch_status가 주는 문자열(예: '[green]LONG[/] 0.1 | PnL: [red]-0.02[/]')
+        을 urwid 마크업 리스트로 변환.
+        규칙:
+        - 첫 번째 [green]/[red] 블록 → side 색(long_col/short_col)
+        - 두 번째 [green]/[red] 블록 → pnl 색(pnl_pos/pnl_neg)
+        """
+        # 태그 토큰화
+        tokens = re.split(r'(\[green\]|\[red\]|\[/\])', pos_str)
+        parts = []
+        attr = None
+        seen_colored_blocks = 0
+
+        for tok in tokens:
+            if tok in ('[green]', '[red]'):
+                # 어떤 블록인지에 따라 attr 결정
+                seen_colored_blocks += 1
+                if seen_colored_blocks == 1:
+                    attr = 'long_col' if tok == '[green]' else 'short_col'
+                else:
+                    attr = 'pnl_pos' if tok == '[green]' else 'pnl_neg'
+            elif tok == '[/]':
+                attr = None
+            elif tok:
+                # 실제 텍스트
+                if attr:
+                    parts.append((attr, tok))
+                else:
+                    parts.append((None, tok))
+
+        # 앞에 아이콘 + 뒤에 collateral 문자열 붙이기
+        # pos_str 앞의 "📊 "은 서비스에서 이미 포함되어 있을 수 있음. 일관성을 위해 교체.
+        # pos_str에서 '📊 '이 없는 경우도 있으니, 아이콘은 여기서 추가하지 않고 그대로 parts만 사용.
+        # col_str은 색상 없이 붙입니다.
+        parts.append((None, f" | {col_str}"))
+        return parts
+    
     def _enable_win_vt(self):
         """Windows 콘솔에서 VT 입력/출력을 가능한 한 활성화."""
         if os.name != "nt":
@@ -294,23 +339,55 @@ class UrwidApp:
             ],
             dividechars=1,
         )
-        # 전부 FLOW로(자동 높이); 고정 높이 강제 X
-        return urwid.Pile([controls, info])
+        card = urwid.Pile([controls, info])  # ← 기존에는 바로 return 하던 부분
+
+        # [추가] 카드 생성 직후 현재 상태에 맞게 버튼 강조 반영
+        # 초기 enabled[name]은 False이므로 OFF 버튼이 강조(btn_off_on)로 보입니다.
+        self._refresh_side(name)
+
+        return card
 
     def _refresh_type_label(self, name: str):
         self.type_btn[name].set_label("LMT" if self.order_type[name] == "limit" else "MKT")
 
     def _refresh_side(self, name: str):
-        if self.side[name] == "buy":
-            self.long_btn_wrap[name].set_attr_map({None: "btn_long_on"})
-            self.short_btn_wrap[name].set_attr_map({None: "btn_short"})
-        elif self.side[name] == "sell":
-            self.long_btn_wrap[name].set_attr_map({None: "btn_long"})
-            self.short_btn_wrap[name].set_attr_map({None: "btn_short_on"})
+        """
+        버튼 스타일 반영:
+        - enabled=False → OFF 강조(btn_off_on), L/S 기본색
+        - enabled=True & side=='buy' → L 강조, S 기본, OFF 기본
+        - enabled=True & side=='sell' → S 강조, L 기본, OFF 기본
+        - enabled=True & side=None → L/S/ OFF 모두 기본
+        """
+        off_wrap = self.off_btn_wrap.get(name)
+        long_wrap = self.long_btn_wrap.get(name)
+        short_wrap = self.short_btn_wrap.get(name)
+
+        # 방어
+        if not (off_wrap and long_wrap and short_wrap):
+            return
+
+        if not self.enabled.get(name, False):
+            # OFF 상태(비활성) → OFF 강조
+            long_wrap.set_attr_map({None: "btn_long"})
+            short_wrap.set_attr_map({None: "btn_short"})
+            off_wrap.set_attr_map({None: "btn_off_on"})
+            return
+
+        # enabled=True
+        side = self.side.get(name)
+        if side == "buy":
+            long_wrap.set_attr_map({None: "btn_long_on"})
+            short_wrap.set_attr_map({None: "btn_short"})
+            off_wrap.set_attr_map({None: "btn_off"})
+        elif side == "sell":
+            long_wrap.set_attr_map({None: "btn_long"})
+            short_wrap.set_attr_map({None: "btn_short_on"})
+            off_wrap.set_attr_map({None: "btn_off"})
         else:
-            self.long_btn_wrap[name].set_attr_map({None: "btn_long"})
-            self.short_btn_wrap[name].set_attr_map({None: "btn_short"})
-        self.off_btn_wrap[name].set_attr_map({None: "btn_off"})
+            # 방향 미선택이지만 enabled=True인 경우 (드문 케이스)
+            long_wrap.set_attr_map({None: "btn_long"})
+            short_wrap.set_attr_map({None: "btn_short"})
+            off_wrap.set_attr_map({None: "btn_off"})
 
     # --------- Exchanges 토글 박스 (GridFlow로 가로 나열) ----------
     def _build_switcher(self):
@@ -445,18 +522,8 @@ class UrwidApp:
         while True:
             try:
                 self.symbol = (self.ticker_edit.edit_text or "BTC").upper()
-                # HL 가격 공유: hl=True + 설정된 첫 거래소에서만 조회
-                ex = self.mgr.first_hl_exchange()
-                if not ex:
-                    self.current_price = "N/A"
-                else:
-                    try:
-                        t = await ex.fetch_ticker(f"{self.symbol}/USDC:USDC")
-                        self.current_price = f"{t['last']:,.2f}"
-                    except Exception as e:
-                        self._log(f"[Error] 가격 fetch error {e}")
-                        # 그냥 pass 해서 이전 데이터 쓰도록
-
+                # 서비스 사용: HL 가격 공유 1회 조회
+                self.current_price = await self.service.fetch_hl_price(self.symbol)
                 self.price_text.set_text(("info", f"Price: {self.current_price}"))
                 self.total_text.set_text(("info", f"Total: {self._collateral_sum():,.2f} USDC"))
                 self._request_redraw()
@@ -471,43 +538,13 @@ class UrwidApp:
         await asyncio.sleep(random.uniform(0.0, 0.7))
         while True:
             try:
-                ex = self.mgr.get_exchange(name)
-                if not ex:
-                    self.info_text.get(name, urwid.Text("")).set_text(("info", "📘 Position: N/A  |  💰 Collateral: N/A"))
-                    self._request_redraw()
-                    await asyncio.sleep(1.0)
-                    continue
-
-                bal_coro = ex.fetch_balance()
-                pos_coro = ex.fetch_positions([f"{self.symbol}/USDC:USDC"])
-                balance, positions = await asyncio.gather(bal_coro, pos_coro, return_exceptions=False)
-
-                total_collateral = balance.get("USDC", {}).get("total", 0) or 0
-                self.collateral[name] = float(total_collateral)
-
-                if positions and positions[0]:
-                    p = positions[0]
-                    sz = 0.0
-                    try: sz = float(p.get("contracts") or 0)
-                    except: sz = 0.0
-                    if sz:
-                        side = "LONG" if p.get("side") == "long" else "SHORT"
-                        pnl = 0.0
-                        try: pnl = float(p.get("unrealizedPnl") or 0)
-                        except: pnl = 0.0
-                        parts = [
-                            (None, "📘 "), ("long_col" if side == "LONG" else "short_col", side),
-                            (None, f" {sz:.5f}  |  PnL: "),
-                            ("pnl_pos" if pnl >= 0 else "pnl_neg", f"{pnl:,.2f}"),
-                            (None, f"  |  💰 Collateral: {total_collateral:,.2f} USDC"),
-                        ]
-                    else:
-                        parts = [(None, f"📘 Position: N/A  |  💰 Collateral: {total_collateral:,.2f} USDC")]
-                else:
-                    parts = [(None, f"📘 Position: N/A  |  💰 Collateral: {total_collateral:,.2f} USDC")]
-
+                # 서비스 사용: 포지션/담보 문자열 + 수치
+                pos_str, col_str, col_val = await self.service.fetch_status(name, self.symbol)
+                # 담보 총합 갱신
+                self.collateral[name] = float(col_val)
                 if name in self.info_text:
-                    self.info_text[name].set_text(parts)
+                    markup_parts = self._status_bracket_to_urwid(pos_str, col_str)
+                    self.info_text[name].set_text(markup_parts)
                 self.total_text.set_text(("info", f"Total: {self._collateral_sum():,.2f} USDC"))
                 self._request_redraw()
                 await asyncio.sleep(2.5)
@@ -605,7 +642,6 @@ class UrwidApp:
         if self.repeat_cancel.is_set() or self.burn_cancel.is_set():
             return
         
-        max_retry = 3
         ex = self.mgr.get_exchange(name)
         if not ex:
             self._log(f"[{name.upper()}] 설정 없음"); return
@@ -615,6 +651,7 @@ class UrwidApp:
         if not side:
             self._log(f"[{name.upper()}] LONG/SHORT 미선택"); return
 
+        max_retry = 3
         for attempt in range(1,max_retry+1):
             # 루프 중에도 즉시 중단
             if self.repeat_cancel.is_set() or self.burn_cancel.is_set():
@@ -639,11 +676,12 @@ class UrwidApp:
                     price = float(str(self.current_price).replace(",", ""))
                 
                 self._log(f"[{name.upper()}] {side.upper()} {amount} {self.symbol} @ {otype}")
-                order = await ex.create_order(
-                    symbol=f"{self.symbol}/USDC:USDC",
-                    type=otype,
-                    side=side,
+                order = await self.service.execute_order(
+                    exchange_name=name,
+                    symbol=self.symbol,
                     amount=amount,
+                    order_type=otype,
+                    side=side,
                     price=price,
                 )
                 self._log(f"[{name.upper()}] 주문 성공: #{order['id']}")
@@ -835,42 +873,22 @@ class UrwidApp:
         max_retry = 3
         for attempt in range(1,max_retry+1):
             try:
-                # 현재 포지션 조회
-                positions = await ex.fetch_positions([f"{self.symbol}/USDC:USDC"])
-                if not positions or not positions[0]:
-                    self._log(f"[{name.upper()}] 포지션 없음")
-                    return
-
-                p = positions[0]
-                size = 0.0
+                # 현재가를 price_hint로 전달(서비스에서 실패 시 보조 조회)
                 try:
-                    size = float(p.get("contracts") or 0)
+                    hint = float(str(self.current_price).replace(",", ""))
                 except Exception:
-                    size = 0.0
+                    hint = None
 
-                if not size:
-                    self._log(f"[{name.upper()}] 포지션 0")
-                    return
-
-                cur_side = "long" if p.get("side") == "long" else "short"
-                close_side = "sell" if cur_side == "long" else "buy"
-                amount = abs(size)
-
-                # 시장가 price: 현재가 사용 (파싱 실패 시 보조 조회)
-                price = float(str(self.current_price).replace(",", ""))
-                
-                self._log(f"[{name.upper()}] CLOSE: {cur_side.upper()} {size} → {close_side.upper()} {amount} {self.symbol} @ market")
-                order = await ex.create_order(
-                    symbol=f"{self.symbol}/USDC:USDC",
-                    type="market",
-                    side=close_side,
-                    amount=amount,
-                    price=price,
-                    params = {"reduceOnly":True}
+                order = await self.service.close_position(
+                    exchange_name=name,
+                    symbol=self.symbol,
+                    price_hint=hint,
                 )
+                if order is None:
+                    # 포지션 없음/이미 0
+                    return
                 self._log(f"[{name.upper()}] CLOSE 성공: #{order.get('id','?')}")
-                break
-
+                return
             except Exception as e:
                 self._log(f"[{name.upper()}] CLOSE 실패: {e}")
                 self._log(f"[{name.upper()}] CLOSE 재시도...{attempt} | {max_retry}")
@@ -1342,6 +1360,7 @@ class UrwidApp:
             return True
 
         return False
+    
     async def _kill_ccxt_throttlers(self):
         """
         ccxt async_support가 띄운 Throttler.looper 태스크를 강제로 정리.
@@ -1481,6 +1500,7 @@ class UrwidApp:
             ("btn_short",   "light red",      ""),
             ("btn_short_on","black",          "light red"),
             ("btn_off",     "yellow",         ""),
+            ("btn_off_on",  "black",          "yellow"),
 
             ("long_col",    "light green",    ""),
             ("short_col",   "light red",      ""),
@@ -1532,7 +1552,8 @@ class UrwidApp:
         self.loop.set_alarm_in(0, self._set_initial_focus)
 
         try:
-            self.loop.run()
+            with open(os.devnull, "w") as devnull, contextlib.redirect_stderr(devnull):
+                self.loop.run()
         finally:
             # 마우스 트래킹/커서/색 복구
             try:

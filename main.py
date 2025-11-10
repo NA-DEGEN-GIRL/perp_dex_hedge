@@ -11,13 +11,33 @@ from ui_urwid import UrwidApp  # urwid UI도 선택 가능하게 추가
 #   set PDEX_UI_DEFAULT=urwid      # Windows PowerShell
 DEFAULT_UI = os.getenv("PDEX_UI_DEFAULT", "urwid")  # textual / urwid
 
+def _setup_logging():
+    # 파일 핸들러만 사용, 기존 핸들러 싹 정리
+    log_level = os.getenv("PDEX_LOG_LEVEL", "INFO").upper()
+    log_to_console = os.getenv("PDEX_LOG_CONSOLE", "0") == "1"  # 필요할 때만 콘솔 출력
+
+    root = logging.getLogger()
+    root.handlers.clear()
+    root.setLevel(getattr(logging, log_level, logging.INFO))
+
+    fmt = logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s")
+    fh = logging.FileHandler("debug.log", mode="w", encoding="utf-8")
+    fh.setFormatter(fmt)
+    root.addHandler(fh)
+
+    if log_to_console:
+        sh = logging.StreamHandler()
+        sh.setFormatter(fmt)
+        root.addHandler(sh)
+
+    # 서드파티/비동기 로거 소음 억제
+    logging.getLogger("asyncio").setLevel(logging.CRITICAL)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    # 필요 시 ccxt 로깅도 낮춰줍니다
+    logging.getLogger("ccxt").setLevel(logging.ERROR)
+
 def main():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-        filename="debug.log",
-        filemode="w",
-    )
+    _setup_logging()
     logging.info("Application starting...")
 
     parser = argparse.ArgumentParser(description="Hyperliquid Multi-DEX Trader")
@@ -33,7 +53,7 @@ def main():
 
     try:
         if args.ui == "textual":
-            # Textual: 기존과 동일하게 실행
+            # deprecated
             app = KimbapHeaven(manager=manager)
             app.run()
         else:
