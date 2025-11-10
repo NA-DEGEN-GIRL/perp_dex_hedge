@@ -5,25 +5,10 @@ import time
 from typing import Tuple, Optional
 from core import ExchangeManager
 
-def _build_file_only_logger(name: str, filename: str = "debug.log", level: int = logging.INFO) -> logging.Logger:
-    lg = logging.getLogger(name)
-    # 전용 핸들러만 쓰고, 루트로 전파 금지 → 콘솔로 안 나감
-    lg.propagate = False
-    # 중복 추가 방지
-    if not lg.handlers:
-        fmt = logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s")
-        fh = logging.FileHandler(filename, mode="a", encoding="utf-8")
-        fh.setFormatter(fmt)
-        lg.addHandler(fh)
-    lg.setLevel(level)
-    return lg
-
 DEBUG_FRONTEND = False
-logger = _build_file_only_logger(
-    "trading_service",
-    filename="debug.log",
-    level=logging.DEBUG if DEBUG_FRONTEND else logging.INFO
-)
+logger = logging.getLogger("trading_service")
+logger.propagate = True                    # 루트로 전파해 main.py의 FileHandler만 사용
+logger.setLevel(logging.DEBUG if DEBUG_FRONTEND else logging.INFO)
 
 class TradingService:
     """

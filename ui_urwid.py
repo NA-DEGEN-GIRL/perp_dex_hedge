@@ -540,9 +540,9 @@ class UrwidApp:
         await asyncio.sleep(random.uniform(0.0, 0.7))
         while True:
             try:
-                # balance는 거래소별 5초마다만 요청
+                # balance는 거래소별 2.5 초마다만 요청
                 now = time.monotonic()
-                need_balance = (now - self._last_balance_at.get(name, 0.0) >= 5.0)
+                need_balance = (now - self._last_balance_at.get(name, 0.0) >= 2.5)
 
                 pos_str, col_str, col_val = await self.service.fetch_status(
                     name, self.symbol, need_balance=need_balance
@@ -557,12 +557,12 @@ class UrwidApp:
                 self.total_text.set_text(("info", f"Total: {self._collateral_sum():,.2f} USDC"))
                 self._request_redraw()
 
-                # 2.5~3.2초 사이 랜덤 지터로 분산
-                await asyncio.sleep(2.5 + random.uniform(0.0, 0.7))
+                # 0.5~1.7초 사이 랜덤 지터로 분산
+                await asyncio.sleep(0.5 + random.uniform(0.0, 0.7))
 
             except asyncio.CancelledError:
                 break
-            
+
             except Exception as e:
                 logging.error(f"status loop {name}: {e}")
                 await asyncio.sleep(2.5 + random.uniform(0.0, 0.7))
