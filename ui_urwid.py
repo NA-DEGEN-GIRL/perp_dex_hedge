@@ -104,6 +104,8 @@ class UrwidApp:
         
         self._last_balance_at: Dict[str, float] = {}  # [추가]
 
+        self._ticker_lev_alarm = None  # 디바운스 핸들
+
     def _status_bracket_to_urwid(self, pos_str: str, col_str: str):
         """
         trading_service.fetch_status가 주는 문자열(예: '[green]LONG[/] 0.1 | PnL: [red]-0.02[/]')
@@ -141,6 +143,36 @@ class UrwidApp:
         # col_str은 색상 없이 붙입니다.
         parts.append((None, f" | {col_str}"))
         return parts
+    
+    def _inject_usdc_value_into_pos(self, pos_str: str) -> str:
+        """
+        pos_str 예: '📊 [green]LONG[/] 0.12345 | PnL: [red]-1.23[/]'
+        → '📊 [green]LONG[/] 0.12345 (3,456.78 USDC) | PnL: [red]-1.23[/]'
+        현재가(self.current_price)가 숫자일 때만 삽입. 실패 시 원문 유지.
+        """
+        try:
+            price = float(str(self.current_price).replace(",", ""))
+        except Exception:
+            return pos_str  # 현재가가 숫자가 아니면 원문 유지
+
+        # 사이즈를 캡처: 닫는 괄호 ']' 뒤의 공백들 다음에 오는 숫자, 그리고 뒤에 ' | PnL:'이 이어지는 패턴
+        m = re.search(r"\]\s*([+-]?\d+(?:\.\d+)?)(?=\s*\|\s*PnL:)", pos_str)
+        if not m:
+            return pos_str
+
+        size_str = m.group(1)
+        try:
+            size = float(size_str)
+        except Exception:
+            return pos_str
+
+        usdc_value = size * price
+        injected = f"{size_str} ({usdc_value:,.2f} USDC)"
+
+        # 캡처된 사이즈 부분만 교체
+        start, end = m.span(1)
+        new_pos = pos_str[:start] + injected + pos_str[end:]
+        return new_pos
     
     def _enable_win_vt(self):
         """Windows 콘솔에서 VT 입력/출력을 가능한 한 활성화."""
@@ -549,6 +581,8 @@ class UrwidApp:
                 )
                 if need_balance:
                     self._last_balance_at[name] = now
+
+                pos_str = self._inject_usdc_value_into_pos(pos_str)
 
                 self.collateral[name] = float(col_val)
                 if name in self.info_text:
@@ -1557,9 +1591,33 @@ class UrwidApp:
             # Ticker 변경 즉시 반영
             def ticker_changed(edit, new):
                 self.symbol = (new or "BTC").upper()
+
+                # 직전 예약 취소(디바운스)
+                try:
+                    if self._ticker_lev_alarm:
+                        self.loop.remove_alarm(self._ticker_lev_alarm)
+                except Exception:
+                    pass
+
+                def _apply_max_lev(loop_, data):
+                    try:
+                        asyncio.get_event_loop().create_task(
+                            self.service.ensure_hl_max_leverage_for_all(self.symbol)
+                        )
+                    except Exception as e:
+                        logging.info(f"[LEVERAGE] ensure_hl_max_leverage_for_all failed: {e}")
+
+                # 0.4초 뒤 한 번만 호출(빠른 타이핑 방지)
+                self._ticker_lev_alarm = self.loop.set_alarm_in(0.4, _apply_max_lev)
+
             urwid.connect_signal(self.ticker_edit, "change", ticker_changed)
 
             self._request_redraw()
+
+            try:
+                await self.service.ensure_hl_max_leverage_for_all(self.symbol)
+            except Exception as e:
+                logging.info(f"[LEVERAGE] initial ensure max leverage skipped: {e}")
 
         loop.run_until_complete(_bootstrap())
         self.loop.set_alarm_in(0, self._set_initial_focus)

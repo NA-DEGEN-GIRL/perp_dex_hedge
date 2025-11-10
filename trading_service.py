@@ -4,6 +4,7 @@ import os
 import time
 from typing import Tuple, Optional
 from core import ExchangeManager
+import asyncio
 
 DEBUG_FRONTEND = False
 logger = logging.getLogger("trading_service")
@@ -28,6 +29,133 @@ class TradingService:
         self._balance_every: float = 5.0                           # balance 최소 간격(초)
         self._last_balance_at: dict[str, float] = {}               # balance 최근 호출 시각
         self._backoff_sec: dict[str, float] = {}                   # per-ex 백오프(초)
+        # (추가) HL 마켓 레버리지/모드 캐시: (exchange, market_id) -> dict
+        self._hl_lev_cache: dict[tuple[str, str], dict] = {}
+        # (추가) 심볼별 레버리지/모드 적용 여부 캐시
+        self._lev_mode_applied: dict[tuple[str, str], bool] = {}
+        self._lev_mode_last_at: dict[tuple[str, str], float] = {}
+
+
+    def _hl_market_id(self, symbol: str) -> str:
+        # 본 프로젝트는 HL perp의 쿼트가 USDC:USDC로 고정
+        return f"{symbol}/USDC:USDC"
+
+    async def _hl_get_max_lev_info(self, ex, market_id: str) -> tuple[Optional[int], bool]:
+        """
+        HL 마켓 정보에서 (maxLeverage, onlyIsolated)를 관용적으로 추출.
+        (limits.leverage.max) -> (maxLeverage) -> (info.maxLeverage) 순으로 시도.
+        """
+        try:
+            # ccxt 마켓 캐시가 있으면 우선 사용
+            if getattr(ex, "markets", None) and market_id in ex.markets:
+                m = ex.markets[market_id]
+            else:
+                await ex.load_markets()
+                m = ex.markets.get(market_id, None)
+            if not m:
+                # fetch_markets로 강제 로드
+                await ex.fetch_markets()
+                m = ex.markets.get(market_id, None)
+            if not m:
+                return None, False
+
+            # onlyIsolated 추출(기본 False)
+            only_isolated = bool(m.get("onlyIsolated", False) or m.get("info", {}).get("onlyIsolated", False))
+
+            # maxLeverage 추출
+            max_lev = None
+            try:
+                limits = m.get("limits", {})
+                lev = limits.get("leverage", {})
+                val = lev.get("max", None)
+                if val is not None:
+                    max_lev = int(float(val))
+            except Exception:
+                pass
+            if max_lev is None:
+                try:
+                    if "maxLeverage" in m and m["maxLeverage"] is not None:
+                        max_lev = int(float(m["maxLeverage"]))
+                except Exception:
+                    pass
+            if max_lev is None:
+                try:
+                    info = m.get("info", {})
+                    if "maxLeverage" in info and info["maxLeverage"] is not None:
+                        max_lev = int(float(info["maxLeverage"]))
+                except Exception:
+                    pass
+
+            return max_lev, only_isolated
+        except Exception as e:
+            logger.info("[LEVERAGE] market info read failed: %s", e)
+            return None, False
+
+    async def ensure_hl_max_leverage_for_exchange(self, exchange_name: str, symbol: str):
+        """
+        HL 거래소에 대해: 해당 심볼의 maxLeverage를 읽어 cross/isolated 설정 및 레버리지 설정을 1회만 적용.
+        """
+        ex = self.manager.get_exchange(exchange_name)
+        meta = self.manager.get_meta(exchange_name) or {}
+        if not ex or not meta.get("hl", False):
+            return
+
+        market_id = self._hl_market_id(symbol)
+        key = (exchange_name, market_id)
+        if self._lev_mode_applied.get(key):
+            return  # 이미 설정됨
+
+        # 캐시: 먼저 조회
+        cached = self._hl_lev_cache.get(key)
+        if cached is None:
+            max_lev, only_iso = await self._hl_get_max_lev_info(ex, market_id)
+            self._hl_lev_cache[key] = {"maxLeverage": max_lev, "onlyIsolated": only_iso}
+        else:
+            max_lev = cached.get("maxLeverage")
+            only_iso = cached.get("onlyIsolated", False)
+
+        # config leverage가 있으면 max와 비교해 더 작은 값 사용
+        cfg_lev = meta.get("leverage")
+        if cfg_lev:
+            try:
+                cfg_lev = int(cfg_lev)
+            except Exception:
+                cfg_lev = None
+
+        if max_lev is None and cfg_lev is None:
+            logger.info("[LEVERAGE] %s: %s no leverage info (skip)", exchange_name, market_id)
+            self._lev_mode_applied[key] = True  # 중복 호출 방지
+            return
+
+        use_lev = cfg_lev if (cfg_lev and max_lev is None) else (max_lev if (cfg_lev is None) else min(cfg_lev, max_lev))
+
+        # 1) 마진 모드: onlyIsolated True면 isolated, 아니면 cross
+        try:
+            mode = "isolated" if only_iso else "cross"
+            await ex.set_margin_mode(mode, market_id, params={})
+            logger.info("[LEVERAGE] %s: set_margin_mode(%s, %s) OK", exchange_name, mode, market_id)
+        except Exception as e:
+            logger.info("[LEVERAGE] %s: set_margin_mode unsupported/failed: %s", exchange_name, e)
+
+        # 2) 레버리지 설정
+        if use_lev:
+            try:
+                await ex.set_leverage(int(use_lev), market_id, params={})
+                logger.info("[LEVERAGE] %s: set_leverage(%s, %s) OK", exchange_name, use_lev, market_id)
+            except Exception as e:
+                logger.info("[LEVERAGE] %s: set_leverage(%s, %s) failed: %s", exchange_name, use_lev, market_id, e)
+
+        self._lev_mode_applied[key] = True
+        self._lev_mode_last_at[key] = time.monotonic()
+
+    async def ensure_hl_max_leverage_for_all(self, symbol: str):
+        """설정된 모든 HL 거래소에 대해 ensure_hl_max_leverage_for_exchange 실행."""
+        tasks = []
+        for name in self.manager.all_names():
+            if self.manager.get_exchange(name) and self.manager.get_meta(name).get("hl", False):
+                tasks.append(self.ensure_hl_max_leverage_for_exchange(name, symbol))
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     def _is_rate_limited(self, err: Exception | str) -> bool:
         s = str(err).lower()
@@ -38,6 +166,7 @@ class TradingService:
 
     def is_hl(self, name: str) -> bool:
         return bool(self.manager.get_meta(name).get("hl", False))
+    
 
     async def fetch_hl_price(self, symbol: str) -> str:
         ex = self.manager.first_hl_exchange()
