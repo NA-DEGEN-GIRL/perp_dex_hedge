@@ -14,6 +14,7 @@ import sys
 import os
 import contextlib
 import re
+import time
 
 # urwid의 레이아웃 경고(PileWarning)를 화면에 출력하지 않도록 억제
 warnings.simplefilter("ignore", PileWarning)
@@ -100,7 +101,8 @@ class UrwidApp:
         # 거래소별 status 루프 태스크 관리
         self._status_tasks: Dict[str, asyncio.Task] = {}
         self._price_task: asyncio.Task | None = None      # 가격 루프 태스크 보관
-
+        
+        self._last_balance_at: Dict[str, float] = {}  # [추가]
 
     def _status_bracket_to_urwid(self, pos_str: str, col_str: str):
         """
@@ -538,21 +540,32 @@ class UrwidApp:
         await asyncio.sleep(random.uniform(0.0, 0.7))
         while True:
             try:
-                # 서비스 사용: 포지션/담보 문자열 + 수치
-                pos_str, col_str, col_val = await self.service.fetch_status(name, self.symbol)
-                # 담보 총합 갱신
+                # balance는 거래소별 5초마다만 요청
+                now = time.monotonic()
+                need_balance = (now - self._last_balance_at.get(name, 0.0) >= 5.0)
+
+                pos_str, col_str, col_val = await self.service.fetch_status(
+                    name, self.symbol, need_balance=need_balance
+                )
+                if need_balance:
+                    self._last_balance_at[name] = now
+
                 self.collateral[name] = float(col_val)
                 if name in self.info_text:
                     markup_parts = self._status_bracket_to_urwid(pos_str, col_str)
                     self.info_text[name].set_text(markup_parts)
                 self.total_text.set_text(("info", f"Total: {self._collateral_sum():,.2f} USDC"))
                 self._request_redraw()
-                await asyncio.sleep(2.5)
+
+                # 2.5~3.2초 사이 랜덤 지터로 분산
+                await asyncio.sleep(2.5 + random.uniform(0.0, 0.7))
+
             except asyncio.CancelledError:
                 break
+            
             except Exception as e:
                 logging.error(f"status loop {name}: {e}")
-                await asyncio.sleep(2.5)
+                await asyncio.sleep(2.5 + random.uniform(0.0, 0.7))
 
     # --------- 버튼 핸들러 ----------
     def _on_exec_all(self, btn):

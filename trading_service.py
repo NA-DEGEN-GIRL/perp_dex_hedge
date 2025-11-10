@@ -1,6 +1,7 @@
 # trading_service.py
 import logging
 import os
+import time
 from typing import Tuple, Optional
 from core import ExchangeManager
 
@@ -35,7 +36,18 @@ class TradingService:
     """
     def __init__(self, manager: ExchangeManager):
         self.manager = manager
+        # [추가] 상태/쿨다운 캐시
+        self._last_collateral: dict[str, float] = {}
+        self._last_status: dict[str, Tuple[str, str, float]] = {}  # (pos_str, col_str, col_val)
+        self._cooldown_until: dict[str, float] = {}                # 429 쿨다운 끝나는 시각
+        self._balance_every: float = 5.0                           # balance 최소 간격(초)
+        self._last_balance_at: dict[str, float] = {}               # balance 최근 호출 시각
+        self._backoff_sec: dict[str, float] = {}                   # per-ex 백오프(초)
 
+    def _is_rate_limited(self, err: Exception | str) -> bool:
+        s = str(err).lower()
+        return ("429" in s) or ("too many" in s) or ("rate limit" in s)
+    
     def is_configured(self, name: str) -> bool:
         return self.manager.get_exchange(name) is not None
 
@@ -53,42 +65,79 @@ class TradingService:
             logging.error(f"HL price fetch error: {e}", exc_info=True)
             return "Error"
 
-    async def fetch_status(self, exchange_name: str, symbol: str) -> Tuple[str, str, float]:
+    async def fetch_status(
+        self,
+        exchange_name: str,
+        symbol: str,
+        need_balance: bool = True  # [변경] balance 스킵 가능
+    ) -> Tuple[str, str, float]:
         """
-        returns:
-          pos_str: "📊 ...", col_str: "💰 Collateral: ...", col_val: float
+        returns: (pos_str, col_str, col_val)
+        - need_balance=False면 balance를 건너뛰고 캐시 last_collateral을 사용
+        - 429 백오프 중이면 캐시를 즉시 반환
         """
         ex = self.manager.get_exchange(exchange_name)
         if not ex:
             return "📊 Position: N/A", "💰 Collateral: N/A", 0.0
-        try:
-            bal = await ex.fetch_balance()
-            pos = await ex.fetch_positions([f"{symbol}/USDC:USDC"])
-            total_collateral = bal.get("USDC", {}).get("total", 0) or 0
-            col_str = f"💰 Collateral: {total_collateral:,.2f} USDC"
+        
+        now = time.monotonic()
+        # 429 쿨다운이면 캐시 반환
+        if now < self._cooldown_until.get(exchange_name, 0.0):
+            cached = self._last_status.get(exchange_name)
+            if cached:
+                return cached
+            # 캐시 없으면 N/A
+            return "📊 Position: N/A", f"💰 Collateral: {self._last_collateral.get(exchange_name, 0.0):,.2f} USDC", self._last_collateral.get(exchange_name, 0.0)
 
+        try:
+            # positions는 매번
+            positions = await ex.fetch_positions([f"{symbol}/USDC:USDC"])
+
+            # balance는 10초마다 or need_balance=True인 경우에만
+            col_val = self._last_collateral.get(exchange_name, 0.0)
+            if need_balance or (now - self._last_balance_at.get(exchange_name, 0.0) >= self._balance_every):
+                bal = await ex.fetch_balance()
+                col_val = float(bal.get("USDC", {}).get("total", 0) or 0)
+                self._last_collateral[exchange_name] = col_val
+                self._last_balance_at[exchange_name] = now
+
+            # 포지션 문자열 구성(이전과 동일)
             pos_str = "📊 Position: N/A"
-            if pos and pos[0]:
-                p = pos[0]
-                sz = 0.0
+            if positions and positions[0]:
+                p = positions[0]
                 try:
-                    sz = float(p.get("contracts") or 0)
+                    sz = float(p.get("contracts") or 0.0)
                 except Exception:
                     sz = 0.0
                 if sz:
                     side = "LONG" if p.get("side") == "long" else "SHORT"
-                    pnl = 0.0
                     try:
-                        pnl = float(p.get("unrealizedPnl") or 0)
+                        pnl = float(p.get("unrealizedPnl") or 0.0)
                     except Exception:
                         pnl = 0.0
                     side_color = "green" if side == "LONG" else "red"
                     pnl_color = "green" if pnl >= 0 else "red"
                     pos_str = f"📊 [{side_color}]{side}[/] {sz:.5f} | PnL: [{pnl_color}]{pnl:,.2f}[/]"
 
-            return pos_str, col_str, float(total_collateral)
+            col_str = f"💰 Collateral: {col_val:,.2f} USDC"
+            # 캐시 갱신
+            self._last_status[exchange_name] = (pos_str, col_str, col_val)
+            # 성공하면 백오프 초기화
+            self._backoff_sec[exchange_name] = 0.0
+            return pos_str, col_str, col_val
+
         except Exception as e:
             logging.error(f"[{exchange_name}] fetch_status error: {e}", exc_info=True)
+            # 429면 백오프/쿨다운 설정
+            if self._is_rate_limited(e):
+                current = self._backoff_sec.get(exchange_name, 2.0) or 2.0
+                new_backoff = min(current * 2.0, 15.0)
+                self._backoff_sec[exchange_name] = new_backoff
+                self._cooldown_until[exchange_name] = now + new_backoff
+            # 캐시 반환
+            cached = self._last_status.get(exchange_name)
+            if cached:
+                return cached
             return "📊 Position: Error", "💰 Collateral: Error", 0.0
     
     # NEW: FrontendMarket 시장가 주문 raw 전송
