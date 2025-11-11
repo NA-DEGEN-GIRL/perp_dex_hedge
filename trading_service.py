@@ -176,7 +176,7 @@ class TradingService:
             t = await ex.fetch_ticker(f"{symbol}/USDC:USDC")
             return f"{t['last']:,.2f}"
         except Exception as e:
-            logging.error(f"HL price fetch error: {e}", exc_info=True)
+            logger.error(f"HL price fetch error: {e}", exc_info=True)
             return "Error"
 
     async def fetch_status(
@@ -190,69 +190,105 @@ class TradingService:
         - need_balance=False면 balance를 건너뛰고 캐시 last_collateral을 사용
         - 429 백오프 중이면 캐시를 즉시 반환
         """
+        meta = self.manager.get_meta(exchange_name) or {}
         ex = self.manager.get_exchange(exchange_name)
         if not ex:
             return "📊 Position: N/A", "💰 Collateral: N/A", 0.0
         
-        now = time.monotonic()
-        # 429 쿨다운이면 캐시 반환
-        if now < self._cooldown_until.get(exchange_name, 0.0):
-            cached = self._last_status.get(exchange_name)
-            if cached:
-                return cached
-            # 캐시 없으면 N/A
-            return "📊 Position: N/A", f"💰 Collateral: {self._last_collateral.get(exchange_name, 0.0):,.2f} USDC", self._last_collateral.get(exchange_name, 0.0)
+        # 1) Lighter (hl=False) 처리
+        if not meta.get("hl", False):
+            try:
+                # collateral
+                col_val = 0.0
+                if need_balance:
+                    c = await ex.get_collateral()
+                    # {'available_collateral': 6997.43, 'total_collateral': 6999.51}
+                    col_val = float(c.get("total_collateral") or 0.0)
+                    self._last_collateral[exchange_name] = col_val
+                    self._last_balance_at[exchange_name] = time.monotonic()
+                else:
+                    col_val = self._last_collateral.get(exchange_name, 0.0)
 
-        try:
-            # positions는 매번
-            positions = await ex.fetch_positions([f"{symbol}/USDC:USDC"])
-
-            # balance는 10초마다 or need_balance=True인 경우에만
-            col_val = self._last_collateral.get(exchange_name, 0.0)
-            if need_balance or (now - self._last_balance_at.get(exchange_name, 0.0) >= self._balance_every):
-                bal = await ex.fetch_balance()
-                col_val = float(bal.get("USDC", {}).get("total", 0) or 0)
-                self._last_collateral[exchange_name] = col_val
-                self._last_balance_at[exchange_name] = now
-
-            # 포지션 문자열 구성(이전과 동일)
-            pos_str = "📊 Position: N/A"
-            if positions and positions[0]:
-                p = positions[0]
-                try:
-                    sz = float(p.get("contracts") or 0.0)
-                except Exception:
-                    sz = 0.0
-                if sz:
-                    side = "LONG" if p.get("side") == "long" else "SHORT"
-                    try:
-                        pnl = float(p.get("unrealizedPnl") or 0.0)
-                    except Exception:
-                        pnl = 0.0
+                # position
+                pos = await ex.get_position(symbol)  # {'entry_price': '104401.7','unrealized_pnl':'-0.007700','side':'long','size':'0.00100'}
+                pos_str = "📊 Position: N/A"
+                if pos and (float(pos.get("size") or 0.0) != 0.0):
+                    side_raw = str(pos.get("side") or "").lower()
+                    side = "LONG" if side_raw == "long" else "SHORT"
+                    size = float(pos.get("size") or 0.0)
+                    pnl = float(pos.get("unrealized_pnl") or 0.0)
                     side_color = "green" if side == "LONG" else "red"
                     pnl_color = "green" if pnl >= 0 else "red"
-                    pos_str = f"📊 [{side_color}]{side}[/] {sz:.5f} | PnL: [{pnl_color}]{pnl:,.2f}[/]"
+                    pos_str = f"📊 [{side_color}]{side}[/] {size:.5f} | PnL: [{pnl_color}]{pnl:,.5f}[/]"
+                col_str = f"💰 Collateral: {col_val:,.2f} USDC"
+                self._last_status[exchange_name] = (pos_str, col_str, col_val)
+                return pos_str, col_str, col_val
+            
+            except Exception as e:
+                logger.info(f"[{exchange_name}] lighter fetch_status error: {e}")
+                cached = self._last_status.get(exchange_name)
+                return cached if cached else ("📊 Position: Error", "💰 Collateral: Error", 0.0)
+            
+        else:
+            now = time.monotonic()
+            # 429 쿨다운이면 캐시 반환
+            if now < self._cooldown_until.get(exchange_name, 0.0):
+                cached = self._last_status.get(exchange_name)
+                if cached:
+                    return cached
+                # 캐시 없으면 N/A
+                return "📊 Position: N/A", f"💰 Collateral: {self._last_collateral.get(exchange_name, 0.0):,.2f} USDC", self._last_collateral.get(exchange_name, 0.0)
 
-            col_str = f"💰 Collateral: {col_val:,.2f} USDC"
-            # 캐시 갱신
-            self._last_status[exchange_name] = (pos_str, col_str, col_val)
-            # 성공하면 백오프 초기화
-            self._backoff_sec[exchange_name] = 0.0
-            return pos_str, col_str, col_val
+            try:
+                # positions는 매번
+                positions = await ex.fetch_positions([f"{symbol}/USDC:USDC"])
 
-        except Exception as e:
-            logging.error(f"[{exchange_name}] fetch_status error: {e}", exc_info=True)
-            # 429면 백오프/쿨다운 설정
-            if self._is_rate_limited(e):
-                current = self._backoff_sec.get(exchange_name, 2.0) or 2.0
-                new_backoff = min(current * 2.0, 15.0)
-                self._backoff_sec[exchange_name] = new_backoff
-                self._cooldown_until[exchange_name] = now + new_backoff
-            # 캐시 반환
-            cached = self._last_status.get(exchange_name)
-            if cached:
-                return cached
-            return "📊 Position: Error", "💰 Collateral: Error", 0.0
+                # balance는 10초마다 or need_balance=True인 경우에만
+                col_val = self._last_collateral.get(exchange_name, 0.0)
+                if need_balance or (now - self._last_balance_at.get(exchange_name, 0.0) >= self._balance_every):
+                    bal = await ex.fetch_balance()
+                    col_val = float(bal.get("USDC", {}).get("total", 0) or 0)
+                    self._last_collateral[exchange_name] = col_val
+                    self._last_balance_at[exchange_name] = now
+
+                # 포지션 문자열 구성(이전과 동일)
+                pos_str = "📊 Position: N/A"
+                if positions and positions[0]:
+                    p = positions[0]
+                    try:
+                        sz = float(p.get("contracts") or 0.0)
+                    except Exception:
+                        sz = 0.0
+                    if sz:
+                        side = "LONG" if p.get("side") == "long" else "SHORT"
+                        try:
+                            pnl = float(p.get("unrealizedPnl") or 0.0)
+                        except Exception:
+                            pnl = 0.0
+                        side_color = "green" if side == "LONG" else "red"
+                        pnl_color = "green" if pnl >= 0 else "red"
+                        pos_str = f"📊 [{side_color}]{side}[/] {sz:.5f} | PnL: [{pnl_color}]{pnl:,.2f}[/]"
+
+                col_str = f"💰 Collateral: {col_val:,.2f} USDC"
+                # 캐시 갱신
+                self._last_status[exchange_name] = (pos_str, col_str, col_val)
+                # 성공하면 백오프 초기화
+                self._backoff_sec[exchange_name] = 0.0
+                return pos_str, col_str, col_val
+
+            except Exception as e:
+                logging.error(f"[{exchange_name}] fetch_status error: {e}", exc_info=True)
+                # 429면 백오프/쿨다운 설정
+                if self._is_rate_limited(e):
+                    current = self._backoff_sec.get(exchange_name, 2.0) or 2.0
+                    new_backoff = min(current * 2.0, 15.0)
+                    self._backoff_sec[exchange_name] = new_backoff
+                    self._cooldown_until[exchange_name] = now + new_backoff
+                # 캐시 반환
+                cached = self._last_status.get(exchange_name)
+                if cached:
+                    return cached
+                return "📊 Position: Error", "💰 Collateral: Error", 0.0
     
     # NEW: FrontendMarket 시장가 주문 raw 전송
     async def _create_frontend_market_order(self, ex, symbol: str, side: str,
@@ -349,45 +385,68 @@ class TradingService:
         reduce_only: bool = False,  # NEW: reduceOnly 플래그
         client_id: Optional[str] = None,
     ) -> dict:
+        meta = self.manager.get_meta(exchange_name) or {}
         ex = self.manager.get_exchange(exchange_name)
         if not ex:
             raise RuntimeError(f"{exchange_name} not configured")
         
-        meta = self.manager.get_meta(exchange_name)
-        want_frontend = bool(meta.get("frontend_market", False))
-
-        # 디버깅 로그(주문 분기 직전 전체 상황)
-        logger.info(
-            "[ORDER] ex=%s sym=%s type=%s side=%s price=%s reduce_only=%s meta=%s want_frontend=%s",
-            exchange_name, symbol, order_type, side, price, reduce_only, meta, want_frontend
-        )
-
-        # 시장가 + FrontendMarket=True → raw 전송(정확한 tif 마킹)
-        if order_type == "market" and want_frontend:
-            if price is None:
-                # price는 HL 시장가에서 필수(슬리피지 계산용); 호출부에서 last를 넣어줌
-                raise RuntimeError("market order requires price for FrontendMarket")
-            logger.info("[FRONTEND] using privatePostExchange (FrontendMarket) for %s", exchange_name)
-            return await self._create_frontend_market_order(
-                ex, symbol, side, amount, price, reduce_only=False, client_id=None
-            )
+        # [추가] HL은 주문 직전에 심볼별 레버리지/마진 모드를 보장(캐시되어 과호출 없음)
+        if meta.get("hl", False):
+            try:
+                await self.ensure_hl_max_leverage_for_exchange(exchange_name, symbol)
+            except Exception as e:
+                logger.info("[LEVERAGE] ensure @order skipped: %s", e)
         
-        # 그 외 ccxt 표준 전송(reduceOnly는 params로 전달)
-        params = {}
-        if reduce_only:
-            params["reduceOnly"] = True
-        if client_id:
-            params["clientOrderId"] = client_id
+        # 1) Lighter
+        if not meta.get("hl", False):
+            # lighter: market은 price 불필요, limit은 price 필수
+            if order_type == "limit":
+                if price is None:
+                    raise RuntimeError("lighter limit order requires price")
+                res = await ex.create_order(symbol, side, amount, price=price)
+            else:
+                res = await ex.create_order(symbol, side, amount)
+            # ui가 order['id'] 접근하므로 최소 형태 보장
+            oid = None
+            if isinstance(res, dict):
+                oid = res.get("tx_hash")
+            return {"id": oid or "lighter", "info": res}
+        
+        else:
+            want_frontend = bool(meta.get("frontend_market", False))
 
-        # 그 외에는 표준 ccxt create_order 사용
-        return await ex.create_order(
-            symbol=f"{symbol}/USDC:USDC",
-            type=order_type,
-            side=side,
-            amount=amount,
-            price=price,
-            params=params
-        )
+            # 디버깅 로그(주문 분기 직전 전체 상황)
+            logger.info(
+                "[ORDER] ex=%s sym=%s type=%s side=%s price=%s reduce_only=%s meta=%s want_frontend=%s",
+                exchange_name, symbol, order_type, side, price, reduce_only, meta, want_frontend
+            )
+
+            # 시장가 + FrontendMarket=True → raw 전송(정확한 tif 마킹)
+            if order_type == "market" and want_frontend:
+                if price is None:
+                    # price는 HL 시장가에서 필수(슬리피지 계산용); 호출부에서 last를 넣어줌
+                    raise RuntimeError("market order requires price for FrontendMarket")
+                logger.info("[FRONTEND] using privatePostExchange (FrontendMarket) for %s", exchange_name)
+                return await self._create_frontend_market_order(
+                    ex, symbol, side, amount, price, reduce_only=reduce_only, client_id=client_id
+                )
+            
+            # 그 외 ccxt 표준 전송(reduceOnly는 params로 전달)
+            params = {}
+            if reduce_only:
+                params["reduceOnly"] = True
+            if client_id:
+                params["clientOrderId"] = client_id
+
+            # 그 외에는 표준 ccxt create_order 사용
+            return await ex.create_order(
+                symbol=f"{symbol}/USDC:USDC",
+                type=order_type,
+                side=side,
+                amount=amount,
+                price=price,
+                params=params
+            )
     
     async def close_position(
         self,
@@ -400,53 +459,70 @@ class TradingService:
         price_hint가 없으면 해당 거래소에서 last를 보조조회합니다.
         포지션이 없으면 None 반환.
         """
+        meta = self.manager.get_meta(exchange_name) or {}
         ex = self.manager.get_exchange(exchange_name)
         if not ex:
             raise RuntimeError(f"{exchange_name} not configured")
 
-        # 포지션 조회
-        pos = await ex.fetch_positions([f"{symbol}/USDC:USDC"])
-        if not pos or not pos[0]:
-            logger.info("[CLOSE] %s: no position", exchange_name)
-            return None
-
-        p = pos[0]
-        try:
-            size = float(p.get("contracts") or 0)
-        except Exception:
-            size = 0.0
-        if size == 0:
-            logger.info("[CLOSE] %s: already zero", exchange_name)
-            return None
-
-        cur_side = "long" if p.get("side") == "long" else "short"
-        close_side = "sell" if cur_side == "long" else "buy"
-        amount = abs(size)
-
-        # 가격 확보: hint → 실패 시 해당 거래소에서 last
-        px: Optional[float] = None
-        if price_hint is not None:
+        # 1) Lighter: 라이브러리 close_position 사용
+        if not meta.get("hl", False):
             try:
-                px = float(price_hint)
-            except Exception:
-                px = None
-        if px is None:
-            try:
-                t = await ex.fetch_ticker(f"{symbol}/USDC:USDC")
-                px = float(t.get("last"))
+                pos = await ex.get_position(symbol)
+                if not pos or float(pos.get("size") or 0.0) == 0.0:
+                    logger.info("[CLOSE] %s lighter: no position", exchange_name)
+                    return None
+                res = await ex.close_position(symbol, pos)
+                oid = None
+                if isinstance(res, dict):
+                    oid = res.get("order_id") or res.get("id")
+                return {"id": oid or "lighter-close", "info": res}
             except Exception as e:
-                logger.error(f"[CLOSE] {exchange_name} price fetch failed: {e}")
+                logger.info(f"[CLOSE] lighter {exchange_name} failed: {e}")
                 raise
+        else:
+            # 포지션 조회
+            pos = await ex.fetch_positions([f"{symbol}/USDC:USDC"])
+            if not pos or not pos[0]:
+                logger.info("[CLOSE] %s: no position", exchange_name)
+                return None
 
-        logger.info("[CLOSE] %s: %s %.10f → %s %.10f @ market",
-                    exchange_name, cur_side.upper(), size, close_side.upper(), amount)
-        # 주문 실행: execute_order로 위임 (시장가 + reduceOnly=True)
-        return await self.execute_order(
-            exchange_name=exchange_name,
-            symbol=symbol,
-            amount=amount,
-            order_type="market",
-            side=close_side,
-            price=px,
-            reduce_only=True
-        )
+            p = pos[0]
+            try:
+                size = float(p.get("contracts") or 0)
+            except Exception:
+                size = 0.0
+            if size == 0:
+                logger.info("[CLOSE] %s: already zero", exchange_name)
+                return None
+
+            cur_side = "long" if p.get("side") == "long" else "short"
+            close_side = "sell" if cur_side == "long" else "buy"
+            amount = abs(size)
+
+            # 가격 확보: hint → 실패 시 해당 거래소에서 last
+            px: Optional[float] = None
+            if price_hint is not None:
+                try:
+                    px = float(price_hint)
+                except Exception:
+                    px = None
+            if px is None:
+                try:
+                    t = await ex.fetch_ticker(f"{symbol}/USDC:USDC")
+                    px = float(t.get("last"))
+                except Exception as e:
+                    logger.error(f"[CLOSE] {exchange_name} price fetch failed: {e}")
+                    raise
+
+            logger.info("[CLOSE] %s: %s %.10f → %s %.10f @ market",
+                        exchange_name, cur_side.upper(), size, close_side.upper(), amount)
+            # 주문 실행: execute_order로 위임 (시장가 + reduceOnly=True)
+            return await self.execute_order(
+                exchange_name=exchange_name,
+                symbol=symbol,
+                amount=amount,
+                order_type="market",
+                side=close_side,
+                price=px,
+                reduce_only=True
+            )

@@ -10,14 +10,14 @@
 
 ## 무엇을 할 수 있나요?
 
-- 다수의 Hyperliquid 엔진 DEX에 동일 심볼로 동시 주문
-- 현재가(공유), 총 담보(USDC), 포지션/PNL 실시간 표시
+- 다수의 DEX(HL 및 Lighter)에 동일 심볼로 동시 주문
+- 현재가(공유, HL), 총 담보(USDC), 포지션/PNL 실시간 표시
 - Market/Limit, Long/Short, 개별 실행(EX), 전체 실행(EXECUTE ALL), 방향 반전(REVERSE)
 - OFF(비활성) 토글: EXECUTE ALL 대상 제외(기본 OFF)
 - REPEAT: “횟수 × a~b초 랜덤 간격” 반복 실행(다시 누르면 즉시 중단)
-- BURN(신규): repeat를 기반으로 방향을 번갈아가며 2배 횟수로 반복 실행 (에어드랍 파밍용)
-- CLOSE ALL(신규): 활성 거래소 포지션을 시장가 반대주문으로 0(청산)
-- 화면 하단 Exchanges 박스: show=False 거래소도 실행 중 표시/숨김 전환 가능
+- BURN: REPEAT 기반, 방향 번갈아 2배 횟수로 반복 실행(에어드랍 파밍 보조)
+- CLOSE ALL: 활성 거래소 포지션을 시장가 반대주문으로 0(청산)
+- 화면 하단 Exchanges 박스: show=False 거래소도 실행 중 표시/숨김 전환
 - 로그 패널(자동 스크롤) + 파일 로그(`debug.log`)
 - 키보드 중심 조작: Tab/Shift+Tab(입력·버튼만 순회), 영역 전환, 방향키
 

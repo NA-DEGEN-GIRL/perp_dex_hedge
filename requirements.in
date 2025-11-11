@@ -2,3 +2,4 @@ ccxt
 textual
 python-dotenv
 urwid
+mpdex @ git+https://github.com/NA-DEGEN-GIRL/multi-perp-dex.git@master
