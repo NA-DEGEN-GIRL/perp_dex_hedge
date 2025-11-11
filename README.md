@@ -178,14 +178,12 @@ python main.py
 ## 5. 키보드 단축키
 
 영역 전환(헤더 ⇄ 본문 ⇄ 푸터):
-- Ctrl+Down/Up (또는 Alt/Shift+Down/Up, PageDown/Up, Ctrl+J/K, F6)
+- Shift+Down/Up
 
 내부 이동(입력·버튼만 순회):
 - Tab: 다음 입력/버튼  
-  (본문: Q → P → MKT/LMT → L → S → OFF → EX → 다음 카드 Q(래핑))
 - Shift+Tab: 역방향  
-  (본문: EX → OFF → S → L → MKT/LMT → P → Q → 이전 카드 EX(래핑))
-- 방향키(←/→/↑/↓): 세부 이동(urwid 기본)
+- 방향키(←/→/↑/↓): 세부 이동
 
 ---
 
