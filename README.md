@@ -28,7 +28,7 @@
 1) Python 3.10+  
 2) Git
 3) 지원 OS: linux, 맥, WSL
-* 일반 windows는 lighter 사용시 사용불가, WSL을 쓰세요
+* Windows는 **Python 3.10 만 사용가능 (fastecdsa 의존성때문)**
 
 확인:
 ```bash
