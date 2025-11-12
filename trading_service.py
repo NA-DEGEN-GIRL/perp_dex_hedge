@@ -48,12 +48,12 @@ class TradingService:
     
     def _extract_order_id(self, res: dict) -> Optional[str]:
         if not isinstance(res, dict):
-            return None
+            return str(res)
         for k in ("tx_hash", "order_id", "id", "hash"):
             v = res.get(k)
             if v:
                 return str(v)
-        return None
+        return str(res)
     
     def _hl_market_id(self, symbol: str) -> str:
         # 본 프로젝트는 HL perp의 쿼트가 USDC:USDC로 고정
@@ -423,7 +423,7 @@ class TradingService:
             else:
                 res = await ex.create_order(native, side, amount)
             oid = self._extract_order_id(res)
-            return {"id": oid or "lighter", "info": res}
+            return {"id": oid, "info": res}
         
         else:
             want_frontend = bool(meta.get("frontend_market", False))
@@ -487,7 +487,7 @@ class TradingService:
                     return None
                 res = await ex.close_position(native, pos)
                 oid = self._extract_order_id(res)
-                return {"id": oid or "lighter-close", "info": res}
+                return {"id": oid, "info": res}
             except Exception as e:
                 logger.info(f"[CLOSE] non-HL {exchange_name} failed: {e}")
                 raise

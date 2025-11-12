@@ -145,7 +145,7 @@ class ExchangeManager:
                 )
             if name.lower() == "paradex":
                 return SimpleNamespace(
-                    wallet_address=os.getenv("PARADEX_WALLET_ADDRESS"),
+                    wallet_address=os.getenv("PARADEX_L1_ADDRESS"),
                     paradex_address=os.getenv("PARADEX_ADDRESS"),
                     paradex_private_key=os.getenv("PARADEX_PRIVATE_KEY"),
                 )
