@@ -264,7 +264,7 @@ python main.py
 ---
 
 ### 4-4. 키보드(요약)
-- 영역 전환: Ctrl/Alt/Shift+Up/Down, PageUp/Down, Ctrl+J/K, F6
+- 영역 전환: Shift+Up/Down
 - 내부 이동: Tab/Shift+Tab(입력·버튼만 순회, 텍스트 칸 건너뜀), 방향키
 - 래핑:
   - 본문에서 EX → Tab → 다음 거래소의 Q로 이동
