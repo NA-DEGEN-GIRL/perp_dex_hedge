@@ -27,6 +27,8 @@
 
 1) Python 3.10+  
 2) Git
+3) 지원 OS: linux, 맥, WSL
+* 일반 windows는 lighter 사용시 사용불가, WSL을 쓰세요
 
 확인:
 ```bash

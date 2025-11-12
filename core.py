@@ -5,8 +5,12 @@ import configparser
 import logging
 from types import SimpleNamespace
 import ccxt.async_support as ccxt
-from exchange_factory import create_exchange
 from dotenv import load_dotenv
+try:
+    from exchange_factory import create_exchange  # mpdex 팩토리
+except Exception:
+    create_exchange = None
+    logging.warning("[lighter] mpdex(exchange_factory) 를 찾지 못했습니다. lighter 는 비활성화됩니다.")
 
 # --- 설정 로드 ---
 load_dotenv()
