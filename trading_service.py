@@ -5,7 +5,12 @@ import time
 from typing import Tuple, Optional
 from core import ExchangeManager
 import asyncio
-
+try:
+    from exchange_factory import symbol_create
+except Exception:
+    symbol_create = None
+    logging.warning("[mpdex] exchange_factory.symbol_create 를 찾지 못했습니다. 비-HL 거래소는 비활성화됩니다.")
+    
 DEBUG_FRONTEND = False
 logger = logging.getLogger("trading_service")
 logger.propagate = True                    # 루트로 전파해 main.py의 FileHandler만 사용
@@ -35,7 +40,21 @@ class TradingService:
         self._lev_mode_applied: dict[tuple[str, str], bool] = {}
         self._lev_mode_last_at: dict[tuple[str, str], float] = {}
 
-
+    def _to_native_symbol(self, exchange_name: str, coin: str) -> str:
+        meta = self.manager.get_meta(exchange_name) or {}
+        if meta.get("hl", False):
+            return coin
+        return symbol_create(exchange_name, coin)
+    
+    def _extract_order_id(self, res: dict) -> Optional[str]:
+        if not isinstance(res, dict):
+            return None
+        for k in ("tx_hash", "order_id", "id", "hash"):
+            v = res.get(k)
+            if v:
+                return str(v)
+        return None
+    
     def _hl_market_id(self, symbol: str) -> str:
         # 본 프로젝트는 HL perp의 쿼트가 USDC:USDC로 고정
         return f"{symbol}/USDC:USDC"
@@ -198,21 +217,18 @@ class TradingService:
         # 1) Lighter (hl=False) 처리
         if not meta.get("hl", False):
             try:
-                # collateral
-                col_val = 0.0
+                col_val = self._last_collateral.get(exchange_name, 0.0)
                 if need_balance:
                     c = await ex.get_collateral()
-                    # {'available_collateral': 6997.43, 'total_collateral': 6999.51}
                     col_val = float(c.get("total_collateral") or 0.0)
                     self._last_collateral[exchange_name] = col_val
                     self._last_balance_at[exchange_name] = time.monotonic()
-                else:
-                    col_val = self._last_collateral.get(exchange_name, 0.0)
+                
+                native = self._to_native_symbol(exchange_name, symbol)
+                pos = await ex.get_position(native)
 
-                # position
-                pos = await ex.get_position(symbol)  # {'entry_price': '104401.7','unrealized_pnl':'-0.007700','side':'long','size':'0.00100'}
                 pos_str = "📊 Position: N/A"
-                if pos and (float(pos.get("size") or 0.0) != 0.0):
+                if pos and float(pos.get("size") or 0.0) != 0.0:
                     side_raw = str(pos.get("side") or "").lower()
                     side = "LONG" if side_raw == "long" else "SHORT"
                     size = float(pos.get("size") or 0.0)
@@ -225,7 +241,7 @@ class TradingService:
                 return pos_str, col_str, col_val
             
             except Exception as e:
-                logger.info(f"[{exchange_name}] lighter fetch_status error: {e}")
+                logger.info(f"[{exchange_name}] non-HL fetch_status error: {e}")
                 cached = self._last_status.get(exchange_name)
                 return cached if cached else ("📊 Position: Error", "💰 Collateral: Error", 0.0)
             
@@ -399,17 +415,14 @@ class TradingService:
         
         # 1) Lighter
         if not meta.get("hl", False):
-            # lighter: market은 price 불필요, limit은 price 필수
+            native = self._to_native_symbol(exchange_name, symbol)
             if order_type == "limit":
                 if price is None:
-                    raise RuntimeError("lighter limit order requires price")
-                res = await ex.create_order(symbol, side, amount, price=price)
+                    raise RuntimeError(f"{exchange_name} limit order requires price")
+                res = await ex.create_order(native, side, amount, price=price)
             else:
-                res = await ex.create_order(symbol, side, amount)
-            # ui가 order['id'] 접근하므로 최소 형태 보장
-            oid = None
-            if isinstance(res, dict):
-                oid = res.get("tx_hash")
+                res = await ex.create_order(native, side, amount)
+            oid = self._extract_order_id(res)
             return {"id": oid or "lighter", "info": res}
         
         else:
@@ -467,17 +480,16 @@ class TradingService:
         # 1) Lighter: 라이브러리 close_position 사용
         if not meta.get("hl", False):
             try:
-                pos = await ex.get_position(symbol)
+                native = self._to_native_symbol(exchange_name, symbol)
+                pos = await ex.get_position(native)
                 if not pos or float(pos.get("size") or 0.0) == 0.0:
-                    logger.info("[CLOSE] %s lighter: no position", exchange_name)
+                    logger.info("[CLOSE] %s non-HL: no position", exchange_name)
                     return None
-                res = await ex.close_position(symbol, pos)
-                oid = None
-                if isinstance(res, dict):
-                    oid = res.get("order_id") or res.get("id")
+                res = await ex.close_position(native, pos)
+                oid = self._extract_order_id(res)
                 return {"id": oid or "lighter-close", "info": res}
             except Exception as e:
-                logger.info(f"[CLOSE] lighter {exchange_name} failed: {e}")
+                logger.info(f"[CLOSE] non-HL {exchange_name} failed: {e}")
                 raise
         else:
             # 포지션 조회

@@ -10,7 +10,7 @@ try:
     from exchange_factory import create_exchange  # mpdex 팩토리
 except Exception:
     create_exchange = None
-    logging.warning("[lighter] mpdex(exchange_factory) 를 찾지 못했습니다. lighter 는 비활성화됩니다.")
+    logging.warning("[mpdex] exchange_factory.create_exchange 를 찾지 못했습니다. 비-HL 거래소는 비활성화됩니다.")
 
 # --- 설정 로드 ---
 load_dotenv()
@@ -72,30 +72,28 @@ class ExchangeManager:
             # FrontendMarket 플래그 로딩
             fm_raw = config.get(exchange_name, "FrontendMarket", fallback="False")
             frontend_market = (fm_raw or "").strip().lower() == "true"
-
             self.meta[exchange_name] = {"show": show, "hl": hl, "frontend_market": frontend_market}
 
-            builder_code = config.get(exchange_name, "builder_code", fallback=None)
-            wallet_address = os.getenv(f"{exchange_name.upper()}_WALLET_ADDRESS")
-
             # 하이퍼리퀴드 엔진 거래소만 현재 인스턴스 생성 (hl=True + 키/설정 유효)
-            if hl and builder_code and wallet_address:
-                # feeInt(정수)만 사용
-                fee_int = int(config.get(exchange_name, "fee_rate", fallback="0") or 0)
+            if hl:
+                builder_code = config.get(exchange_name, "builder_code", fallback=None)
+                wallet_address = os.getenv(f"{exchange_name.upper()}_WALLET_ADDRESS")
+                if builder_code and wallet_address:
+                    fee_int = int(config.get(exchange_name, "fee_rate", fallback="0") or 0)
 
-                self.exchanges[exchange_name] = ccxt.hyperliquid(
-                    {
-                        "apiKey": os.getenv(f"{exchange_name.upper()}_AGENT_API_KEY"),
-                        "privateKey": os.getenv(f"{exchange_name.upper()}_PRIVATE_KEY"),
-                        "walletAddress": wallet_address,
-                        "options": {
-                            "builder": builder_code,
-                            "feeInt": fee_int,
-                            "builderFee": True,
-                            "approvedBuilderFee": True,
-                        },
-                    }
-                )
+                    self.exchanges[exchange_name] = ccxt.hyperliquid(
+                        {
+                            "apiKey": os.getenv(f"{exchange_name.upper()}_AGENT_API_KEY"),
+                            "privateKey": os.getenv(f"{exchange_name.upper()}_PRIVATE_KEY"),
+                            "walletAddress": wallet_address,
+                            "options": {
+                                "builder": builder_code,
+                                "feeInt": fee_int,
+                                "builderFee": True,
+                                "approvedBuilderFee": True,
+                            },
+                        }
+                    )
             else:
                 # non-HL(lighter 등)은 initialize_all에서 생성
                 self.exchanges[exchange_name] = None
@@ -108,35 +106,25 @@ class ExchangeManager:
             if ex and self.meta.get(name, {}).get("hl", False):
                 tasks.append(ex.initialize_client())
 
-        # 2) mpdx 생성
-        for name in EXCHANGES:
-            meta = self.meta.get(name, {})
-            if meta.get("hl", False):
+        non_hl = [n for n in EXCHANGES if not self.meta.get(n, {}).get("hl", False)]
+        if create_exchange is None and non_hl:
+            logging.warning("[mpdex] 미설치/경로 오류로 비-HL 생성 스킵: %s", ",".join(non_hl))
+        for name in non_hl:
+            if self.exchanges.get(name):
                 continue
-            # lighter만 처리 (필요 시 다른 non-HL도 유사하게 추가)
-            if name.lower() == "lighter" and self.exchanges.get(name) is None:
-                if create_exchange is None:
-                    logging.warning("[lighter] exchange_factory.create_exchange 를 찾을 수 없습니다. mpdex 설치/경로 확인")
+            if create_exchange is None:
+                continue
+            try:
+                key = self._build_mpdex_key(name)
+                if key is None:
+                    logging.warning(f"[{name}] .env 키가 누락되어 생성 스킵")
                     continue
-                # .env에서 키 읽기
-                try:
-                    acc_id = int(os.getenv("LIGHTER_ACCOUNT_ID"))
-                    pk = os.getenv("LIGHTER_PRIVATE_KEY")
-                    api_key_id = int(os.getenv("LIGHTER_API_KEY_ID"))
-                    l1_addr = os.getenv("LIGHTER_L1_ADDRESS")
-                    key = SimpleNamespace(
-                        account_id=acc_id,
-                        private_key=pk,
-                        api_key_id=api_key_id,
-                        l1_address=l1_addr,
-                    )
-                    # 비동기 생성
-                    lighter = await create_exchange("lighter", key)
-                    self.exchanges[name] = lighter
-                    logging.info("[lighter] client created")
-                except Exception as e:
-                    logging.warning(f"[lighter] client create failed: {e}")
-                    self.exchanges[name] = None
+                client = await create_exchange(name.lower(), key)
+                self.exchanges[name] = client
+                logging.info(f"[{name}] mpdex client created")
+            except Exception as e:
+                logging.warning(f"[{name}] mpdex client create failed: {e}")
+                self.exchanges[name] = None
 
         if tasks:
             try:
@@ -144,12 +132,53 @@ class ExchangeManager:
             except Exception as e:
                 logging.warning(f"initialize_all error: {e}")
 
+    def _build_mpdex_key(self, name: str) -> SimpleNamespace | None:
+        """mpdex 각 거래소별 키를 .env에서 읽어 SimpleNamespace로 생성"""
+        u = name.upper()
+        try:
+            if name.lower() == "lighter":
+                return SimpleNamespace(
+                    account_id=int(os.getenv("LIGHTER_ACCOUNT_ID")),
+                    private_key=os.getenv("LIGHTER_PRIVATE_KEY"),
+                    api_key_id=int(os.getenv("LIGHTER_API_KEY_ID")),
+                    l1_address=os.getenv("LIGHTER_L1_ADDRESS"),
+                )
+            if name.lower() == "paradex":
+                return SimpleNamespace(
+                    wallet_address=os.getenv("PARADEX_WALLET_ADDRESS"),
+                    paradex_address=os.getenv("PARADEX_ADDRESS"),
+                    paradex_private_key=os.getenv("PARADEX_PRIVATE_KEY"),
+                )
+            if name.lower() == "edgex":
+                return SimpleNamespace(
+                    account_id=int(os.getenv("EDGEX_ACCOUNT_ID")),
+                    private_key=os.getenv("EDGEX_PRIVATE_KEY"),
+                )
+            if name.lower() == "grvt":
+                return SimpleNamespace(
+                    api_key=os.getenv("GRVT_API_KEY"),
+                    account_id=int(os.getenv("GRVT_ACCOUNT_ID")),
+                    secret_key=os.getenv("GRVT_SECRET_KEY"),
+                )
+            if name.lower() == "backpack":
+                return SimpleNamespace(
+                    api_key=os.getenv("BACKPACK_API_KEY"),
+                    secret_key=os.getenv("BACKPACK_SECRET_KEY"),
+                )
+        except Exception as e:
+            logging.warning(f"[{name}] env key parse failed: {e}")
+            return None
+        return None
+
     async def close_all(self):
         # ccxt/mpex 모두 close() 지원
         close_tasks = []
         for ex in self.exchanges.values():
             if ex and hasattr(ex, "close"):
-                close_tasks.append(ex.close())
+                try:
+                    close_tasks.append(ex.close())
+                except Exception:
+                    pass
         if close_tasks:
             await asyncio.gather(*close_tasks, return_exceptions=True)
 
