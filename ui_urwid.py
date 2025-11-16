@@ -106,6 +106,11 @@ class UrwidApp:
 
         self._ticker_lev_alarm = None  # 디바운스 핸들
 
+        self.symbol_by_ex: Dict[str, str] = {name: self.symbol for name in self.mgr.all_names()}  # 거래소별 심볼
+        self.ticker_edit_by_ex: Dict[str, urwid.Edit] = {}                                        # 거래소별 Ticker 입력 위젯
+        self._lev_alarm_by_ex: Dict[str, object] = {} 
+        self._bulk_updating_tickers: bool = False
+
     def _status_bracket_to_urwid(self, pos_str: str, col_str: str):
         """
         trading_service.fetch_status가 주는 문자열(예: '[green]LONG[/] 0.1 | PnL: [red]-0.02[/]')
@@ -318,8 +323,39 @@ class UrwidApp:
         # 입력
         qty = urwid.AttrMap(urwid.Edit(("label", "Q:"), ""), "edit", "edit_focus")
         price = urwid.AttrMap(urwid.Edit(("label", "P:"), ""), "edit", "edit_focus")
+        t_edit = urwid.AttrMap(urwid.Edit(("label", "T:"), (self.symbol_by_ex.get(name) or self.symbol)), "edit", "edit_focus")
         self.qty_edit[name] = qty.base_widget
         self.price_edit[name] = price.base_widget
+        self.ticker_edit_by_ex[name] = t_edit.base_widget
+
+        def on_ticker_changed(edit, new, n=name):
+            # 대문자로 정규화하여 저장
+            sym = (new or self.symbol).upper()
+            self.symbol_by_ex[n] = sym
+
+            # [추가] 헤더에서 일괄 동기화 중에는 per‑card 레버리지 예약을 건너뜁니다.
+            if self._bulk_updating_tickers:
+                return
+
+            # HL이면 0.4초 디바운스 후 “해당 거래소/심볼” 최대 레버리지/마진 모드 적용
+            try:
+                if self._lev_alarm_by_ex.get(n):
+                    self.loop.remove_alarm(self._lev_alarm_by_ex[n])
+            except Exception:
+                pass
+
+            def _apply_max_lev(loop_, data):
+                # 단일 거래소/심볼 보장 (서비스 내부 캐시로 과호출 방지)
+                try:
+                    asyncio.get_event_loop().create_task(
+                        self.service.ensure_hl_max_leverage_for_exchange(n, sym)
+                    )
+                except Exception as e:
+                    logging.info(f"[LEVERAGE] ensure_hl_max_leverage_for_exchange({n},{sym}) failed: {e}")
+
+            self._lev_alarm_by_ex[n] = self.loop.set_alarm_in(0.4, _apply_max_lev)
+
+        urwid.connect_signal(t_edit.base_widget, "change", on_ticker_changed)
 
         # 타입 토글
         def on_type(btn, n=name):
@@ -363,6 +399,7 @@ class UrwidApp:
         controls = urwid.Columns(
             [
                 (12, urwid.Text(("title", f"[{name.upper()}]"))),
+                (10, t_edit),          # ← NEW: 거래소별 Ticker
                 (14, qty),
                 (14, price),
                 (7,  type_wrap),
@@ -575,10 +612,10 @@ class UrwidApp:
                 # balance는 거래소별 2.5 초마다만 요청
                 now = time.monotonic()
                 need_balance = (now - self._last_balance_at.get(name, 0.0) >= 2.5)
-
-                pos_str, col_str, col_val = await self.service.fetch_status(
-                    name, self.symbol, need_balance=need_balance
-                )
+                
+                sym = (self.symbol_by_ex.get(name) or self.symbol).upper()
+                pos_str, col_str, col_val = await self.service.fetch_status(name, sym, need_balance=need_balance)
+                
                 if need_balance:
                     self._last_balance_at[name] = now
 
@@ -723,9 +760,10 @@ class UrwidApp:
                     price = float(str(self.current_price).replace(",", ""))
                 
                 self._log(f"[{name.upper()}] {side.upper()} {amount} {self.symbol} @ {otype}")
+                sym = (self.symbol_by_ex.get(name) or self.symbol).upper()
                 order = await self.service.execute_order(
                     exchange_name=name,
-                    symbol=self.symbol,
+                    symbol=sym,
                     amount=amount,
                     order_type=otype,
                     side=side,
@@ -926,9 +964,10 @@ class UrwidApp:
                 except Exception:
                     hint = None
 
+                sym = (self.symbol_by_ex.get(name) or self.symbol).upper()
                 order = await self.service.close_position(
                     exchange_name=name,
-                    symbol=self.symbol,
+                    symbol=sym,
                     price_hint=hint,
                 )
                 if order is None:
@@ -1590,8 +1629,27 @@ class UrwidApp:
 
             # Ticker 변경 즉시 반영
             def ticker_changed(edit, new):
-                self.symbol = (new or "BTC").upper()
+                sym = (new or "BTC").upper()
+                self.symbol = sym
+                self._bulk_updating_tickers = True
 
+                try:
+                    # 모든 거래소(표시/비표시 포함)의 심볼 상태를 먼저 갱신
+                    for ex_name in self.mgr.all_names():
+                        self.symbol_by_ex[ex_name] = sym
+
+                    # 화면에 보이는 카드의 T 입력칸 텍스트를 갱신 (체인지 시그널은 발생해도 레버리지 예약은 벌크 플래그로 억제됨)
+                    for ex_name in self.mgr.visible_names():
+                        try:
+                            edit_w = self.ticker_edit_by_ex.get(ex_name)
+                            if edit_w:
+                                edit_w.set_edit_text(sym)
+                        except Exception:
+                            pass
+                finally:
+                    # 벌크 모드 해제
+                    self._bulk_updating_tickers = False
+                    
                 # 직전 예약 취소(디바운스)
                 try:
                     if self._ticker_lev_alarm:
