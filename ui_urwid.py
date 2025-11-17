@@ -20,8 +20,8 @@ from types import SimpleNamespace
 # [추가] 가격/상태 폴링 간격 설정(환경변수로도 오버라이드 가능)
 RATE = SimpleNamespace(
     HEADER_PRICE_INTERVAL=5.0,   # 헤더 Price 갱신 간격
-    STATUS_POS_INTERVAL=0.5,          # [추가] 포지션 갱신 최소 간격
-    STATUS_COLLATERAL_INTERVAL=5.0,   # [추가] 담보(USDC+USDH) 갱신 최소 간격
+    STATUS_POS_INTERVAL=1.8,          # [추가] 포지션 갱신 최소 간격
+    STATUS_COLLATERAL_INTERVAL=10.0,   # [추가] 담보(USDC+USDH) 갱신 최소 간격
     STATUS_LOOP_MIN=0.2,           # 카드 상태 루프 sleep 최소
     STATUS_LOOP_MAX=0.5,           # 카드 상태 루프 sleep 최대(지터)
     CARD_PRICE_EVERY=5.0,          # 카드 Price 갱신 최소 간격
