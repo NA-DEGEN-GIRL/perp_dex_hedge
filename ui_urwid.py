@@ -137,10 +137,9 @@ class UrwidApp:
         
         self._last_balance_at: Dict[str, float] = {}  # [추가]
         self.card_price_text: Dict[str, urwid.Text] = {}  # 거래소별 가격 라인 위젯
-        # 카드별 최근 가격 갱신 시각(스로틀링 용)
-        self._last_card_price_at: Dict[str, float] = {}
-        # 카드별 마지막 숫자 가격
-        self.card_last_price: Dict[str, float] = {}
+        self.card_quote_text: Dict[str, urwid.Text] = {}  # [추가] 거래소별 quote 텍스트 위젯
+        self._last_card_price_at: Dict[str, float] = {} # 카드별 최근 가격 갱신 시각(스로틀링 용)
+        self.card_last_price: Dict[str, float] = {} # 카드별 마지막 숫자 가격
 
         self._ticker_lev_alarm = None  # 디바운스 핸들
 
@@ -547,9 +546,12 @@ class UrwidApp:
         self.card_price_text[name] = price_line
 
         if is_hl:
+            quote_line = urwid.Text(("quote_color", "")) # 초기값은 비워둠
+            self.card_quote_text[name] = quote_line
             price_and_dex = urwid.Columns(
                 [
                     ('pack', price_line),                    # Price: 25,180.00 형태 길이만 차지
+                    ('pack', urwid.Padding(quote_line, left=0, right=1)), # quote_line을 오른쪽에 붙이고, 좌우에 1칸씩 패딩을 줍니다.
                     ('weight', 1, urwid.Padding(card_dex_row, left=1)),  # DEX 행이 남은 폭 전체
                 ],
                 dividechars=1,
@@ -765,16 +767,21 @@ class UrwidApp:
                 sym_coin = _normalize_symbol_input(self.symbol_by_ex.get(name) or self.symbol)
                 dex = self.dex_by_ex.get(name, self.header_dex)
                 sym = _compose_symbol(dex, sym_coin)
+                is_hl = self.mgr.get_meta(name).get("hl", False)
 
                 try:
                     last_px = self._last_card_price_at.get(name, 0.0)
                     if (now - last_px) >= RATE.CARD_PRICE_EVERY and name in self.card_price_text:
-                        px_str = await self.service.fetch_price(
+                        px_str, quote_str = await self.service.fetch_price(
                             exchange_name=name,
                             symbol=sym_coin,
                             dex_hint=(dex if self.mgr.get_meta(name).get("hl", False) else None)
                         )
                         self.card_price_text[name].set_text(("info", f"Price: {px_str}"))
+                        
+                        if name in self.card_quote_text:
+                            self.card_quote_text[name].set_text(("quote_color", quote_str))
+
                         self._last_card_price_at[name] = now
                         try:
                             self.card_last_price[name] = float(str(px_str).replace(",", ""))
@@ -791,9 +798,10 @@ class UrwidApp:
                 pos_str = self._inject_usdc_value_into_pos(name, pos_str)
 
                 self.collateral[name] = float(col_val)
-                if name in self.info_text:
+                if name in self.info_text and is_hl:
                     markup_parts = self._status_bracket_to_urwid(pos_str, col_str)
                     self.info_text[name].set_text(markup_parts)
+
                 self.total_text.set_text(("info", f"Total: {self._collateral_sum():,.2f} USDC"))
                 self._request_redraw()
 
@@ -1774,6 +1782,8 @@ class UrwidApp:
 
             ("btn_dex",    "white",       ""),
             ("btn_dex_on", "black",       "light green"),
+            
+            ("quote_color", "light green",      "", "bold"),
         ]
 
         root = self.build()

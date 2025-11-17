@@ -54,11 +54,40 @@ class TradingService:
         # [추가/정리] (dex_or_HL, coin_key) -> decimals
         self._hl_px_dec_cache: Dict[tuple[str, str], int] = {}
         # (dex_or_HL, coin_key) -> szDecimals 
-        self._hl_sz_dec_cache: Dict[tuple[str, str], int] = {}  
+        self._hl_sz_dec_cache: Dict[tuple[str, str], int] = {}
+
+        # dex별 quote 화폐 캐시
+        self._spot_token_map: Optional[Dict[str, str]] = None  # 1회성: '0' -> 'USDC'
+        self._dex_quote_map: Dict[str, str] = {}               # 'xyz' -> 'USDH'
         
         self._leverage_inflight: set[tuple[str, str]] = set()          # (exchange_name, coin_key) in-flight 가드
         self._leverage_last_check: dict[tuple[str, str], float] = {}   # 마지막 체크 시각(스로틀)
         self._leverage_check_interval: float = 5.0                     # 스로틀 간격(초) - 필요시 조정
+        self._spot_usdh_by_ex: dict[str, float] = {}  # HL: 거래소별 마지막 USDH 잔고
+
+    async def _hl_get_spot_usdh(self, ex) -> float:
+        """
+        spotClearinghouseState(user)에서 USDH 잔고(total)를 찾아 반환.
+        실패/없음이면 0.0
+        """
+        user = self._hl_user_address(ex)
+        if not user:
+            return 0.0
+        try:
+            state = await ex.publicPostInfo({"type": "spotClearinghouseState", "user": user})
+            if not isinstance(state, dict):
+                return 0.0
+            balances = state.get("balances") or []
+            for b in balances:
+                try:
+                    if isinstance(b, dict) and str(b.get("coin", "")).upper() == "USDH":
+                        return float(b.get("total") or 0.0)
+                except Exception:
+                    continue
+            return 0.0
+        except Exception as e:
+            logger.info("[HL] spotClearinghouseState failed: %s", e)
+            return 0.0
 
     async def fetch_perp_dexs(self) -> list[str]:
         """
@@ -700,6 +729,69 @@ class TradingService:
         s = str(err).lower()
         return ("429" in s) or ("too many" in s) or ("rate limit" in s)
     
+    async def _ensure_spot_token_map(self, ex) -> None:
+        """
+        publicPostInfo({"type": "spotMeta"})를 호출하여
+        토큰 인덱스와 이름의 매핑을 1회 빌드하고 캐시합니다.
+        """
+        if self._spot_token_map is not None:
+            return
+
+        try:
+            resp = await ex.publicPostInfo({"type": "spotMeta"})
+            if not isinstance(resp, dict) or "tokens" not in resp:
+                self._spot_token_map = {}
+                return
+
+            mapping = {}
+            for token in resp.get("tokens", []):
+                if isinstance(token, dict) and "index" in token and "name" in token:
+                    mapping[str(token["index"])] = str(token["name"])
+
+            self._spot_token_map = mapping
+            logger.info("[QUOTE] Spot token map built: %d items", len(mapping))
+        except Exception as e:
+            logger.warning("[QUOTE] Failed to build spot token map: %s", e)
+            self._spot_token_map = {}  # 실패 시 빈 딕셔너리로 설정하여 재시도 방지
+    
+    async def _fetch_dex_quote(self, ex, dex: Optional[str]) -> str:
+        """
+        주어진 dex의 quote 화폐를 조회하고 캐시합니다. (e.g., 'USDC', 'USDH')
+        실패 시 'USDC'를 기본값으로 사용하고 캐시하여 반복적인 실패를 방지합니다.
+        """
+        cache_key = dex if dex else "HL"
+        if cache_key in self._dex_quote_map:
+            return self._dex_quote_map[cache_key]
+
+        # 스팟 토큰 맵이 없으면 빌드 (최초 1회)
+        if self._spot_token_map is None:
+            await self._ensure_spot_token_map(ex)
+
+        # 맵 빌드에 실패했거나 비어있으면 기본값으로 진행
+        if not self._spot_token_map:
+            self._dex_quote_map[cache_key] = "USDC"
+            return "USDC"
+
+        try:
+            payload = {"type": "meta"}
+            if dex:
+                payload["dex"] = dex
+
+            meta_info = await ex.publicPostInfo(payload)
+            if not isinstance(meta_info, dict) or "collateralToken" not in meta_info:
+                raise ValueError("Invalid meta response")
+
+            collateral_idx = str(meta_info.get("collateralToken"))
+            quote_currency = self._spot_token_map.get(collateral_idx, "USDC")  # 못찾으면 기본값
+
+            self._dex_quote_map[cache_key] = quote_currency
+            logger.info("[QUOTE] Fetched quote for dex '%s': %s", cache_key, quote_currency)
+            return quote_currency
+        except Exception as e:
+            logger.warning("[QUOTE] Failed to fetch quote for dex '%s', defaulting to USDC. Error: %s", cache_key, e)
+            self._dex_quote_map[cache_key] = "USDC"  # 실패 시 기본값 캐시
+            return "USDC"
+        
     def is_configured(self, name: str) -> bool:
         return self.manager.get_exchange(name) is not None
 
@@ -809,13 +901,18 @@ class TradingService:
         try:
             if meta.get("hl", False):
                 # HL: dex_hint가 있으면 HIP‑3, 없으면 메인
-                return await self.fetch_hl_price(symbol, dex_hint=dex_hint)
+                price_str = await self.fetch_hl_price(symbol, dex_hint=dex_hint)
+                
+                # dex_hint를 사용하여 정확한 dex의 quote를 조회
+                dex_for_quote = (dex_hint or "").lower() if dex_hint and dex_hint != "HL" else None
+                quote_str = await self._fetch_dex_quote(ex, dex_for_quote)
+                return price_str, quote_str
             else:
                 # 비-HL: mpdex 클라이언트 get_mark_price(native)
                 native = self._to_native_symbol(exchange_name, symbol)
                 px = await ex.get_mark_price(native)
                 # px가 문자열/숫자 모두 허용
-                return f"{float(px):,.2f}"
+                return f"{float(px):,.2f}", "USDC"
         except Exception as e:
             logger.info("[PRICE] %s fetch_price failed: %s", exchange_name, e)
             return "Error"
@@ -935,6 +1032,12 @@ class TradingService:
                     col_val = float(av_sum)
                     self._last_collateral[exchange_name] = col_val
                     self._last_balance_at[exchange_name] = now
+                
+                # [추가] USDH spot 잔고 조회(need_balance 주기에 맞춰 요청, 아니면 캐시 사용)
+                usdh_val = self._spot_usdh_by_ex.get(exchange_name, 0.0)
+                if need_balance:
+                    usdh_val = await self._hl_get_spot_usdh(ex)
+                    self._spot_usdh_by_ex[exchange_name] = usdh_val
 
                 # 포지션: clearinghouseState(user, dex?)
                 dex, hip3_coin = _parse_hip3_symbol(symbol)
@@ -962,6 +1065,10 @@ class TradingService:
                         pass
 
                 col_str = f"💰 Collateral: {col_val:,.2f} USDC"
+                if usdh_val and usdh_val > 0:
+                    col_str += f" | USDH {usdh_val:,.2f}"
+                else:
+                    col_str += f" | USDH {0:,.2f}"
                 self._last_status[exchange_name] = (pos_str, col_str, col_val)
                 self._backoff_sec[exchange_name] = 0.0
                 return pos_str, col_str, col_val

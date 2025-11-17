@@ -279,7 +279,7 @@ python main.py
 - HIP3‑DEX(오른편, HL 전용)
   - 카드별로 DEX를 HL/XYZ/FLX/VNTL 등으로 지정합니다. HL 카드에만 보입니다.
   - XYZ: unit에서 운영 / FLX: felix에서 운영 / VNTL: ventuals에서 운영
-  - **현재 FLX 및 VNTL USDH 미지원**
+  - **FLX 및 VNTL의 경우 USDH가 spot에 있어야 거래가 가능**
   - Price와 DEX를 한 줄로 배치(왼쪽 Price(가변), 오른쪽 DEX 버튼 행).
 
 3행(상태)
@@ -371,6 +371,8 @@ python main.py
 - ✅ REPEAT 즉시 중단 / Tab·Shift+Tab 탐색 안정화
 - ✅ CLOSE ALL / BURN 기능
 - ✅ 비‑HL(mpdex) 거래소: Lighter/Paradex/Edgex/GRVT/Backpack 연동
-- 🔜 FLX / VNTL 지원 (USDH 페어)
+- ✅ FLX / VNTL 지원 (USDH 페어)
+- 🔜 spot USDC 잔고 표기
+- 🔜 USDC <-> USDH swap 편의기능
 - 🔜 비‑HL(mpdex) 거래소: Pacifica/Variational 연동
 - 🔜 limit 오더 관리
