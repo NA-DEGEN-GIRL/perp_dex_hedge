@@ -15,6 +15,16 @@ import os
 import contextlib
 import re
 import time
+from types import SimpleNamespace
+
+# [추가] 가격/상태 폴링 간격 설정(환경변수로도 오버라이드 가능)
+RATE = SimpleNamespace(
+    HEADER_PRICE_INTERVAL=2.5,   # 헤더 Price 갱신 간격
+    STATUS_BALANCE_INTERVAL=2.5,   # 카드별 accountValue/밸런스 갱신 최소 간격
+    STATUS_LOOP_MIN=0.5,           # 카드 상태 루프 sleep 최소
+    STATUS_LOOP_MAX=1.2,           # 카드 상태 루프 sleep 최대(지터)
+    CARD_PRICE_EVERY=1.0,          # 카드 Price 갱신 최소 간격
+)
 
 # urwid의 레이아웃 경고(PileWarning)를 화면에 출력하지 않도록 억제
 warnings.simplefilter("ignore", PileWarning)
@@ -126,6 +136,11 @@ class UrwidApp:
         self._price_task: asyncio.Task | None = None      # 가격 루프 태스크 보관
         
         self._last_balance_at: Dict[str, float] = {}  # [추가]
+        self.card_price_text: Dict[str, urwid.Text] = {}  # 거래소별 가격 라인 위젯
+        # 카드별 최근 가격 갱신 시각(스로틀링 용)
+        self._last_card_price_at: Dict[str, float] = {}
+        # 카드별 마지막 숫자 가격
+        self.card_last_price: Dict[str, float] = {}
 
         self._ticker_lev_alarm = None  # 디바운스 핸들
 
@@ -178,16 +193,15 @@ class UrwidApp:
         parts.append((None, f" | {col_str}"))
         return parts
     
-    def _inject_usdc_value_into_pos(self, pos_str: str) -> str:
+    def _inject_usdc_value_into_pos(self, ex_name: str, pos_str: str) -> str:
         """
         pos_str 예: '📊 [green]LONG[/] 0.12345 | PnL: [red]-1.23[/]'
         → '📊 [green]LONG[/] 0.12345 (3,456.78 USDC) | PnL: [red]-1.23[/]'
-        현재가(self.current_price)가 숫자일 때만 삽입. 실패 시 원문 유지.
+        카드별 최신 가격(self.card_last_price[ex_name])이 있을 때만 주입.
         """
-        try:
-            price = float(str(self.current_price).replace(",", ""))
-        except Exception:
-            return pos_str  # 현재가가 숫자가 아니면 원문 유지
+        price = self.card_last_price.get(ex_name)
+        if price is None:
+            return pos_str  # 가격이 아직 없으면 원문 유지
 
         # 사이즈를 캡처: 닫는 괄호 ']' 뒤의 공백들 다음에 오는 숫자, 그리고 뒤에 ' | PnL:'이 이어지는 패턴
         m = re.search(r"\]\s*([+-]?\d+(?:\.\d+)?)(?=\s*\|\s*PnL:)", pos_str)
@@ -450,24 +464,26 @@ class UrwidApp:
             # [추가] 헤더에서 일괄 동기화 중에는 per‑card 레버리지 예약을 건너뜁니다.
             if self._bulk_updating_tickers:
                 return
+            
+            dex = self.dex_by_ex.get(n, "HL")
+            sym = _compose_symbol(dex, coin)
 
-            # HL이면 0.4초 디바운스 후 “해당 거래소/심볼” 최대 레버리지/마진 모드 적용
-            if self.dex_by_ex.get(n, "HL") == "HL":
+            try:
+                if self._lev_alarm_by_ex.get(n):
+                    self.loop.remove_alarm(self._lev_alarm_by_ex[n])
+            except Exception:
+                pass
+
+            def _apply_max_lev(loop_, data):
                 try:
-                    if self._lev_alarm_by_ex.get(n):
-                        self.loop.remove_alarm(self._lev_alarm_by_ex[n])
-                except Exception:
-                    pass
-
-                def _apply_max_lev(loop_, data):
-                    try:
-                        asyncio.get_event_loop().create_task(
-                            self.service.ensure_hl_max_leverage_for_exchange(n, coin)
-                        )
-                    except Exception as e:
-                        logging.info(f"[LEVERAGE] ensure_hl_max_leverage_for_exchange({n},{coin}) failed: {e}")
-
-                self._lev_alarm_by_ex[n] = self.loop.set_alarm_in(0.4, _apply_max_lev)
+                    asyncio.get_event_loop().create_task(
+                        self.service.ensure_hl_max_leverage_auto(n, sym)
+                    )
+                except Exception as e:
+                    logging.info(f"[LEVERAGE] ensure_hl_max_leverage_auto({n},{sym}) failed: {e}")
+            
+            # 0.4초 디바운스
+            self._lev_alarm_by_ex[n] = self.loop.set_alarm_in(0.4, _apply_max_lev)
 
         urwid.connect_signal(t_edit.base_widget, "change", on_ticker_changed)
 
@@ -525,7 +541,22 @@ class UrwidApp:
             ],
             dividechars=1,
         )
-        card = urwid.Pile([controls, card_dex_row, info])  # ← 기존에는 바로 return 하던 부분
+        is_hl = self.mgr.get_meta(name).get("hl", False)
+        
+        price_line = urwid.Text(("info", "Price: ..."))
+        self.card_price_text[name] = price_line
+
+        if is_hl:
+            price_and_dex = urwid.Columns(
+                [
+                    ('pack', price_line),                    # Price: 25,180.00 형태 길이만 차지
+                    ('weight', 1, urwid.Padding(card_dex_row, left=1)),  # DEX 행이 남은 폭 전체
+                ],
+                dividechars=1,
+            )
+            card = urwid.Pile([controls, price_and_dex, info])
+        else:
+            card = urwid.Pile([controls, price_line, info])
 
         # [추가] 카드 생성 직후 현재 상태에 맞게 버튼 강조 반영
         # 초기 enabled[name]은 False이므로 OFF 버튼이 강조(btn_off_on)로 보입니다.
@@ -716,12 +747,12 @@ class UrwidApp:
                 self.price_text.set_text(("info", f"Price: {self.current_price}"))
                 self.total_text.set_text(("info", f"Total: {self._collateral_sum():,.2f} USDC"))
                 self._request_redraw()
-                await asyncio.sleep(2.5)
+                await asyncio.sleep(RATE.HEADER_PRICE_INTERVAL)
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logging.error(f"price loop: {e}")
-                await asyncio.sleep(2.5)
+                await asyncio.sleep(RATE.HEADER_PRICE_INTERVAL)
 
     async def _status_loop(self, name: str):
         await asyncio.sleep(random.uniform(0.0, 0.7))
@@ -729,17 +760,35 @@ class UrwidApp:
             try:
                 # balance는 거래소별 2.5 초마다만 요청
                 now = time.monotonic()
-                need_balance = (now - self._last_balance_at.get(name, 0.0) >= 2.5)
+                need_balance = (now - self._last_balance_at.get(name, 0.0) >= RATE.STATUS_BALANCE_INTERVAL)
                 
                 sym_coin = _normalize_symbol_input(self.symbol_by_ex.get(name) or self.symbol)
                 dex = self.dex_by_ex.get(name, self.header_dex)
                 sym = _compose_symbol(dex, sym_coin)
+
+                try:
+                    last_px = self._last_card_price_at.get(name, 0.0)
+                    if (now - last_px) >= RATE.CARD_PRICE_EVERY and name in self.card_price_text:
+                        px_str = await self.service.fetch_price(
+                            exchange_name=name,
+                            symbol=sym_coin,
+                            dex_hint=(dex if self.mgr.get_meta(name).get("hl", False) else None)
+                        )
+                        self.card_price_text[name].set_text(("info", f"Price: {px_str}"))
+                        self._last_card_price_at[name] = now
+                        try:
+                            self.card_last_price[name] = float(str(px_str).replace(",", ""))
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
                 pos_str, col_str, col_val = await self.service.fetch_status(name, sym, need_balance=need_balance)
 
                 if need_balance:
                     self._last_balance_at[name] = now
 
-                pos_str = self._inject_usdc_value_into_pos(pos_str)
+                pos_str = self._inject_usdc_value_into_pos(name, pos_str)
 
                 self.collateral[name] = float(col_val)
                 if name in self.info_text:
@@ -748,15 +797,17 @@ class UrwidApp:
                 self.total_text.set_text(("info", f"Total: {self._collateral_sum():,.2f} USDC"))
                 self._request_redraw()
 
-                # 0.5~1.7초 사이 랜덤 지터로 분산
-                await asyncio.sleep(0.5 + random.uniform(0.0, 0.7))
+                # 상태 루프 sleep 지터
+                jitter = RATE.STATUS_LOOP_MIN + random.uniform(0.0, max(0.0, RATE.STATUS_LOOP_MAX - RATE.STATUS_LOOP_MIN))
+                await asyncio.sleep(jitter)
 
             except asyncio.CancelledError:
                 break
 
             except Exception as e:
                 logging.error(f"status loop {name}: {e}")
-                await asyncio.sleep(2.5 + random.uniform(0.0, 0.7))
+                jitter = RATE.STATUS_LOOP_MIN + random.uniform(0.0, max(0.0, RATE.STATUS_LOOP_MAX - RATE.STATUS_LOOP_MIN))
+                await asyncio.sleep(jitter)
 
     # --------- 버튼 핸들러 ----------
     def _on_exec_all(self, btn):
@@ -876,13 +927,16 @@ class UrwidApp:
                         return
                     price = float(p_txt)
                 else:
-                    # 시장가: 캐시된 현재가 사용
-                    price = float(str(self.current_price).replace(",", ""))
+                    # 시장가: 헤더 Price를 쓰지 않음 → 서비스가 심볼별로 안전하게 산출
+                    price = None
                 
-                self._log(f"[{name.upper()}] {side.upper()} {amount} {self.symbol} @ {otype}")
                 sym_coin = _normalize_symbol_input(self.symbol_by_ex.get(name) or self.symbol)
                 dex = self.dex_by_ex.get(name, self.header_dex)
                 sym = _compose_symbol(dex, sym_coin)
+
+                # 로그도 실제 주문 심볼을 표시
+                self._log(f"[{name.upper()}] {side.upper()} {amount} {sym} @ {otype}")
+
                 order = await self.service.execute_order(
                     exchange_name=name,
                     symbol=sym,
@@ -1092,7 +1146,7 @@ class UrwidApp:
                 order = await self.service.close_position(
                     exchange_name=name,
                     symbol=sym,
-                    price_hint=hint,
+                    price_hint=None,
                 )
                 if order is None:
                     # 포지션 없음/이미 0
@@ -1746,6 +1800,8 @@ class UrwidApp:
             except Exception as e:
                 logging.info(f"[HIP3] fetch_perp_dexs failed: {e}")
                 dex_list = []
+            
+            self.service.set_perp_dexs(dex_list)
             self.dex_names = ["HL"] + dex_list
             try:
                 header_pile = self.header
@@ -1803,25 +1859,37 @@ class UrwidApp:
                 except Exception:
                     pass
 
-                def _apply_max_lev(loop_, data):
+                def _apply_max_lev_all(loop_, data):
+                    sym = _compose_symbol(self.header_dex, self.symbol)
+                    async def _apply_all():
+                        tasks = []
+                        for ex_name in self.mgr.all_names():
+                            if self.mgr.get_meta(ex_name).get("hl", False) and self.mgr.get_exchange(ex_name):
+                                tasks.append(self.service.ensure_hl_max_leverage_auto(ex_name, sym))
+                        if tasks:
+                            await asyncio.gather(*tasks, return_exceptions=True)
                     try:
-                        asyncio.get_event_loop().create_task(
-                            self.service.ensure_hl_max_leverage_for_all(self.symbol)
-                        )
+                        asyncio.get_event_loop().create_task(_apply_all())
                     except Exception as e:
-                        logging.info(f"[LEVERAGE] ensure_hl_max_leverage_for_all failed: {e}")
+                        logging.info(f"[LEVERAGE] ensure_hl_max_leverage_auto(all) failed: {e}")
 
                 # 0.4초 뒤 한 번만 호출(빠른 타이핑 방지)
-                self._ticker_lev_alarm = self.loop.set_alarm_in(0.4, _apply_max_lev)
+                self._ticker_lev_alarm = self.loop.set_alarm_in(0.4, _apply_max_lev_all)
 
             urwid.connect_signal(self.ticker_edit, "change", ticker_changed)
 
             self._request_redraw()
 
             try:
-                await self.service.ensure_hl_max_leverage_for_all(self.symbol)
+                sym = _compose_symbol(self.header_dex, self.symbol)
+                tasks = []
+                for ex_name in self.mgr.all_names():
+                    if self.mgr.get_meta(ex_name).get("hl", False) and self.mgr.get_exchange(ex_name):
+                        tasks.append(self.service.ensure_hl_max_leverage_auto(ex_name, sym))
+                if tasks:
+                    await asyncio.gather(*tasks, return_exceptions=True)
             except Exception as e:
-                logging.info(f"[LEVERAGE] initial ensure max leverage skipped: {e}")
+                logging.info(f"[LEVERAGE] initial ensure_hl_max_leverage_auto skipped: {e}")
 
         loop.run_until_complete(_bootstrap())
         self.loop.set_alarm_in(0, self._set_initial_focus)

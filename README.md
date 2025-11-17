@@ -130,19 +130,23 @@ BACKPACK_SECRET_KEY=https://backpack.exchange/portfolio/settings/api-keys에서_
 [dexari]
 builder_code = 0x7975cafdff839ed5047244ed3a0dd82a89866081
 fee_rate = 10
+xyz_fee_rate = 10
+vntl_fee_rate = 10
+flx_fee_rate = 10
 hl = True
 show = True
-FrontendMarket = False      # (선택) 시장가를 FrontendMarket로 보낼 때 True
 
 [liquid]
 builder_code = 0x6D4E7F472e6A491B98CBEeD327417e310Ae8ce48
 fee_rate = 50
+xyz_fee_rate = 50
 hl = True
-show = True
+show = False
 
 [based]
 builder_code = 0x1924b8561eef20e70ede628a296175d358be80e5
 fee_rate = 25
+xyz_fee_rate = 25
 hl = True
 show = False
 FrontendMarket = True
@@ -150,6 +154,9 @@ FrontendMarket = True
 [supercexy]
 builder_code = 0x0000000bfbf4c62c43c2e71ef0093f382bf7a7b4
 fee_rate = 16
+xyz_fee_rate = 1
+vntl_fee_rate = 1
+flx_fee_rate = 1
 hl = True
 show = False
 FrontendMarket = True
@@ -159,11 +166,11 @@ FrontendMarket = True
 hl = False
 show = False
 
-[paradex]
+[edgex]
 hl = False
 show = False
 
-[edgex]
+[paradex]
 hl = False
 show = False
 
@@ -173,13 +180,15 @@ show = False
 
 [backpack]
 hl = False
-show = True
+show = False
 ```
 
 - show=True: 기본 표시, False: 기본 숨김(OFF 간주)
 - hl=True: Hyperliquid(ccxt), hl=False: mpdex 클라이언트 사용
-- fee_rate: HL per‑order builder feeInt(정수, 10~50)
-
+- fee_rate: 기본 빌더 수수료 정수 / **dexari 같은 경우는 tier별로 수수료가 다르니 확인 후 수정**
+- dex_fee_rate: HIP‑3 DEX별 수수료 덮어쓰기(예: xyz_fee_rate, vntl_fee_rate, flx_fee_rate). 없으면 fee_rate 사용.
+- 퍼프덱스별로 HIP-3 DEX 별 수수료를 달리 하는 경우가 있으니, 본인의 티어 및 거래소 확인 후 설정.
+- builder_code를 설정하지 않으면 빌더/fee는 주문 payload에 포함되지 않습니다(기본 빌더주소 주입 없음)
 ---
 
 ## 3. 실행
@@ -189,98 +198,147 @@ python main.py
 ```
 
 - 기본 UI는 urwid입니다(권장).
-- Textual(레거시): `python main.py --ui textual`
+- Textual(더이상 지원안함): `python main.py --ui textual`
 
 ---
 
-## 4. 사용법(버튼 상세)
+### 4‑1. 헤더(공통 옵션: Common Options)
+행 구성  
+1) Ticker / Price / Total / QUIT  
+2) All Qty / EXECUTE ALL / REVERSE / CLOSE ALL  
+2.5) HIP3‑DEX (HL 전용)  
+3) REPEAT: Times / min(s) / max(s) / [REPEAT]  
+4) BURN: Burn / min(s) / max(s) / [BURN]
 
-### 4-1. 헤더(4행) 버튼/입력
-1) Ticker / Price / Total / QUIT
-- Ticker: 거래 심볼(기본 BTC). 입력 시 0.4초 뒤 자동 반영되며, HL 거래소는 심볼별 최대 레버리지/마진 모드(크로스/아이솔레이트)를 한 번만 자동 적용합니다.
-- Price: HL 엔진 공유 현재가.
-- Total: 모든 거래소 담보 합계(USDC or USDT).
-- QUIT: 앱 종료
+- Ticker
+  - 공통 심볼 입력(기본 BTC). 입력 후 약 0.4초 뒤 자동 반영됩니다.
+  - HL에서는 심볼 반영 시 거래소별 “최대 레버리지/마진 모드”를 자동 보장(1회)합니다.
+  - HIP‑3(빌더 DEX)를 헤더에서 선택한 경우, Ticker에는 “코인만” 입력(예: XYZ100)하면 내부에서 ‘xyz:XYZ100’로 합성되어 동작합니다.
 
-2) All Qty / EXECUTE ALL / REVERSE / CLOSE ALL
-- All Qty: 입력 시 현재 화면에 보이는 모든 거래소 카드의 Q(수량)에 일괄 적용.
-- EXECUTE ALL: 활성화된 (L 혹은 S가 선택된) 거래소들 한 번에 주문.
-  - OFF인 거래소는 대상에서 제외.
-- REVERSE: 현재 활성 + 방향 선택된 거래소에 한해 LONG↔SHORT 일괄 반전. OFF/방향 미선택 거래소는 영향 없음.
-- CLOSE ALL: 활성 거래소의 포지션을 0으로 만드는 청산(반대 방향 “시장가” 주문).
-  - OFF인 거래소는 대상에서 제외.
+- Price
+  - HL: metaAndAssetCtxs 기반 3초 캐시(모든 HL 카드가 공유)로 표시됩니다.
+  - 비‑HL: 각 카드에서 개별적으로 표시됩니다(자세한 내용은 아래 4‑2).
 
-3) REPEAT: Times / min(s) / max(s) / [REPEAT]
-- Times: 반복 횟수(정수 ≥ 1).
-- min(s)/max(s): 각 반복 사이 대기 시간의 범위(초). 매 회차 random(min~max)로 대기.
-- REPEAT 버튼:
-  - 시작: Times 회만큼 EXECUTE ALL을 반복(중간에 취소 가능).
-  - 중지: 수행 중 다시 누르면 즉시 중단(다음 주문을 더 이상 시작하지 않음).
-  - 동작 중에는 중복 실행을 방지합니다.
+- Total
+  - 모든 거래소 담보(accountValue) 합계(USDC)입니다. HL은 clearinghouseState의 accountValue(메인+모든 HIP‑3)를 합산합니다.
 
-4) BURN: Burn 횟수 / min(s) / max(s) / [BURN]
-- Burn 횟수:
-  - 1회: REPEAT와 동일.
-  - ≥2회: REPEAT(Times) → burn interval(min~max) 대기 → 방향 반전 → REPEAT(2×Times) → … (횟수만큼 반복)
-  - 예: Times=5, Burn=3, 처음 LONG이면 “LONG×5 → 대기 → SHORT×10 → 대기 → LONG×10”.
-  - **-1로 설정히 무한 반복**
-- min(s)/max(s): 각 burn 라운드 사이 대기 범위(초).
-- BURN 버튼:
-  - 시작: 위 알고리즘으로 반복 실행(중간에 취소 가능).
-  - 중지: 수행 중 다시 누르면 즉시 중단(다음 라운드/주문 시작 전 정지).
+- QUIT
+  - 앱 종료(백그라운드 태스크도 안전하게 정리).
+
+- All Qty / EXECUTE ALL / REVERSE / CLOSE ALL
+  - All Qty: 화면에 표시된 모든 거래소 카드의 Q(수량)에 일괄 적용.
+  - EXECUTE ALL: 활성(L 또는 S 선택)된 거래소만 동시에 주문합니다. OFF인 카드는 제외됩니다.
+  - REVERSE: 활성 + 방향 선택된 거래소에 한하여 LONG↔SHORT 일괄 반전.
+  - CLOSE ALL: 활성 거래소 포지션을 시장가 reduceOnly로 청산(0으로 만듭니다).
+
+- HIP3‑DEX (HL 전용)
+  - 기본값은 HL(일반 Hyperliquid). UI에 빌더 DEX 목록(예: xyz, flx, vntl)이 버튼으로 표시됩니다.
+  - 헤더에서 HIP‑3 DEX를 선택하면 Ticker에는 “코인만” 입력합니다(예: XYZ100 → 내부적으로 ‘xyz:XYZ100’).
+  - 헤더에서 선택 시 모든 HL 카드에 일괄 적용됩니다(각 카드에서 개별 덮어쓰기 가능).
+
+- REPEAT: Times / min(s) / max(s) / [REPEAT]
+  - Times: 반복 횟수(정수 ≥ 1).
+  - min(s)/max(s): 반복 사이 대기(초). 매 회 랜덤(min~max)로 대기합니다.
+  - [REPEAT]: 클릭 시 EXECUTE ALL을 Times회 반복 실행. 실행 중 다시 누르면 즉시 중지(다음 주문부터 멈춤).
+
+- BURN: Burn / min(s) / max(s) / [BURN]
+  - Burn=1: REPEAT와 동일.
+  - Burn≥2: REPEAT(Times) → burn 대기 → 방향 반전 → REPEAT(2×Times) → … (Burn회 반복).
+  - 예: Times=5, Burn=3, 시작이 LONG이면 “LONG×5 → 대기 → SHORT×10 → 대기 → LONG×10”.
+  - 무한 반복: Burn=-1.
+  - [BURN]: 실행/중지 토글(중지 시 다음 라운드부터 멈춤).
 
 참고
-- 헤더에서 Ticker를 바꾸면(예: BTC→ETH), HL 거래소의 해당 심볼에 대해 최대 허용 레버리지와 마진 모드(cross/isolated)가 자동 적용됩니다(거래소/계정이 지원하는 범위 내).
-- HL + FrontendMarket=True이고 유형이 시장가인 주문은 HL의 raw 경로(privatePostExchange)로 전송되어 tif='FrontendMarket'으로 마킹됩니다(슬리피지 적용).
+- HL + FrontendMarket=True이며 주문 유형이 “시장가”인 경우, HL RAW 경로로 전송되어 tif='FrontendMarket'으로 마킹됩니다(즉시 체결 성격, 슬리피지 적용).
+- 시장가 주문에서 가격 입력은 무시됩니다(가격은 내부 가격 소스에서 산정).
 
 ---
 
-### 4-2. 거래소 카드(한 거래소당 1장)
-행 구성: [거래소명]  Q  P  MKT/LMT  L  S  OFF  EX  + 상태(아래 줄)
+### 4‑2. 거래소 카드(한 거래소당 1장)
+행 구성  
+- 1행: [거래소명] T(코인) Q P MKT/LMT L S OFF EX  
+- 2행: Price(현재가) [ + (HL 전용) HIP3‑DEX 버튼(오른편) ]  
+- 3행: 📘 Position | 💰 Collateral
 
-- Q(수량): 주문 수량. 헤더의 All Qty를 입력하면 일괄 반영됩니다.
-- P(가격): 지정가(LMT)일 때만 의미가 있으며, 미입력 시 해당 거래소는 EXECUTE ALL 대상에서 건너뜁니다.
-- MKT/LMT: 주문 유형 토글.
-  - MKT(시장가): 시장가 거래 설정.
+1행(주문 입력/버튼)
+- T(코인): 그 카드에서 사용할 심볼.
+  - HIP‑3를 카드에서 선택한 경우(2행 오른편 DEX 버튼), “코인만” 입력합니다(예: XYZ100 → 내부적으로 ‘xyz:XYZ100’).
+- Q(수량) / P(가격) / MKT/LMT
+  - MKT(시장가): 카드별 가격 소스(아래 Price)를 사용하므로 P는 무시됩니다.
   - LMT(지정가): P(가격) 필수.
-- L(롱): 선택 시 방향을 LONG으로 지정, 카드가 활성(OFF 해제). 버튼이 초록(선택)으로 표시.
-- S(숏): 선택 시 방향을 SHORT으로 지정, 카드가 활성(OFF 해제). 버튼이 빨강(선택)으로 표시.
-- OFF: 비활성 토글. 누르면 L/S 선택이 해제되고, OFF가 노란색 강조(선택 상태)로 표시됩니다. EXECUTE ALL/CLOSE ALL 대상에서 제외됩니다.
-- EX: 해당 거래소만 즉시 선택된 주문 실행.
+- L/S/OFF/EX
+  - L: LONG 선택(초록 강조, 카드 활성).
+  - S: SHORT 선택(빨강 강조, 카드 활성).
+  - OFF: 카드 비활성(노란 강조). EXECUTE ALL/CLOSE ALL 대상에서 제외.
+  - EX: 해당 카드만 즉시 주문 실행.
 
-상태(두 번째 줄)
-- 📘 Position / 💰 Collateral: 포지션과 총 담보(USDC).  
-  - 포지션 크기 옆에 “(크기×현재가)” USDC 값을 함께 표기합니다. 예: `0.01000 (1,234.56 USDC)`  
-  - PnL과 방향은 색상으로 강조됩니다(롱/숏/PNL±).
+2행(가격/DEX)
+- Price(현재가)
+  - HL: metaAndAssetCtxs 기반 캐시(3초)에서 해당 카드의 DEX/코인 가격 표시.
+  - 비‑HL(mpdex): exchange.get_mark_price(nativeSymbol)로 표시.
+- HIP3‑DEX(오른편, HL 전용)
+  - 카드별로 DEX를 HL/XYZ/FLX/VNTL 등으로 지정합니다. HL 카드에만 보입니다.
+  - XYZ: unit에서 운영 / FLX: felix에서 운영 / VNTL: ventuals에서 운영
+  - **현재 FLX 및 VNTL USDH 미지원**
+  - Price와 DEX를 한 줄로 배치(왼쪽 Price(가변), 오른쪽 DEX 버튼 행).
+
+3행(상태)
+- 📘 Position
+  - 방향/사이즈/PNL. 사이즈 옆에 “(사이즈×현재가)” USDC 값도 함께 표시합니다(각 카드의 가격 사용).
+- 💰 Collateral
+  - HL: clearinghouseState.accountValue(메인+모든 HIP‑3 합산)에 기반합니다.
+  - 비‑HL: 거래소가 제공하는 collateral/잔고 정보를 사용합니다.
+
+주문 동작(핵심 요약)
+- HL(메인/HIP‑3) 모두 RAW 주문으로 통합
+  - 자산 ID: allPerpMetas 캐시로 계산(메인: index, HIP‑3: 100000 + dexIdx×10000 + localIdx)
+  - 가격/사이즈: metaAndAssetCtxs의 szDecimals 기반 Perp 규칙 적용
+    - Size: szDecimals로 반올림
+    - Price: 소수자릿수 ≤ 6−szDecimals, 소수인 경우 유효숫자 ≤ 5자리(정수는 제한 없음)
+  - 시장가: 슬리피지 적용, FrontendMarket 옵션 ON일 때만 tif='FrontendMarket'
+- 비‑HL(mpdex)
+  - Market: price 없이 실행
+  - Limit: price 필수
+  - 심볼은 symbol_create(exchange, coin)로 변환하여 사용
 
 ---
 
-### 4-3. Exchanges 박스(하단)
-- 모든 거래소를 체크박스로 가로 배열(2줄)합니다.
-- ON(체크): 해당 거래소 카드가 화면에 생성되고, 상태 갱신 루프가 시작됩니다.
-- OFF(해제): 카드가 숨겨지고, 상태 갱신 루프가 취소됩니다(네트워크 요청 감소).
-- config.ini의 show=True/False 기본값과 무관하게 실시간 토글 가능합니다.
+### 4‑3. Exchanges 박스(하단)
+- 모든 거래소를 체크박스로 2줄 정렬합니다.
+- ON(체크): 카드가 생성되고 상태 루프 시작.
+- OFF: 카드가 숨겨지고 해당 루프 취소(네트워크 요청 감소).
+- config.ini의 show 기본값과 무관하게 실시간 토글 가능합니다.
 
 ---
 
-### 4-4. 키보드(요약)
-- 영역 전환: Shift+Up/Down
-- 내부 이동: Tab/Shift+Tab(입력·버튼만 순회, 텍스트 칸 건너뜀), 방향키
-- 래핑:
-  - 본문에서 EX → Tab → 다음 거래소의 Q로 이동
-  - 본문에서 Q → Shift+Tab → 이전 거래소의 EX로 이동
+### 4‑4. 키보드(요약)
+- 영역 전환: Shift+Up/Down, PageUp/Down, Ctrl+J/K, F6
+- 내부 이동: Tab/Shift+Tab(입력·버튼만 순회), 방향키
+- 래핑
+  - EX → Tab → 다음 카드의 Q
+  - Q → Shift+Tab → 이전 카드의 EX
 
 ---
 
 ## 5. 동작 참고
 
-- HL 가격 공유: `hl=True` 거래소는 대표 1곳에서 조회한 ticker를 공유해 API 호출량을 절약합니다.
-- 비‑HL 주문:
-  - Market: price 없이 실행
-  - Limit: price 필수
-  - 내부에서 거래소 고유 심볼(symbol_create)을 사용하므로 Ticker 입력은 일반 코인 기호(BTC/ETH 등)만 넣으면 됩니다.
-- CLOSE ALL: reduceOnly 시장가로 청산(HL), mpdex는 close_position 사용
-- FrontendMarket(HL): `FrontendMarket=True` + order_type='market'일 때 raw 경로로 tif=FrontendMarket 주문(슬리피지 적용)
+- 가격(헤더/카드)
+  - HL: metaAndAssetCtxs(무 dex/with dex) 1회로 “전체 페어 가격”을 받아 3초 캐시. 모든 HL 경로가 공유
+  - 비‑HL: get_mark_price(native) 사용
+- 담보(Collateral)
+  - HL: clearinghouseState.marginSummary.accountValue를 메인+모든 HIP‑3 dex 합산해 표시(실보유 반영)
+- 레버리지 보장(멱등)
+  - ensure_hl_max_leverage_auto(exchange, symbol)
+    - 메타 기반으로 maxLeverage/isolated 여부 계산 → updateLeverage 1회만 적용
+    - in‑flight 가드 + 5초 스로틀 + 적용 완료 캐시로 과호출 방지
+- Perp Tick/Lot 규칙 준수
+  - Size: szDecimals로 반올림
+  - Price: 소수자릿수 ≤ 6 − szDecimals, 유효숫자(소수) ≤ 5자리(정수는 제한 없음)
+- RATE(레이트) 조절(환경변수)
+  - PDEX_HEADER_PRICE_SEC: 헤더 가격 갱신 간격(기본 2.5)
+  - PDEX_STATUS_BAL_SEC: 카드별 collateral 리프레시 간격(기본 2.5)
+  - PDEX_STATUS_MIN_SEC / PDEX_STATUS_MAX_SEC: 카드 상태 루프 지터 범위(기본 0.5~1.2)
+  - PDEX_CARD_PRICE_SEC: 카드 가격 갱신 최소 간격(기본 1.0)
 
 ---
 
@@ -313,5 +371,6 @@ python main.py
 - ✅ REPEAT 즉시 중단 / Tab·Shift+Tab 탐색 안정화
 - ✅ CLOSE ALL / BURN 기능
 - ✅ 비‑HL(mpdex) 거래소: Lighter/Paradex/Edgex/GRVT/Backpack 연동
+- 🔜 FLX / VNTL 지원 (USDH 페어)
 - 🔜 비‑HL(mpdex) 거래소: Pacifica/Variational 연동
 - 🔜 limit 오더 관리

@@ -78,7 +78,8 @@ class ExchangeManager:
             if hl:
                 builder_code = config.get(exchange_name, "builder_code", fallback=None)
                 wallet_address = os.getenv(f"{exchange_name.upper()}_WALLET_ADDRESS")
-                if builder_code and wallet_address:
+                
+                if wallet_address:
                     fee_int = int(config.get(exchange_name, "fee_rate", fallback="0") or 0)
                     dex_fee_map = {}
                     for k, v in config.items(exchange_name):

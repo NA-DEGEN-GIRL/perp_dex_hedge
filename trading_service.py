@@ -1,10 +1,9 @@
 # trading_service.py
 import logging
-import os
 import time
 from typing import Tuple, Optional, Dict, Any
 from core import ExchangeManager
-import asyncio
+from decimal import Decimal, ROUND_HALF_UP  # 
 try:
     from exchange_factory import symbol_create
 except Exception:
@@ -36,36 +35,45 @@ class TradingService:
     """
     def __init__(self, manager: ExchangeManager):
         self.manager = manager
-        # [추가] 상태/쿨다운 캐시
+        #  상태/쿨다운 캐시
         self._last_collateral: dict[str, float] = {}
         self._last_status: dict[str, Tuple[str, str, float]] = {}  # (pos_str, col_str, col_val)
         self._cooldown_until: dict[str, float] = {}                # 429 쿨다운 끝나는 시각
         self._balance_every: float = 5.0                           # balance 최소 간격(초)
         self._last_balance_at: dict[str, float] = {}               # balance 최근 호출 시각
         self._backoff_sec: dict[str, float] = {}                   # per-ex 백오프(초)
-        # (추가) HL 마켓 레버리지/모드 캐시: (exchange, market_id) -> dict
-        self._hl_lev_cache: dict[tuple[str, str], dict] = {}
-        # (추가) 심볼별 레버리지/모드 적용 여부 캐시
-        self._lev_mode_applied: dict[tuple[str, str], bool] = {}
-        self._lev_mode_last_at: dict[tuple[str, str], float] = {}
         
         # ex_name -> { 'vaults': [universe...], 'map': {coin -> asset_index}}
-        self._hip3_cache: Dict[str, Dict[str, Any]] = {} 
-        # [추가] HIP-3 코인별 최대 레버리지 캐시: (dex, hip3_coin) -> int
-        self._hip3_maxlev_cache: Dict[tuple[str, str], int] = {}
-        # [추가] HIP-3 레버리지 적용 여부 캐시: (exchange_name, hip3_coin) -> bool
-        self._hip3_lev_applied: Dict[tuple[str, str], bool] = {}
+        self._asset_index_cache_by_ex: Dict[str, Dict[str, Any]] = {} 
+        #  HIP-3 레버리지 적용 여부 캐시: (exchange_name, hip3_coin) -> bool
+        self._leverage_applied: Dict[tuple[str, str], bool] = {}
         # key: 'HL' | dex('xyz' 등) -> {'ts': float, 'map': {name->px}}
         self._hl_px_cache_by_dex: Dict[str, Dict[str, Any]] = {}  
+        # HL 빌더 DEX 목록 캐시(앱 시작 시 1회)
+        self._perp_dex_list: Optional[list[str]] = None 
+        # [추가/정리] (dex_or_HL, coin_key) -> decimals
+        self._hl_px_dec_cache: Dict[tuple[str, str], int] = {}
+        # (dex_or_HL, coin_key) -> szDecimals 
+        self._hl_sz_dec_cache: Dict[tuple[str, str], int] = {}  
+        
+        self._leverage_inflight: set[tuple[str, str]] = set()          # (exchange_name, coin_key) in-flight 가드
+        self._leverage_last_check: dict[tuple[str, str], float] = {}   # 마지막 체크 시각(스로틀)
+        self._leverage_check_interval: float = 5.0                     # 스로틀 간격(초) - 필요시 조정
 
     async def fetch_perp_dexs(self) -> list[str]:
         """
         HL 첫 거래소에서 publicPostInfo({"type":"perpDexs"}) 호출 → dex 이름 목록(lowercase) 반환.
-        기본 'HL'은 UI에서 추가합니다.
+        앱 생애주기에서 최초 1회만 네트워크 호출하고, 이후에는 캐시를 반환합니다.
         """
+        # 캐시가 있으면 즉시 반환
+        if self._perp_dex_list is not None:
+            return self._perp_dex_list
+
         ex = self.manager.first_hl_exchange()
         if not ex:
-            return []
+            self._perp_dex_list = []
+            return self._perp_dex_list
+
         try:
             resp = await ex.publicPostInfo({"type": "perpDexs"})
             names: list[str] = []
@@ -76,12 +84,23 @@ class TradingService:
                             names.append(str(e["name"]).lower())
                         except Exception:
                             continue
-            # 중복 제거 + 정렬
-            return sorted(set(names))
+            # 중복 제거 + 정렬 + 캐시
+            self._perp_dex_list = sorted(set(names))
+            return self._perp_dex_list
         except Exception as e:
             logger.info("[HIP3] fetch_perp_dexs failed: %s", e)
-            return []
-        
+            self._perp_dex_list = []
+            return self._perp_dex_list
+
+    def set_perp_dexs(self, dex_list: list[str]) -> None:
+        """
+        UI 등 외부에서 이미 구한 perpDex 목록을 서비스 캐시에 주입할 때 사용.
+        """
+        try:
+            self._perp_dex_list = sorted(set([str(x).lower() for x in dex_list]))
+        except Exception:
+            self._perp_dex_list = []
+
     def _tif_capitalize(self, tif: str | None, default: str = "Gtc") -> str:
         """ccxt가 사용하는 스타일과 동일하게 timeInForce를 Capitalize."""
         if not tif:
@@ -95,14 +114,14 @@ class TradingService:
             return "Gtc"
         return t.capitalize()
 
-    async def _hip3_pick_price(self, ex, dex: str, hip3_coin: str, price_hint: Optional[float]) -> float:
+    async def _hl_pick_price(self, ex, dex: str, coin: str, price_hint: Optional[float]) -> float:
         """HIP‑3 시장가용 가격: 힌트 우선, 없으면 _hl_price_map(dex)에서 해당 코인 가격."""
         if price_hint is not None:
             return float(price_hint)
         px_map = await self._hl_price_map(ex, dex)
-        px = px_map.get(hip3_coin)
+        px = px_map.get(coin)
         if px is None:
-            raise RuntimeError(f"HIP3 price not found for {hip3_coin}")
+            raise RuntimeError(f"Price not found for {coin}")
         return float(px)
 
     def _hl_user_address(self, ex) -> Optional[str]:
@@ -120,11 +139,88 @@ class TradingService:
         if addr:
             return str(addr).lower()
         return None
-    
-    # [추가] HL Info API로 user 상태 가져오기 (clearinghouseState)
-    async def _hl_get_user_state(self, ex, dex: str, user_addr: str) -> Optional[dict]:
+
+    async def _hl_sz_decimals(self, ex, dex: Optional[str], coin_key: str) -> int:
         """
-        HIP-3: clearinghouseState(user, dex)를 Info API로 조회.
+        metaAndAssetCtxs(dex?)에서 코인(메인: 'BTC', HIP‑3: 'xyz:XYZ100')의 szDecimals를 1회 캐시 후 반환.
+        """
+        cache_key = (dex if dex else "HL", coin_key)
+        if cache_key in self._hl_sz_dec_cache:
+            return self._hl_sz_dec_cache[cache_key]
+
+        payload = {"type": "metaAndAssetCtxs"}
+        if dex:
+            payload["dex"] = dex
+        try:
+            resp = await ex.publicPostInfo(payload)
+            if not isinstance(resp, list) or len(resp) < 2:
+                self._hl_sz_dec_cache[cache_key] = 0
+                return 0
+            universe = (resp[0] or {}).get("universe", []) or []
+            for a in universe:
+                if not isinstance(a, dict):
+                    continue
+                name = str(a.get("name") or "")
+                if not name or a.get("isDelisted", False):
+                    continue
+                key = name.upper() if not dex else name
+                if key != coin_key:
+                    continue
+                try:
+                    szd = int(a.get("szDecimals"))
+                except Exception:
+                    szd = 0
+                self._hl_sz_dec_cache[cache_key] = szd
+                return szd
+            self._hl_sz_dec_cache[cache_key] = 0
+            return 0
+        except Exception:
+            self._hl_sz_dec_cache[cache_key] = 0
+            return 0
+
+    def _format_perp_price(self, px: float, decimals_max: int) -> str:
+        """
+        Perp 가격 포맷:
+        - 정수 허용(유효숫자 제한 제외)
+        - 소수: 소수자릿수는 최대 decimals_max
+        - 유효숫자(소수인 경우) 최대 5자리로 축소
+        - 서명 규칙 준수 위해 말미 0 제거
+        """
+        d = Decimal(str(px))
+        # 1) 우선 소수자릿수 제한으로 반올림
+        quant = Decimal(f"1e-{decimals_max}") if decimals_max > 0 else Decimal("1")
+        d = d.quantize(quant, rounding=ROUND_HALF_UP)
+
+        s = format(d, "f")  # 고정소수 문자열
+        if "." not in s:
+            return s  # 정수는 유효숫자 제한 제외
+
+        int_part, frac_part = s.split(".", 1)
+        # 현재 유효숫자 계산(선행 0 제거)
+        if int_part == "" or int_part == "0":
+            # 0.xxxx → 소수부 선행 0 제거
+            sig_digits = len(frac_part.lstrip("0"))
+            int_digits = 0
+        else:
+            int_digits = len(int_part.lstrip("0"))
+            sig_digits = int_digits + len(frac_part)
+
+        if sig_digits <= 5:
+            # 말미 0/점 제거
+            return s.rstrip("0").rstrip(".")
+
+        # 2) 유효숫자 5로 줄이기(소수부만 축소)
+        allow_frac = max(0, 5 - int_digits)
+        allow_frac = min(allow_frac, decimals_max)
+        quant2 = Decimal(f"1e-{allow_frac}") if allow_frac > 0 else Decimal("1")
+        d2 = d.quantize(quant2, rounding=ROUND_HALF_UP)
+        s2 = format(d2, "f").rstrip("0").rstrip(".")
+        return s2
+
+    # HL Info API로 user 상태 가져오기 (clearinghouseState)
+    async def _hl_get_user_state(self, ex, dex: Optional[str], user_addr: str) -> Optional[dict]:
+        """
+        clearinghouseState(user, dex)를 Info API로 조회.
         예시 응답(요약):
         {
             "marginSummary": {...},
@@ -151,126 +247,150 @@ class TradingService:
         try:
             if not user_addr:
                 return None
-            payload = {"type": "clearinghouseState", "user": user_addr.lower(), "dex": dex}
+            payload = {"type": "clearinghouseState", "user": user_addr.lower()}
+            if dex:
+                payload["dex"] = dex
             state = await ex.publicPostInfo(payload)
             if isinstance(state, dict):
-                logger.debug("[HIP3] state ok: dex=%s user=%s keys=%s", dex, user_addr, list(state.keys()))
+                logger.debug("[HL] state ok: dex=%s user=%s keys=%s", dex or "HL", user_addr, list(state.keys()))
                 return state
-            # 일부 구현이 리스트 등으로 줄 수 있어 대비
             if isinstance(state, list) and state and isinstance(state[0], dict):
                 return state[0]
-            logger.info("[HIP3] unexpected state type: %s", type(state))
+            logger.info("[HL] unexpected state type: %s", type(state))
             return None
         except Exception as e:
-            logger.info("[HIP3] clearinghouseState failed: %s", e)
+            logger.info("[HL] clearinghouseState failed: %s", e)
             return None
 
-    def _hl_parse_position_from_state(self, state: dict, hip3_coin: str) -> Optional[dict]:
+    async def _hl_sum_account_value(self, ex) -> float:
         """
-        clearinghouseState에서 특정 코인(예: 'xyz:XYZ100')의 포지션만 추출해 표준화.
-        디버깅 강화를 위해 매칭/스킵/파싱 과정을 상세 로깅합니다.
-        PDEX_HIP3_DEBUG=1 이면 state 전체를 한 번 덤프(길이 제한)합니다.
+        HL 전체(메인 + 모든 HIP-3 dex)의 accountValue 합계를 반환.
+        - user 주소: _hl_user_address(ex)
+        - dex 목록: 캐시(self._perp_dex_list) 사용. 없을 경우 최초 1회 fetch 후 캐시.
+        """
+        user = self._hl_user_address(ex)
+        if not user:
+            return 0.0
+
+        # perpDexs 캐시 준비(최초 1회만 네트워크 호출)
+        if self._perp_dex_list is None:
+            try:
+                await self.fetch_perp_dexs()
+            except Exception:
+                self._perp_dex_list = []
+
+        total = 0.0
+        try:
+            # 메인(HL) + 캐시된 dex
+            all_scopes = [None] + (self._perp_dex_list or [])
+            for d in all_scopes:
+                st = await self._hl_get_user_state(ex, d, user)
+                if not st or not isinstance(st, dict):
+                    continue
+                ms = st.get("marginSummary", {}) or {}
+                av = ms.get("accountValue")
+                try:
+                    if av is not None:
+                        total += float(av)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return total
+
+    def _hl_parse_position_from_state(self, state: dict, coin_key: str) -> Optional[dict]:
+        """
+        clearinghouseState에서 특정 코인(메인: 'BTC', HIP‑3: 'xyz:XYZ100') 포지션 추출.
         """
         try:
             hip3_debug = True
 
             if not isinstance(state, dict):
-                logger.debug("[HIP3] state not dict: %s", type(state))
+                logger.debug("[HL] state not dict: %s", type(state))
                 return None
 
             if hip3_debug:
-                # 너무 큰 로그를 방지하기 위해 앞부분만 출력
                 try:
                     import json
-                    raw = json.dumps(state)[:2000]  # 2KB 제한
-                    logger.debug("[HIP3] raw state(head): %s...", raw)
+                    logger.debug("[HL] raw state(head): %s...", json.dumps(state)[:2000])
                 except Exception:
-                    logger.debug("[HIP3] raw state(head): %s...", str(state)[:1000])
+                    logger.debug("[HL] raw state(head): %s...", str(state)[:1000])
 
             aps = state.get("assetPositions", []) or []
-            logger.debug("[HIP3] parse start: target=%s, assetPositions.len=%d",
-                        hip3_coin, len(aps))
+            logger.debug("[HL] parse start: target=%s, assetPositions.len=%d", coin_key, len(aps))
 
-            # 코인 목록 수집(최대 50개만)
+            # 코인 이름 헤드 로그
             coins = []
             for ap in aps[:50]:
-                pos0 = ap.get("position") or {}
+                pos0 = (ap or {}).get("position") or {}
                 coins.append(str(pos0.get("coin") or ""))
-            logger.debug("[HIP3] coins in positions(head): %s", coins[:20])
+            logger.debug("[HL] coins in positions(head): %s", coins[:20])
 
             for idx, ap in enumerate(aps):
-                pos = ap.get("position") or {}
+                pos = (ap or {}).get("position") or {}
                 coin = str(pos.get("coin") or "")
-                if coin != f"{hip3_coin}":
-                    logger.debug("[HIP3] skip idx=%d coin=%s != %s", idx, coin, hip3_coin)
+                if coin != coin_key:
+                    logger.debug("[HL] skip idx=%d coin=%s != %s", idx, coin, coin_key)
                     continue
 
-                # 안전 파싱 함수
                 def f(x, default=0.0):
-                    try:
-                        return float(x)
-                    except Exception:
-                        return default
+                    try: return float(x)
+                    except Exception: return default
 
-                szi = f(pos.get("szi"), 0.0)
-                entry_px = f(pos.get("entryPx"), 0.0)
-                u_pnl = f(pos.get("unrealizedPnl"), 0.0)
-                liq_px = f(pos.get("liquidationPx"), 0.0)
-                pval = f(pos.get("positionValue"), 0.0)
-                m_used = f(pos.get("marginUsed"), 0.0)
-                lev_info = pos.get("leverage", {}) or {}
-                lev_type = str(lev_info.get("type") or "").lower()
+                szi    = f(pos.get("szi"), 0.0)
+                epx    = f(pos.get("entryPx"), 0.0)
+                upnl   = f(pos.get("unrealizedPnl"), 0.0)
+                liq    = f(pos.get("liquidationPx"), 0.0)
+                pval   = f(pos.get("positionValue"), 0.0)
+                mused  = f(pos.get("marginUsed"), 0.0)
+                lev_i  = pos.get("leverage", {}) or {}
+                lev_ty = str(lev_i.get("type") or "").lower()
                 try:
-                    lev_val = int(float(lev_info.get("value"))) if lev_info.get("value") is not None else None
+                    lev_v = int(float(lev_i.get("value"))) if lev_i.get("value") is not None else None
                 except Exception:
-                    lev_val = None
+                    lev_v = None
 
-                logger.debug(
-                    "[HIP3] matched idx=%d coin=%s szi=%s entryPx=%s uPnl=%s lev=(%s,%s) liqPx=%s pVal=%s mUsed=%s",
-                    idx, coin, pos.get("szi"), pos.get("entryPx"), pos.get("unrealizedPnl"),
-                    lev_type, lev_info.get("value"), pos.get("liquidationPx"),
-                    pos.get("positionValue"), pos.get("marginUsed")
-                )
+                logger.debug("[HL] matched idx=%d coin=%s szi=%s entryPx=%s uPnl=%s lev=(%s,%s) liqPx=%s pVal=%s mUsed=%s",
+                            idx, coin, pos.get("szi"), pos.get("entryPx"), pos.get("unrealizedPnl"),
+                            lev_ty, lev_i.get("value"), pos.get("liquidationPx"),
+                            pos.get("positionValue"), pos.get("marginUsed"))
 
                 if abs(szi) <= 0.0:
-                    logger.debug("[HIP3] matched but zero size: szi=%s", szi)
+                    logger.debug("[HL] matched but zero size: szi=%s", szi)
                     return None
 
                 side = "long" if szi > 0 else "short"
 
                 result = {
                     "coin": coin,
-                    "size": abs(szi),               # 표시는 절대값
-                    "entry_price": entry_px,
-                    "unrealized_pnl": u_pnl,
+                    "size": abs(szi),
+                    "entry_price": epx,
+                    "unrealized_pnl": upnl,
                     "side": side,
-                    "leverage": lev_val,
-                    "leverage_type": lev_type,
-                    "liquidation_price": liq_px,
+                    "leverage": lev_v,
+                    "leverage_type": lev_ty,
+                    "liquidation_price": liq,
                     "position_value": pval,
-                    "margin_used": m_used,
+                    "margin_used": mused,
                 }
-
-                # marginSummary.accountValue도 참고해 보고 싶다면 여기에 추가 가능
                 try:
                     ms = state.get("marginSummary", {}) or {}
                     if ms.get("accountValue") is not None:
                         result["collateral"] = float(ms.get("accountValue"))
-                        logger.debug("[HIP3] marginSummary.accountValue=%s", ms.get("accountValue"))
+                        logger.debug("[HL] marginSummary.accountValue=%s", ms.get("accountValue"))
                 except Exception:
                     pass
 
-                logger.debug("[HIP3] parse result: %s", result)
+                logger.debug("[HL] parse result: %s", result)
                 return result
 
-            logger.debug("[HIP3] no matching position for %s (coins=%s)", hip3_coin, coins[:20])
+            logger.debug("[HL] no matching position for %s (coins=%s)", coin_key, coins[:20])
             return None
-
         except Exception as e:
-            logger.debug("[HIP3] parse exception: %s", e, exc_info=True)
+            logger.debug("[HL] parse exception: %s", e, exc_info=True)
             return None
         
-    async def _hip3_build_asset_map(self, ex, ex_name: str):
+    async def _hl_build_asset_map(self, ex, ex_name: str):
         """
         allPerpMetas를 로드해, 모든 vault(universe)를 평탄화하여
         'coin' -> asset_id 맵을 만든다.
@@ -279,7 +399,7 @@ class TradingService:
         - 빌더 퍼프(meta_idx>=1): asset = 100000 + meta_idx * 10000 + index_in_meta
         """
         # 이미 빌드된 경우 캐시 사용
-        if ex_name in self._hip3_cache:
+        if ex_name in self._asset_index_cache_by_ex:
             return
 
         try:
@@ -308,21 +428,112 @@ class TradingService:
 
                 vaults.append(uni)
 
-            self._hip3_cache[ex_name] = {"vaults": vaults, "map": mapping}
+            self._asset_index_cache_by_ex[ex_name] = {"vaults": vaults, "map": mapping}
             logger.info("[HIP3] %s: %d vault(s), %d coins cached (assetID built by spec)",
                         ex_name, len(vaults), len(mapping))
         except Exception as e:
             logger.info("[HIP3] %s allPerpMetas build failed: %s", ex_name, e)
-            self._hip3_cache[ex_name] = {"vaults": [], "map": {}}
+            self._asset_index_cache_by_ex[ex_name] = {"vaults": [], "map": {}}
 
-    async def _hip3_resolve_asset_index(self, ex, ex_name: str, hip3_coin: str) -> Optional[int]:
+    async def _resolve_asset_index(self, ex, ex_name: str, hip3_coin: str) -> Optional[int]:
         """
         'xyz:XYZ100' 같은 코인의 전역 asset_index를 캐시에서 꺼내거나 allPerpMetas로 빌드 후 반환.
         """
-        if ex_name not in self._hip3_cache:
-            await self._hip3_build_asset_map(ex, ex_name)
-        mp = self._hip3_cache.get(ex_name, {}).get("map", {})
+        if ex_name not in self._asset_index_cache_by_ex:
+            await self._hl_build_asset_map(ex, ex_name)
+        mp = self._asset_index_cache_by_ex.get(ex_name, {}).get("map", {})
         return mp.get(hip3_coin)
+
+    async def _get_max_leverage_unified(self, ex, dex: Optional[str], coin_key: str) -> tuple[Optional[int], bool]:
+        """
+        metaAndAssetCtxs(dex?)에서 coin_key(name) 항목을 찾아
+        (maxLeverage, isolated_flag) 반환.
+        - coin_key: 메인 → 'BTC' 같은 UPPER, HIP‑3 → 'xyz:XYZ100' 원문
+        - isolated_flag: onlyIsolated=True 또는 marginMode in {'isolated', 'strictIsolated'}
+        """
+        try:
+            payload = {"type": "metaAndAssetCtxs"}
+            if dex:
+                payload["dex"] = dex
+            resp = await ex.publicPostInfo(payload)
+            if not isinstance(resp, list) or len(resp) < 2:
+                return None, False
+            universe = (resp[0] or {}).get("universe", []) or []
+            for a in universe:
+                if not isinstance(a, dict):
+                    continue
+                name = str(a.get("name") or "")
+                if not name or a.get("isDelisted", False):
+                    continue
+                key = name.upper() if not dex else name
+                if key != coin_key:
+                    continue
+                max_lev = a.get("maxLeverage")
+                try:
+                    max_lev = int(float(max_lev)) if max_lev is not None else None
+                except Exception:
+                    max_lev = None
+                mmode = str(a.get("marginMode") or "").lower()
+                only_iso = bool(a.get("onlyIsolated", False) or mmode in ("isolated", "strictisolated"))
+                return max_lev, only_iso
+            return None, False
+        except Exception:
+            return None, False
+        
+    async def ensure_hl_max_leverage_auto(self, exchange_name: str, symbol: str) -> None:
+        """
+        HL 전용 통합 레버리지 보장:
+        - 자산ID/레버리지는 모두 메타 기반으로 처리(메인/HIP‑3 동일)
+        - 메인: coin_key='BTC' 등 UPPER, HIP‑3: 'xyz:XYZ100' 원문
+        - max 레버리지를 1회만 updateLeverage로 적용(격리 여부: 메타 기준)
+        """
+        ex = self.manager.get_exchange(exchange_name)
+        if not ex or not self.manager.get_meta(exchange_name).get("hl", False):
+            return
+
+        dex, hip3_coin = _parse_hip3_symbol(symbol)
+        coin_key = hip3_coin if dex else symbol.upper()
+        # 이미 적용했다면 스킵
+        key = (exchange_name, coin_key)
+
+        # 0) 이미 적용되었으면 즉시 반환
+        if self._leverage_applied.get(key):
+            return
+
+        # 1) in-flight 가드(동시 중복 호출 차단)
+        if key in self._leverage_inflight:
+            return
+
+        # 2) 최근 체크 스로틀(기본 5초)
+        now = time.monotonic()
+        last = self._leverage_last_check.get(key, 0.0)
+        if (now - last) < self._leverage_check_interval:
+            return
+        self._leverage_last_check[key] = now
+        self._leverage_inflight.add(key)
+
+        try:
+            # 3) maxLeverage/isolated 여부 (메타)
+            max_lev, only_iso = await self._get_max_leverage_unified(ex, dex, coin_key)
+            if not max_lev:
+                # 없으면 굳이 재시도하지 않도록 적용 완료로 간주(원하면 스로틀만 갱신하고 미적용으로 둘 수도 있음)
+                self._leverage_applied[key] = True
+                return
+
+            # 4) 자산ID(메타 캐시 기반) → updateLeverage 1회 적용
+            try:
+                await self._hl_update_leverage(ex, exchange_name, coin_key, leverage=int(max_lev), isolated=bool(only_iso))
+                logger.info("[LEVERAGE] %s %s set to max=%s (isolated=%s)", exchange_name, coin_key, max_lev, only_iso)
+            except Exception as e:
+                # 실패해도 과호출 방지를 위해 일정 시간 스로틀 상태만 유지(필요시 재시도 정책 도입)
+                logger.info("[LEVERAGE] %s %s updateLeverage failed: %s", exchange_name, coin_key, e)
+                return
+            finally:
+                # 성공/실패 관계없이 너무 잦은 호출은 방지. 성공 시에는 멱등 보장을 위해 적용 완료로 마킹
+                self._leverage_applied[key] = True
+        finally:
+            # in-flight 해제
+            self._leverage_inflight.discard(key)
 
     async def _hl_create_order_unified(
         self,
@@ -360,23 +571,31 @@ class TradingService:
         # 2) 자산 ID(a) & 가격 원본(px_base) 결정
         if dex:
             # HIP‑3: 자산 ID는 빌더 퍼프 규약
-            aidx = await self._hip3_resolve_asset_index(ex, exchange_name, hip3_coin)
+            aidx = await self._resolve_asset_index(ex, exchange_name, hip3_coin)
             if aidx is None:
                 raise RuntimeError(f"HIP3 asset index not found for {hip3_coin} on {exchange_name}")
             # HIP‑3 가격 소스(metaAndAssetCtxs)
-            px_base = await self._hip3_pick_price(ex, dex, hip3_coin, price)
+            px_base = await self._hl_pick_price(ex, dex, hip3_coin, price)
         else:
-            # 메인 퍼프: ccxt 마켓에서 baseId 사용
-            await ex.load_markets()
-            market_id = f"{symbol}/USDC:USDC"
-            m = ex.market(market_id)
-            aidx = ex.parse_to_int(m["baseId"])
-            # 메인 퍼프 가격 소스(fetch_ticker or hint)
+            # 메인 퍼프: 자산 ID도 allPerpMetas 캐시로(메타_idx=0)
+            coin_key = symbol.upper()
+            aidx = await self._resolve_asset_index(ex, exchange_name, coin_key)
+            if aidx is None:
+                raise RuntimeError(f"Main asset index not found for {coin_key} on {exchange_name}")
+            # 가격도 메타(무 dex)에서
             if price is None:
-                t = await ex.fetch_ticker(market_id)
-                px_base = float(t.get("last"))
+                px_map = await self._hl_price_map(ex, None)
+                px = px_map.get(coin_key)
+                if px is None:
+                    raise RuntimeError(f"Main price not found for {coin_key}")
+                px_base = float(px)
             else:
                 px_base = float(price)
+
+        coin_key = (hip3_coin if dex else symbol.upper())
+        # szDecimals 조회(1회 캐시) → Perp 허용 price 소수자릿수 = 6 - szDecimals
+        sz_dec = await self._hl_sz_decimals(ex, dex, coin_key)
+        price_decimals_max = max(0, 6 - int(sz_dec))  # Perp MAX_DECIMALS=6
 
         # 3) 주문 가격(px_str) & TIF 결정
         if order_type == "market":
@@ -385,20 +604,21 @@ class TradingService:
                 tif = "FrontendMarket"
             else:
                 tif = "Gtc"
-            # HIP‑3는 정수 가격이 체결 안정적, 메인은 프리시전 준수
-            if dex:
-                price_str = str(int(px_eff))
-            else:
-                price_str = ex.price_to_precision(f"{symbol}/USDC:USDC", px_eff)
+            price_str = self._format_perp_price(px_eff, price_decimals_max)
         else:
             # 지정가: 가격 필수
             if price is None:
                 raise RuntimeError("limit order requires price")
             tif = self._tif_capitalize(time_in_force, default="Gtc")
-            price_str = str(px_base) if dex else ex.price_to_precision(f"{symbol}/USDC:USDC", px_base)
+            price_str = self._format_perp_price(px_base, price_decimals_max)
 
         # 4) 수량 문자열
-        size_str = str(amount).rstrip("0").rstrip(".") if dex else ex.amount_to_precision(f"{symbol}/USDC:USDC", amount)
+        if int(sz_dec) > 0:
+            q = Decimal(f"1e-{int(sz_dec)}")
+            sz_d = Decimal(str(amount)).quantize(q, rounding=ROUND_HALF_UP)
+        else:
+            sz_d = Decimal(int(round(amount)))
+        size_str = format(sz_d, "f").rstrip("0").rstrip(".")
 
         # 5) raw payload 구성
         order_obj = {
@@ -415,7 +635,7 @@ class TradingService:
         action = {"type": "order", "orders": [order_obj], "grouping": "na"}
 
         opt = getattr(ex, "options", {}) or {}
-        builder_addr = opt.get("builder")                      # 사용자 설정 builder_code
+        builder_addr = opt.get("builder",None)                      # 사용자 설정 builder_code
         if builder_addr:                                       # 빌더가 있을 때만 builder/fee 추가
             fee_int = None
             dex, _ = _parse_hip3_symbol(symbol)
@@ -448,41 +668,9 @@ class TradingService:
         parsed = ex.parse_orders(orders_to_parse, None)
         return parsed[0] if parsed else {"info": resp}
 
-    async def _hip3_get_max_leverage(self, ex, dex: str, hip3_coin: str) -> Optional[int]:
-        """
-        metaAndAssetCtxs(dex)에서 해당 코인의 maxLeverage(int)를 반환.
-        캐시(_hip3_maxlev_cache)를 우선 사용.
-        """
-        key = (dex, hip3_coin)
-        if key in self._hip3_maxlev_cache:
-            return self._hip3_maxlev_cache[key]
-        try:
-            resp = await ex.publicPostInfo({"type": "metaAndAssetCtxs", "dex": dex})
-            if not isinstance(resp, list) or len(resp) < 2:
-                return None
-            universe = (resp[0] or {}).get("universe", []) or []
-            for a in universe:
-                if not isinstance(a, dict):
-                    continue
-                name = str(a.get("name") or "")
-                if name != hip3_coin:
-                    continue
-                if a.get("isDelisted", False):
-                    continue
-                val = a.get("maxLeverage")
-                if val is None:
-                    continue
-                max_lev = int(float(val))
-                self._hip3_maxlev_cache[key] = max_lev
-                return max_lev
-            return None
-        except Exception as e:
-            logger.info("[HIP3] get_max_leverage failed: %s", e)
-            return None
-
     # ------------- HIP-3 레버리지 설정(updateLeverage, Isolated 권장) -------------
-    async def _hip3_update_leverage(self, ex, ex_name: str, hip3_coin: str, leverage: int, isolated: bool=True):
-        aidx = await self._hip3_resolve_asset_index(ex, ex_name, hip3_coin)
+    async def _hl_update_leverage(self, ex, ex_name: str, hip3_coin: str, leverage: int, isolated: bool=True):
+        aidx = await self._resolve_asset_index(ex, ex_name, hip3_coin)
         if aidx is None:
             raise RuntimeError(f"HIP3 asset index not found for {hip3_coin} on {ex_name}")
 
@@ -508,127 +696,6 @@ class TradingService:
                 return str(v)
         return str(res)
     
-    def _hl_market_id(self, symbol: str) -> str:
-        # 본 프로젝트는 HL perp의 쿼트가 USDC:USDC로 고정
-        return f"{symbol}/USDC:USDC"
-
-    async def _hl_get_max_lev_info(self, ex, market_id: str) -> tuple[Optional[int], bool]:
-        """
-        HL 마켓 정보에서 (maxLeverage, onlyIsolated)를 관용적으로 추출.
-        (limits.leverage.max) -> (maxLeverage) -> (info.maxLeverage) 순으로 시도.
-        """
-        try:
-            # ccxt 마켓 캐시가 있으면 우선 사용
-            if getattr(ex, "markets", None) and market_id in ex.markets:
-                m = ex.markets[market_id]
-            else:
-                await ex.load_markets()
-                m = ex.markets.get(market_id, None)
-            if not m:
-                # fetch_markets로 강제 로드
-                await ex.fetch_markets()
-                m = ex.markets.get(market_id, None)
-            if not m:
-                return None, False
-
-            # onlyIsolated 추출(기본 False)
-            only_isolated = bool(m.get("onlyIsolated", False) or m.get("info", {}).get("onlyIsolated", False))
-
-            # maxLeverage 추출
-            max_lev = None
-            try:
-                limits = m.get("limits", {})
-                lev = limits.get("leverage", {})
-                val = lev.get("max", None)
-                if val is not None:
-                    max_lev = int(float(val))
-            except Exception:
-                pass
-            if max_lev is None:
-                try:
-                    if "maxLeverage" in m and m["maxLeverage"] is not None:
-                        max_lev = int(float(m["maxLeverage"]))
-                except Exception:
-                    pass
-            if max_lev is None:
-                try:
-                    info = m.get("info", {})
-                    if "maxLeverage" in info and info["maxLeverage"] is not None:
-                        max_lev = int(float(info["maxLeverage"]))
-                except Exception:
-                    pass
-
-            return max_lev, only_isolated
-        except Exception as e:
-            logger.info("[LEVERAGE] market info read failed: %s", e)
-            return None, False
-
-    async def ensure_hl_max_leverage_for_exchange(self, exchange_name: str, symbol: str):
-        """
-        HL 거래소에 대해: 해당 심볼의 maxLeverage를 읽어 cross/isolated 설정 및 레버리지 설정을 1회만 적용.
-        """
-        ex = self.manager.get_exchange(exchange_name)
-        meta = self.manager.get_meta(exchange_name) or {}
-        if not ex or not meta.get("hl", False):
-            return
-
-        market_id = self._hl_market_id(symbol)
-        key = (exchange_name, market_id)
-        if self._lev_mode_applied.get(key):
-            return  # 이미 설정됨
-
-        # 캐시: 먼저 조회
-        cached = self._hl_lev_cache.get(key)
-        if cached is None:
-            max_lev, only_iso = await self._hl_get_max_lev_info(ex, market_id)
-            self._hl_lev_cache[key] = {"maxLeverage": max_lev, "onlyIsolated": only_iso}
-        else:
-            max_lev = cached.get("maxLeverage")
-            only_iso = cached.get("onlyIsolated", False)
-
-        # config leverage가 있으면 max와 비교해 더 작은 값 사용
-        cfg_lev = meta.get("leverage")
-        if cfg_lev:
-            try:
-                cfg_lev = int(cfg_lev)
-            except Exception:
-                cfg_lev = None
-
-        if max_lev is None and cfg_lev is None:
-            logger.info("[LEVERAGE] %s: %s no leverage info (skip)", exchange_name, market_id)
-            self._lev_mode_applied[key] = True  # 중복 호출 방지
-            return
-
-        use_lev = cfg_lev if (cfg_lev and max_lev is None) else (max_lev if (cfg_lev is None) else min(cfg_lev, max_lev))
-
-        # 1) 마진 모드: onlyIsolated True면 isolated, 아니면 cross
-        try:
-            mode = "isolated" if only_iso else "cross"
-            await ex.set_margin_mode(mode, market_id, params={})
-            logger.info("[LEVERAGE] %s: set_margin_mode(%s, %s) OK", exchange_name, mode, market_id)
-        except Exception as e:
-            logger.info("[LEVERAGE] %s: set_margin_mode unsupported/failed: %s", exchange_name, e)
-
-        # 2) 레버리지 설정
-        if use_lev:
-            try:
-                await ex.set_leverage(int(use_lev), market_id, params={})
-                logger.info("[LEVERAGE] %s: set_leverage(%s, %s) OK", exchange_name, use_lev, market_id)
-            except Exception as e:
-                logger.info("[LEVERAGE] %s: set_leverage(%s, %s) failed: %s", exchange_name, use_lev, market_id, e)
-
-        self._lev_mode_applied[key] = True
-        self._lev_mode_last_at[key] = time.monotonic()
-
-    async def ensure_hl_max_leverage_for_all(self, symbol: str):
-        """설정된 모든 HL 거래소에 대해 ensure_hl_max_leverage_for_exchange 실행."""
-        tasks = []
-        for name in self.manager.all_names():
-            if self.manager.get_exchange(name) and self.manager.get_meta(name).get("hl", False):
-                tasks.append(self.ensure_hl_max_leverage_for_exchange(name, symbol))
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-
     def _is_rate_limited(self, err: Exception | str) -> bool:
         s = str(err).lower()
         return ("429" in s) or ("too many" in s) or ("rate limit" in s)
@@ -646,7 +713,8 @@ class TradingService:
         - dex='xyz' 등: HIP‑3
         반환:
         - 메인 HL: {'BTC': 104000.0, 'ETH': 3000.0, ...} (name upper)
-        - HIP‑3: {'xyz:XYZ100': 25075.0, 'flx:TSLA': 406.0, ...} (원본 name 그대로)
+        - HIP‑3 : {'xyz:XYZ100': 25075.0, ...} (원본 name 그대로)
+        가격과 함께 각 페어의 decimals(소숫점 자리수)도 1회 캐시에 저장합니다.
         """
         try:
             payload = {"type": "metaAndAssetCtxs"}
@@ -661,6 +729,7 @@ class TradingService:
             asset_ctxs = resp[1] or []
             px_map: Dict[str, float] = {}
 
+            # 1) 인덱스 매칭 우선
             for i, a in enumerate(universe):
                 if not isinstance(a, dict):
                     continue
@@ -668,22 +737,32 @@ class TradingService:
                 if not name or a.get("isDelisted", False):
                     continue
                 ctx = asset_ctxs[i] if (i < len(asset_ctxs) and isinstance(asset_ctxs[i], dict)) else {}
+                # 우선순위: markPx → midPx → oraclePx → prevDayPx
                 px = None
+                src_val = None
                 for k in ("markPx", "midPx", "oraclePx", "prevDayPx"):
                     v = ctx.get(k)
                     if v is not None:
                         try:
-                            px = float(v); break
+                            px = float(v)
+                            src_val = v
+                            break
                         except Exception:
                             continue
                 if px is None:
                     continue
-                # 메인은 대문자 심볼 키, HIP‑3은 원본 이름(예: 'xyz:XYZ100')을 키로 둔다
                 key = name.upper() if not dex else name
                 px_map[key] = px
 
-            # 보완: 인덱스 불일치 대비(이름 기반)
-            if len(px_map) < len([a for a in universe if isinstance(a, dict) and a.get("name")]):
+                # decimals 1회 저장
+                dec_key = (dex if dex else "HL", key)
+                if dec_key not in self._hl_px_dec_cache:
+                    s = str(src_val)
+                    self._hl_px_dec_cache[dec_key] = int(len(s.split(".", 1)[1]) if "." in s else 0)
+
+            # 2) 이름 기반 보완(인덱스 불일치 대비)
+            valid_cnt = sum(1 for a in universe if isinstance(a, dict) and a.get("name"))
+            if len(px_map) < valid_cnt:
                 for a, ctx in zip(universe, asset_ctxs):
                     try:
                         if not isinstance(a, dict) or not isinstance(ctx, dict):
@@ -694,19 +773,53 @@ class TradingService:
                         key = name.upper() if not dex else name
                         if key in px_map:
                             continue
+                        # 우선순위 동일
                         for k in ("markPx", "midPx", "oraclePx", "prevDayPx"):
                             v = ctx.get(k)
                             if v is not None:
                                 px_map[key] = float(v)
+                                # decimals도 저장(조기 return 없음)
+                                dec_key = (dex if dex else "HL", key)
+                                if dec_key not in self._hl_px_dec_cache:
+                                    s = str(v)
+                                    self._hl_px_dec_cache[dec_key] = int(len(s.split(".", 1)[1]) if "." in s else 0)
                                 break
                     except Exception:
                         continue
 
             return px_map
         except Exception as e:
-            logger.info("[HL] metaAndAssetCtxs payload=%s failed: %s", {"type":"metaAndAssetCtxs", **({"dex":dex} if dex else {})}, e)
+            logger.info("[HL] metaAndAssetCtxs payload=%s failed: %s",
+                        {"type": "metaAndAssetCtxs", **({"dex": dex} if dex else {})}, e)
             return {}
-        
+
+    # [추가] 통합 가격 API: HL은 기존 fetch_hl_price, 비-HL은 mpdex.get_mark_price 사용
+    async def fetch_price(self, exchange_name: str, symbol: str, dex_hint: Optional[str] = None) -> str:
+        """
+        카드별 가격 조회(통합):
+        - HL: fetch_hl_price(symbol, dex_hint) 사용(내부 metaAndAssetCtxs 캐시)
+        - 비-HL(mpdex): native 심볼로 변환 후 exchange.get_mark_price(native)
+        반환은 "12,345.67" 형태 문자열 또는 "Error"/"N/A".
+        """
+        ex = self.manager.get_exchange(exchange_name)
+        if not ex:
+            return "N/A"
+        meta = self.manager.get_meta(exchange_name) or {}
+
+        try:
+            if meta.get("hl", False):
+                # HL: dex_hint가 있으면 HIP‑3, 없으면 메인
+                return await self.fetch_hl_price(symbol, dex_hint=dex_hint)
+            else:
+                # 비-HL: mpdex 클라이언트 get_mark_price(native)
+                native = self._to_native_symbol(exchange_name, symbol)
+                px = await ex.get_mark_price(native)
+                # px가 문자열/숫자 모두 허용
+                return f"{float(px):,.2f}"
+        except Exception as e:
+            logger.info("[PRICE] %s fetch_price failed: %s", exchange_name, e)
+            return "Error"
+
     async def fetch_hl_price(self, symbol: str, dex_hint: Optional[str] = None) -> str:
         """
         HL 가격 조회(캐시 3초):
@@ -808,82 +921,58 @@ class TradingService:
             
         else:
             now = time.monotonic()
-            # 429 쿨다운이면 캐시 반환
             if now < self._cooldown_until.get(exchange_name, 0.0):
                 cached = self._last_status.get(exchange_name)
                 if cached:
                     return cached
-                # 캐시 없으면 N/A
                 return "📊 Position: N/A", f"💰 Collateral: {self._last_collateral.get(exchange_name, 0.0):,.2f} USDC", self._last_collateral.get(exchange_name, 0.0)
 
             try:
-                # balance는 10초마다 or need_balance=True인 경우에만
+                # collateral(USDC total)  —  주기적으로만 갱신
                 col_val = self._last_collateral.get(exchange_name, 0.0)
                 if need_balance or (now - self._last_balance_at.get(exchange_name, 0.0) >= self._balance_every):
-                    bal = await ex.fetch_balance()
-                    col_val = float(bal.get("USDC", {}).get("total", 0) or 0)
+                    av_sum = await self._hl_sum_account_value(ex)
+                    col_val = float(av_sum)
                     self._last_collateral[exchange_name] = col_val
                     self._last_balance_at[exchange_name] = now
 
-
-                # 2) 포지션: HIP‑3면 clearinghouseState(user+dex), 아니면 fetch_positions
+                # 포지션: clearinghouseState(user, dex?)
                 dex, hip3_coin = _parse_hip3_symbol(symbol)
-                pos_str = "📊 Position: N/A"
-                # 디버깅: HIP-3 파싱 결과 출력 (여기가 문제였음)
-                
-                if dex:
-                    user_addr = self._hl_user_address(ex)
+                coin_key = hip3_coin if dex else symbol.upper()
+                user_addr = self._hl_user_address(ex)
+                logger.debug("fetch_status(HL): dex=%s coin=%s address=%s", dex or "HL", coin_key, user_addr)
 
-                    logger.debug("fetch_status(HL): hip3 dex=%s coin=%s address=%s", dex, hip3_coin, user_addr)
-                    
-                    state = await self._hl_get_user_state(ex, dex, user_addr)
-                    
-                    hip3_pos = self._hl_parse_position_from_state(state or {}, hip3_coin)
-                    logger.debug(str(hip3_pos))
-                    if hip3_pos:
-                        side = "LONG" if hip3_pos["side"] == "long" else "SHORT"
-                        size = float(hip3_pos["size"])
-                        pnl = float(hip3_pos["unrealized_pnl"])
-                        side_color = "green" if side == "LONG" else "red"
-                        pnl_color = "green" if pnl >= 0 else "red"
-                        pos_str = f"📊 [{side_color}]{side}[/] {size:.5f} | PnL: [{pnl_color}]{pnl:,.2f}[/]"
-                else:
-                    # positions는 매번
-                    positions = await ex.fetch_positions([f"{symbol}/USDC:USDC"])
-                    # 포지션 문자열 구성(이전과 동일)
-                    pos_str = "📊 Position: N/A"
-                    if positions and positions[0]:
-                        p = positions[0]
-                        try:
-                            sz = float(p.get("contracts") or 0.0)
-                        except Exception:
-                            sz = 0.0
-                        if sz:
-                            side = "LONG" if p.get("side") == "long" else "SHORT"
-                            try:
-                                pnl = float(p.get("unrealizedPnl") or 0.0)
-                            except Exception:
-                                pnl = 0.0
-                            side_color = "green" if side == "LONG" else "red"
-                            pnl_color = "green" if pnl >= 0 else "red"
-                            pos_str = f"📊 [{side_color}]{side}[/] {sz:.5f} | PnL: [{pnl_color}]{pnl:,.2f}[/]"
+                state = await self._hl_get_user_state(ex, dex, user_addr)
+                pos_data = self._hl_parse_position_from_state(state or {}, coin_key)
+
+                pos_str = "📊 Position: N/A"
+                if pos_data:
+                    side = "LONG" if pos_data["side"] == "long" else "SHORT"
+                    size = float(pos_data["size"])
+                    pnl  = float(pos_data["unrealized_pnl"])
+                    side_color = "green" if side == "LONG" else "red"
+                    pnl_color  = "green" if pnl >= 0 else "red"
+                    pos_str = f"📊 [{side_color}]{side}[/] {size:.5f} | PnL: [{pnl_color}]{pnl:,.2f}[/]"
+
+                    # clearinghouseState에 총 계정 가치가 있으면 collateral로 덮어쓰기(선택)
+                    try:
+                        if "collateral" in pos_data:
+                            col_val = float(pos_data["collateral"])
+                    except Exception:
+                        pass
 
                 col_str = f"💰 Collateral: {col_val:,.2f} USDC"
-                # 캐시 갱신
                 self._last_status[exchange_name] = (pos_str, col_str, col_val)
-                # 성공하면 백오프 초기화
                 self._backoff_sec[exchange_name] = 0.0
                 return pos_str, col_str, col_val
 
             except Exception as e:
-                logging.error(f"[{exchange_name}] fetch_status error: {e}", exc_info=True)
-                # 429면 백오프/쿨다운 설정
+                logger.error(f"[{exchange_name}] fetch_status error: {e}", exc_info=True)
                 if self._is_rate_limited(e):
                     current = self._backoff_sec.get(exchange_name, 2.0) or 2.0
                     new_backoff = min(current * 2.0, 15.0)
                     self._backoff_sec[exchange_name] = new_backoff
                     self._cooldown_until[exchange_name] = now + new_backoff
-                # 캐시 반환
                 cached = self._last_status.get(exchange_name)
                 if cached:
                     return cached
@@ -923,28 +1012,7 @@ class TradingService:
         logger.info("[ORDER] ex=%s sym=%s type=%s side=%s price=%s reduce_only=%s want_frontend=%s",
                     exchange_name, symbol, order_type, side, price, reduce_only, want_frontend)
 
-        # (선택) 메인 퍼프는 주문 전 심볼별 레버리지/마진모드 보장(캐시로 과호출 방지)
-        dex, hip3_coin = _parse_hip3_symbol(symbol)
-        if dex:
-            try:
-                apply_key = (exchange_name, hip3_coin)
-                if not self._hip3_lev_applied.get(apply_key):
-                    max_lev = await self._hip3_get_max_leverage(ex, dex, hip3_coin)
-                    if max_lev:
-                        await self._hip3_update_leverage(ex, exchange_name, hip3_coin, leverage=max_lev, isolated=True)
-                        logger.info("[HIP3] %s %s leverage set to max=%s (isolated)", exchange_name, hip3_coin, max_lev)
-                    else:
-                        logger.info("[HIP3] %s %s maxLeverage not found, skip set", exchange_name, hip3_coin)
-                    self._hip3_lev_applied[apply_key] = True
-            except Exception as e:
-                logger.info("[HIP3] auto set max leverage skipped: %s", e)
-
-        # (B) 메인 HL(자체 퍼프): 기존 보장(심볼별 max/cross/iso)
-        else:
-            try:
-                await self.ensure_hl_max_leverage_for_exchange(exchange_name, symbol)
-            except Exception as e:
-                logger.info("[LEVERAGE] ensure @order skipped: %s", e)
+        await self.ensure_hl_max_leverage_auto(exchange_name, symbol)
 
         # 통합 raw 호출(메인/HIP‑3 자동 분기)
         return await self._hl_create_order_unified(
@@ -1013,7 +1081,7 @@ class TradingService:
 
             # 가격 확보: hint → 없으면 metaAndAssetCtxs(dex)에서 markPx 기반
             try:
-                px_base = await self._hip3_pick_price(ex, dex, hip3_coin, price_hint)
+                px_base = await self._hl_pick_price(ex, dex, hip3_coin, price_hint)
             except Exception as e:
                 logger.error("[CLOSE] %s HIP3 %s price fetch failed: %s", exchange_name, hip3_coin, e)
                 raise
