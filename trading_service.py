@@ -407,7 +407,7 @@ class TradingService:
             all_scopes = [None] + (self._perp_dex_list or [])
             for d in all_scopes:
                 st = await self._hl_get_user_state(ex, d, user)
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.25)
                 if not st or not isinstance(st, dict):
                     continue
                 ms = st.get("marginSummary", {}) or {}
