@@ -55,6 +55,8 @@ class TradingService:
         self._hip3_maxlev_cache: Dict[tuple[str, str], int] = {}
         # [추가] HIP-3 레버리지 적용 여부 캐시: (exchange_name, hip3_coin) -> bool
         self._hip3_lev_applied: Dict[tuple[str, str], bool] = {}
+        # key: 'HL' | dex('xyz' 등) -> {'ts': float, 'map': {name->px}}
+        self._hl_px_cache_by_dex: Dict[str, Dict[str, Any]] = {}  
 
     async def fetch_perp_dexs(self) -> list[str]:
         """
@@ -94,14 +96,11 @@ class TradingService:
         return t.capitalize()
 
     async def _hip3_pick_price(self, ex, dex: str, hip3_coin: str, price_hint: Optional[float]) -> float:
-        """
-        HIP-3 가격 소스:
-        - price_hint가 있으면 우선 사용
-        - 없으면 metaAndAssetCtxs(dex)에서 해당 코인의 markPx → midPx → oraclePx → prevDayPx 순
-        """
+        """HIP‑3 시장가용 가격: 힌트 우선, 없으면 _hl_price_map(dex)에서 해당 코인 가격."""
         if price_hint is not None:
             return float(price_hint)
-        px = await self._hl_price_from_meta_asset_ctxs(ex, dex, hip3_coin)
+        px_map = await self._hl_price_map(ex, dex)
+        px = px_map.get(hip3_coin)
         if px is None:
             raise RuntimeError(f"HIP3 price not found for {hip3_coin}")
         return float(px)
@@ -640,106 +639,124 @@ class TradingService:
     def is_hl(self, name: str) -> bool:
         return bool(self.manager.get_meta(name).get("hl", False))
 
-    async def _hl_price_from_meta_asset_ctxs(self, ex, dex: str, hip3_coin: str) -> Optional[float]:
+    async def _hl_price_map(self, ex, dex: Optional[str] = None) -> Dict[str, float]:
         """
-        HIP-3 가격 조회: publicPostInfo({"type":"metaAndAssetCtxs","dex": dex})
-        응답은 [ { "universe": [...] }, [ assetCtxs... ] ] 형태이며,
-        universe[i].name과 assetCtxs[i]가 같은 인덱스로 매칭됩니다.
+        metaAndAssetCtxs 호출로 전체 페어 가격 맵을 생성.
+        - dex=None/'': 메인 HL
+        - dex='xyz' 등: HIP‑3
+        반환:
+        - 메인 HL: {'BTC': 104000.0, 'ETH': 3000.0, ...} (name upper)
+        - HIP‑3: {'xyz:XYZ100': 25075.0, 'flx:TSLA': 406.0, ...} (원본 name 그대로)
         """
         try:
-            payload = {"type": "metaAndAssetCtxs", "dex": dex}
+            payload = {"type": "metaAndAssetCtxs"}
+            if dex:
+                payload["dex"] = dex
             resp = await ex.publicPostInfo(payload)
             if not isinstance(resp, list) or len(resp) < 2:
-                logger.debug("[HIP3] metaAndAssetCtxs unexpected resp type=%s", type(resp))
-                return None
+                logger.debug("[HL] metaAndAssetCtxs unexpected resp: %s", type(resp))
+                return {}
 
-            meta0 = resp[0] or {}
-            universe = meta0.get("universe", []) or []
+            universe = (resp[0] or {}).get("universe", []) or []
             asset_ctxs = resp[1] or []
+            px_map: Dict[str, float] = {}
 
-            # 방어: 길이 차이 존재 가능 → 이름 매칭 우선
-            # 1) 우선 인덱스 정렬 가정(universe[i] ↔ asset_ctxs[i])
-            # 2) 그래도 못 찾으면 이름 기반으로 탐색
-            idx = None
             for i, a in enumerate(universe):
                 if not isinstance(a, dict):
                     continue
                 name = str(a.get("name") or "")
-                if name == hip3_coin and not a.get("isDelisted", False):
-                    idx = i
-                    break
-
-            px = None
-            if idx is not None and idx < len(asset_ctxs) and isinstance(asset_ctxs[idx], dict):
-                ctx = asset_ctxs[idx]
-                # 우선순위: markPx → midPx → oraclePx → prevDayPx
+                if not name or a.get("isDelisted", False):
+                    continue
+                ctx = asset_ctxs[i] if (i < len(asset_ctxs) and isinstance(asset_ctxs[i], dict)) else {}
+                px = None
                 for k in ("markPx", "midPx", "oraclePx", "prevDayPx"):
                     v = ctx.get(k)
                     if v is not None:
                         try:
-                            px = float(v)
-                            break
+                            px = float(v); break
                         except Exception:
                             continue
+                if px is None:
+                    continue
+                # 메인은 대문자 심볼 키, HIP‑3은 원본 이름(예: 'xyz:XYZ100')을 키로 둔다
+                key = name.upper() if not dex else name
+                px_map[key] = px
 
-            if px is None:
-                # 이름 기반 탐색(혹시 인덱스 불일치 대비)
+            # 보완: 인덱스 불일치 대비(이름 기반)
+            if len(px_map) < len([a for a in universe if isinstance(a, dict) and a.get("name")]):
                 for a, ctx in zip(universe, asset_ctxs):
                     try:
                         if not isinstance(a, dict) or not isinstance(ctx, dict):
                             continue
-                        if str(a.get("name") or "") != hip3_coin:
+                        name = str(a.get("name") or "")
+                        if not name or a.get("isDelisted", False):
                             continue
-                        if a.get("isDelisted", False):
+                        key = name.upper() if not dex else name
+                        if key in px_map:
                             continue
                         for k in ("markPx", "midPx", "oraclePx", "prevDayPx"):
                             v = ctx.get(k)
                             if v is not None:
-                                px = float(v)
+                                px_map[key] = float(v)
                                 break
-                        if px is not None:
-                            break
                     except Exception:
                         continue
 
-            return px
+            return px_map
         except Exception as e:
-            logger.info("[HIP3] metaAndAssetCtxs failed: %s", e)
-            return None
-
-    async def fetch_hl_price(self, symbol: str) -> str:
+            logger.info("[HL] metaAndAssetCtxs payload=%s failed: %s", {"type":"metaAndAssetCtxs", **({"dex":dex} if dex else {})}, e)
+            return {}
+        
+    async def fetch_hl_price(self, symbol: str, dex_hint: Optional[str] = None) -> str:
+        """
+        HL 가격 조회(캐시 3초):
+        - HIP‑3: symbol='xyz:XYZ100' 또는 dex_hint='xyz' + symbol='XYZ100'
+        - 메인: symbol='BTC'
+        """
         ex = self.manager.first_hl_exchange()
         if not ex:
             return "N/A"
-        # HIP-3 여부 파싱
-        dex, hip3_coin = _parse_hip3_symbol(symbol)
         try:
-            # 간단 캐시(3초): (dex, hip3_coin) 키
+            dex, hip3_coin = _parse_hip3_symbol(symbol)
+            if dex is None and dex_hint and dex_hint != "HL":
+                dex = dex_hint.lower()
+                hip3_coin = f"{dex}:{symbol.upper()}"
+
+            # 캐시 키: 'HL' 또는 dex
+            cache_key = dex if dex else "HL"
+            ent = self._hl_px_cache_by_dex.get(cache_key, {})
             now = time.monotonic()
-            if not hasattr(self, "_hip3_px_cache"):
-                self._hip3_px_cache = {}  # type: ignore[attr-defined]
-            cache = getattr(self, "_hip3_px_cache")  # type: ignore[attr-defined]
+            ttl = 3.0
 
-            if dex:
-                key = (dex, hip3_coin)
-                ent = cache.get(key) if isinstance(cache, dict) else None
-                if ent and (now - ent.get("ts", 0.0) < 3.0):
-                    return f"{ent['px']:,.2f}"
+            if not ent or (now - ent.get("ts", 0.0) >= ttl):
+                px_map = await self._hl_price_map(ex, dex)
+                if px_map:
+                    self._hl_px_cache_by_dex[cache_key] = {"ts": now, "map": px_map}
+                    ent = self._hl_px_cache_by_dex[cache_key]
 
-                px = await self._hl_price_from_meta_asset_ctxs(ex, dex, hip3_coin)
-                if px is None:
-                    logger.debug("[HIP3] price not found for %s, fallback=Error", hip3_coin)
-                    return "Error"
-                # 캐시
-                cache[key] = {"px": px, "ts": now}
+            px_map = ent.get("map", {}) if ent else {}
+            if dex:  # HIP‑3
+                px = px_map.get(hip3_coin)
+            else:    # 메인
+                px = px_map.get(symbol.upper())
+
+            if px is not None:
                 return f"{px:,.2f}"
 
-            # 일반 HL 페어
-            t = await ex.fetch_ticker(f"{symbol}/USDC:USDC")
-            return f"{t['last']:,.2f}"
-        
+            # 한 번 더 즉시 갱신 시도(신규/갱신 지연 대비)
+            px_map2 = await self._hl_price_map(ex, dex)
+            if px_map2:
+                self._hl_px_cache_by_dex[cache_key] = {"ts": time.monotonic(), "map": px_map2}
+                if dex:
+                    px = px_map2.get(hip3_coin)
+                else:
+                    px = px_map2.get(symbol.upper())
+                if px is not None:
+                    return f"{px:,.2f}"
+
+            return "Error"
         except Exception as e:
-            logger.error(f"HL price fetch error: {e}", exc_info=True)
+            logger.error("HL price fetch error: %s", e, exc_info=True)
             return "Error"
 
     async def fetch_status(
