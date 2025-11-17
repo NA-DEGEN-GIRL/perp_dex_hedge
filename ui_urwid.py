@@ -1009,7 +1009,7 @@ class UrwidApp:
                     side=side,
                     price=price,
                 )
-                self._log(f"[{name.upper()}] 주문 성공: #{order['id']} #price{price}")
+                self._log(f"[{name.upper()}] 주문 성공: #{order['id']}")
                 break
             except Exception as e:
                 self._log(f"[{name.upper()}] 주문 실패: {e}")
@@ -1757,7 +1757,7 @@ class UrwidApp:
 
         if self._hl_cache_task and not self._hl_cache_task.done():
             self._hl_cache_task.cancel()
-            
+
         # (3) 실제 취소 대기 (CancelledError 억제)
         if tasks:
             try:

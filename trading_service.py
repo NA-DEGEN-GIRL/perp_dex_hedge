@@ -3,7 +3,7 @@ import logging
 import time
 from typing import Tuple, Optional, Dict, Any
 from core import ExchangeManager
-from decimal import Decimal, ROUND_HALF_UP  # 
+from decimal import Decimal, ROUND_HALF_UP, ROUND_UP, ROUND_DOWN 
 try:
     from exchange_factory import symbol_create
 except Exception:
@@ -64,6 +64,26 @@ class TradingService:
         self._leverage_check_interval: float = 5.0                     # 스로틀 간격(초) - 필요시 조정
         self._spot_usdh_by_ex: dict[str, float] = {}  # HL: 거래소별 마지막 USDH 잔고
 
+    
+    # [추가] 가격 소수자릿수(px decimals) 조회 유틸: metaAndAssetCtxs 캐시 기반
+    def _get_px_decimals(self, dex: Optional[str], coin_key: str, fallback_by_sz: Optional[int] = None) -> int:
+        """
+        _hl_price_map 호출 시 저장된 (dex_or_HL, coin_key) → px_decimals 캐시를 우선 사용.
+        없으면 (옵션) szDecimals 기반 보정값(6 - sz) 또는 2로 폴백.
+        """
+        scope = dex if dex else "HL"
+        d = self._hl_px_dec_cache.get((scope, coin_key))
+        if isinstance(d, int) and d >= 0:
+            return d
+        if isinstance(fallback_by_sz, int) and fallback_by_sz >= 0:
+            return max(0, fallback_by_sz)  # comment: sz 기반 추정값
+        return 2  # comment: 최후 폴백
+
+    def _round_to_tick(self, value: float, decimals: int, up: bool) -> Decimal:
+        # comment: tick_decimals(= 6 - szDecimals)에 맞춰 BUY=상향, SELL=하향 정렬
+        q = Decimal(f"1e-{decimals}") if decimals > 0 else Decimal("1")
+        d = Decimal(str(value))
+        return d.quantize(q, rounding=(ROUND_UP if up else ROUND_DOWN))
 
     # [추가] HL 가격맵 캐시를 특정 dex(또는 메인 HL)에 대해 1회 갱신
     async def refresh_hl_cache_for_dex(self, dex: Optional[str] = None, ttl: float = 3.0) -> None:
@@ -267,43 +287,24 @@ class TradingService:
             return 0
 
     def _format_perp_price(self, px: float, decimals_max: int) -> str:
-        """
-        Perp 가격 포맷:
-        - 정수 허용(유효숫자 제한 제외)
-        - 소수: 소수자릿수는 최대 decimals_max
-        - 유효숫자(소수인 경우) 최대 5자리로 축소
-        - 서명 규칙 준수 위해 말미 0 제거
-        """
+        # comment: 유효숫자 5 제한 + 말미 0 제거 (지정가/시장가 최종 문자열 포맷 공통)
         d = Decimal(str(px))
-        # 1) 우선 소수자릿수 제한으로 반올림
         quant = Decimal(f"1e-{decimals_max}") if decimals_max > 0 else Decimal("1")
         d = d.quantize(quant, rounding=ROUND_HALF_UP)
-
-        s = format(d, "f")  # 고정소수 문자열
+        s = format(d, "f")
         if "." not in s:
-            return s  # 정수는 유효숫자 제한 제외
-
+            return s
         int_part, frac_part = s.split(".", 1)
-        # 현재 유효숫자 계산(선행 0 제거)
-        if int_part == "" or int_part == "0":
-            # 0.xxxx → 소수부 선행 0 제거
-            sig_digits = len(frac_part.lstrip("0"))
-            int_digits = 0
+        if int_part in ("", "0"):
+            sig_digits = len(frac_part.lstrip("0")); int_digits = 0
         else:
-            int_digits = len(int_part.lstrip("0"))
-            sig_digits = int_digits + len(frac_part)
-
+            int_digits = len(int_part.lstrip("0")); sig_digits = int_digits + len(frac_part)
         if sig_digits <= 5:
-            # 말미 0/점 제거
             return s.rstrip("0").rstrip(".")
-
-        # 2) 유효숫자 5로 줄이기(소수부만 축소)
-        allow_frac = max(0, 5 - int_digits)
-        allow_frac = min(allow_frac, decimals_max)
+        allow_frac = max(0, min(5 - int_digits, decimals_max))
         quant2 = Decimal(f"1e-{allow_frac}") if allow_frac > 0 else Decimal("1")
         d2 = d.quantize(quant2, rounding=ROUND_HALF_UP)
-        s2 = format(d2, "f").rstrip("0").rstrip(".")
-        return s2
+        return format(d2, "f").rstrip("0").rstrip(".")
 
     # HL Info API로 user 상태 가져오기 (clearinghouseState)
     async def _hl_get_user_state(self, ex, dex: Optional[str], user_addr: str) -> Optional[dict]:
@@ -683,22 +684,38 @@ class TradingService:
         coin_key = (hip3_coin if dex else symbol.upper())
         # szDecimals 조회(1회 캐시) → Perp 허용 price 소수자릿수 = 6 - szDecimals
         sz_dec = await self._hl_sz_decimals(ex, dex, coin_key)
-        price_decimals_max = max(0, 6 - int(sz_dec))  # Perp MAX_DECIMALS=6
+        tick_decimals = max(0, 6 - int(sz_dec))  # perp MAX_DECIMALS = 6
+
+        # [참고] px_decimals는 오직 '로그/보조'용으로만 사용
+        px_decimals = self._get_px_decimals(dex, coin_key, fallback_by_sz=tick_decimals)
 
         # 3) 주문 가격(px_str) & TIF 결정
         if order_type == "market":
-            px_eff = px_base * (1.0 + slippage) if is_buy else px_base * (1.0 - slippage)
+            
             if want_frontend:
                 tif = "FrontendMarket"
             else:
                 tif = "Gtc"
-            price_str = self._format_perp_price(px_eff, price_decimals_max)
+            px_eff = px_base * (1.0 + slippage) if is_buy else px_base * (1.0 - slippage)
+            
+            # [안전 가드] px_eff가 px_base의 0.5x~1.5x를 벗어나면 클램프 및 경고
+            lo, hi = px_base * 0.5, px_base * 1.5
+            if px_eff < lo or px_eff > hi:
+                logger.warning("[ORDER][GUARD] px_eff out of range: base=%.8f eff=%.8f → clamp[%.8f, %.8f]",
+                               px_base, px_eff, lo, hi)
+                px_eff = min(max(px_eff, lo), hi)
+
+            d_tick = self._round_to_tick(px_eff, tick_decimals, up=is_buy)
+            price_str = self._format_perp_price(float(d_tick), tick_decimals)  # 유효숫자 5 + tick_decimals 제한
+            if not price_str:
+                price_str = "0"
+
         else:
             # 지정가: 가격 필수
             if price is None:
                 raise RuntimeError("limit order requires price")
             tif = self._tif_capitalize(time_in_force, default="Gtc")
-            price_str = self._format_perp_price(px_base, price_decimals_max)
+            price_str = self._format_perp_price(float(price), px_decimals)  # ← [수정] px_decimals 사용
 
         # 4) 수량 문자열
         if int(sz_dec) > 0:
@@ -719,6 +736,15 @@ class TradingService:
         }
         if client_id:
             order_obj["c"] = str(client_id)
+        
+        try:
+            logger.info(
+                "[ORDER] %s %s %s a=%s px_base=%.10f tick_dec=%d(px_dec=%d) price_str=%s tif=%s reduceOnly=%s",
+                exchange_name, order_type.upper(), coin_key, aidx, px_base, tick_decimals, px_decimals,
+                price_str, tif, reduce_only
+            )
+        except Exception:
+            pass
 
         action = {"type": "order", "orders": [order_obj], "grouping": "na"}
 
@@ -960,18 +986,12 @@ class TradingService:
         try:
             if meta.get("hl", False):
                 # HL: dex_hint가 있으면 HIP‑3, 없으면 메인
-                price_str = await self.fetch_hl_price(symbol, dex_hint=dex_hint)
-                
-                # dex_hint를 사용하여 정확한 dex의 quote를 조회
-                dex_for_quote = (dex_hint or "").lower() if dex_hint and dex_hint != "HL" else None
-                quote_str = await self._fetch_dex_quote(ex, dex_for_quote)
-                return price_str, quote_str
+                return await self.fetch_hl_price(symbol, dex_hint=dex_hint)
             else:
                 # 비-HL: mpdex 클라이언트 get_mark_price(native)
                 native = self._to_native_symbol(exchange_name, symbol)
                 px = await ex.get_mark_price(native)
-                # px가 문자열/숫자 모두 허용
-                return f"{float(px):,.2f}", "USDC"
+                return f"{float(px):,.2f}"
         except Exception as e:
             logger.info("[PRICE] %s fetch_price failed: %s", exchange_name, e)
             return "Error"
