@@ -3,6 +3,7 @@ import logging
 import time
 from typing import Tuple, Optional, Dict, Any
 from core import ExchangeManager
+import asyncio
 from decimal import Decimal, ROUND_HALF_UP, ROUND_UP, ROUND_DOWN 
 try:
     from exchange_factory import symbol_create
@@ -406,6 +407,7 @@ class TradingService:
             all_scopes = [None] + (self._perp_dex_list or [])
             for d in all_scopes:
                 st = await self._hl_get_user_state(ex, d, user)
+                await asyncio.sleep(0.1)
                 if not st or not isinstance(st, dict):
                     continue
                 ms = st.get("marginSummary", {}) or {}
@@ -1087,7 +1089,8 @@ class TradingService:
         self,
         exchange_name: str,
         symbol: str,
-        need_balance: bool = True  # [변경] balance 스킵 가능
+        need_balance: bool = True,  # [변경] balance 스킵 가능
+        need_position: bool = True,    # 포지션 갱신 여부
     ) -> Tuple[str, str, float]:
         """
         returns: (pos_str, col_str, col_val)
@@ -1099,6 +1102,11 @@ class TradingService:
         if not ex:
             return "📊 Position: N/A", "💰 Collateral: N/A", 0.0
         
+        # [공통] 직전 캐시
+        last_pos_str, last_col_str, last_col_val = self._last_status.get(
+            exchange_name, ("📊 Position: N/A", "💰 Collateral: N/A", self._last_collateral.get(exchange_name, 0.0))
+        )
+
         # 1) mpdex (hl=False) 처리
         if not meta.get("hl", False):
             try:
@@ -1108,61 +1116,62 @@ class TradingService:
                     col_val = float(c.get("total_collateral") or 0.0)
                     self._last_collateral[exchange_name] = col_val
                     self._last_balance_at[exchange_name] = time.monotonic()
-                
-                native = self._to_native_symbol(exchange_name, symbol)
-                pos = await ex.get_position(native)
 
-                pos_str = "📊 Position: N/A"
-                if pos and float(pos.get("size") or 0.0) != 0.0:
-                    side_raw = str(pos.get("side") or "").lower()
-                    side = "LONG" if side_raw == "long" else "SHORT"
-                    size = float(pos.get("size") or 0.0)
-                    pnl = float(pos.get("unrealized_pnl") or 0.0)
-                    side_color = "green" if side == "LONG" else "red"
-                    pnl_color = "green" if pnl >= 0 else "red"
-                    pos_str = f"📊 [{side_color}]{side}[/] {size:.5f} | PnL: [{pnl_color}]{pnl:,.5f}[/]"
+                pos_str = last_pos_str
+                if need_position:
+                    native = self._to_native_symbol(exchange_name, symbol)
+                    pos = await ex.get_position(native)
+                    pos_str = "📊 Position: N/A"
+                    if pos and float(pos.get("size") or 0.0) != 0.0:
+                        side_raw = str(pos.get("side") or "").lower()
+                        side = "LONG" if side_raw == "long" else "SHORT"
+                        size = float(pos.get("size") or 0.0)
+                        pnl = float(pos.get("unrealized_pnl") or 0.0)
+                        side_color = "green" if side == "LONG" else "red"
+                        pnl_color = "green" if pnl >= 0 else "red"
+                        pos_str = f"📊 [{side_color}]{side}[/] {size:.5f} | PnL: [{pnl_color}]{pnl:,.5f}[/]"
+
                 col_str = f"💰 Collateral: {col_val:,.2f} USDC"
                 self._last_status[exchange_name] = (pos_str, col_str, col_val)
                 return pos_str, col_str, col_val
             
             except Exception as e:
                 logger.info(f"[{exchange_name}] non-HL fetch_status error: {e}")
+                # 실패 시 캐시 반환(표시에는 Stale 명시)
                 last_col_val = self._last_collateral.get(exchange_name, 0.0)
-                pos_str = "📊 Position: Error"
+                pos_str = last_pos_str
                 col_str = f"💰 Collateral: {last_col_val:,.2f} USDC (Stale)"
                 return pos_str, col_str, last_col_val
             
-        else:
-            now = time.monotonic()
-            if now < self._cooldown_until.get(exchange_name, 0.0):
-                cached = self._last_status.get(exchange_name)
-                if cached:
-                    return cached
-                # 쿨다운 상태에서도 캐시가 없으면 마지막 collateral 값을 사용합니다.
-                last_col_val = self._last_collateral.get(exchange_name, 0.0)
-                return "📊 Position: N/A", f"💰 Collateral: {last_col_val:,.2f} USDC (Cooldown)", last_col_val
+        # 2) HL
+        now = time.monotonic()
+        if now < self._cooldown_until.get(exchange_name, 0.0):
+            cached = self._last_status.get(exchange_name)
+            if cached:
+                return cached
+            last_col_val = self._last_collateral.get(exchange_name, 0.0)
+            return "📊 Position: N/A", f"💰 Collateral: {last_col_val:,.2f} USDC (Cooldown)", last_col_val
 
-            try:
-                # collateral(USDC total)  —  주기적으로만 갱신
-                col_val = self._last_collateral.get(exchange_name, 0.0)
-                if need_balance:
-                    av_sum = await self._hl_sum_account_value(ex)
-                    col_val = float(av_sum)
-                    self._last_collateral[exchange_name] = col_val
-                    self._last_balance_at[exchange_name] = now
-                
-                # [추가] USDH spot 잔고 조회(need_balance 주기에 맞춰 요청, 아니면 캐시 사용)
-                usdh_val = self._spot_usdh_by_ex.get(exchange_name, 0.0)
-                if need_balance:
-                    usdh_val = await self._hl_get_spot_usdh(ex)
-                    self._spot_usdh_by_ex[exchange_name] = usdh_val
+        try:
+            # 담보(USDC 합계 + USDH spot) — need_balance일 때만 네트워크 호출
+            col_val = self._last_collateral.get(exchange_name, 0.0)
+            if need_balance:
+                av_sum = await self._hl_sum_account_value(ex)
+                col_val = float(av_sum)
+                self._last_collateral[exchange_name] = col_val
+                self._last_balance_at[exchange_name] = now
 
-                # 포지션: clearinghouseState(user, dex?)
+            usdh_val = self._spot_usdh_by_ex.get(exchange_name, 0.0)
+            if need_balance:
+                usdh_val = await self._hl_get_spot_usdh(ex)
+                self._spot_usdh_by_ex[exchange_name] = usdh_val
+
+            # 포지션 — need_position일 때만 네트워크 호출
+            pos_str = last_pos_str
+            if need_position:
                 dex, hip3_coin = _parse_hip3_symbol(symbol)
                 coin_key = hip3_coin if dex else symbol.upper()
                 user_addr = self._hl_user_address(ex)
-                logger.debug("fetch_status(HL): dex=%s coin=%s address=%s", dex or "HL", coin_key, user_addr)
-
                 state = await self._hl_get_user_state(ex, dex, user_addr)
                 pos_data = self._hl_parse_position_from_state(state or {}, coin_key)
 
@@ -1175,32 +1184,29 @@ class TradingService:
                     pnl_color  = "green" if pnl >= 0 else "red"
                     pos_str = f"📊 [{side_color}]{side}[/] {size:.5f} | PnL: [{pnl_color}]{pnl:,.2f}[/]"
 
-                col_str = f"💰 Collateral: {col_val:,.2f} USDC"
-                if usdh_val and usdh_val > 0:
-                    col_str += f" | USDH {usdh_val:,.2f}"
-                else:
-                    col_str += f" | USDH {0:,.2f}"
-                self._last_status[exchange_name] = (pos_str, col_str, col_val)
-                self._backoff_sec[exchange_name] = 0.0
-                return pos_str, col_str, col_val
+            col_str = f"💰 Collateral: {col_val:,.2f} USDC"
+            col_str += f" | USDH {usdh_val:,.2f}"
 
-            except Exception as e:
-                logger.error(f"[{exchange_name}] fetch_status error: {e}", exc_info=True)
-                if self._is_rate_limited(e):
-                    current = self._backoff_sec.get(exchange_name, 2.0) or 2.0
-                    new_backoff = min(current * 2.0, 15.0)
-                    self._backoff_sec[exchange_name] = new_backoff
-                    self._cooldown_until[exchange_name] = now + new_backoff
-                
-                # 실패 시 0을 반환하는 대신, 마지막으로 성공한 collateral 값을 사용합니다.
-                last_col_val = self._last_collateral.get(exchange_name, 0.0)
-                last_usdh_val = self._spot_usdh_by_ex.get(exchange_name, 0.0)
-                pos_str = "📊 Position: Error"
-                col_str = f"💰 Collateral: {last_col_val:,.2f} USDC (Stale)"
-                if last_usdh_val > 0:
-                    col_str += f" | USDH {last_usdh_val:,.2f}"
+            self._last_status[exchange_name] = (pos_str, col_str, col_val)
+            self._backoff_sec[exchange_name] = 0.0
+            return pos_str, col_str, col_val
 
-                return pos_str, col_str, last_col_val
+        except Exception as e:
+            logger.error(f"[{exchange_name}] fetch_status error: {e}", exc_info=True)
+            if self._is_rate_limited(e):
+                current = self._backoff_sec.get(exchange_name, 2.0) or 2.0
+                new_backoff = min(current * 2.0, 15.0)
+                self._backoff_sec[exchange_name] = new_backoff
+                self._cooldown_until[exchange_name] = now + new_backoff
+
+            # 실패 시 캐시 반환
+            last_col_val = self._last_collateral.get(exchange_name, 0.0)
+            last_usdh_val = self._spot_usdh_by_ex.get(exchange_name, 0.0)
+            pos_str = last_pos_str
+            col_str = f"💰 Collateral: {last_col_val:,.2f} USDC (Stale)"
+            if last_usdh_val > 0:
+                col_str += f" | USDH {last_usdh_val:,.2f}"
+            return pos_str, col_str, last_col_val
     
     
     async def execute_order(

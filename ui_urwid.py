@@ -20,9 +20,10 @@ from types import SimpleNamespace
 # [추가] 가격/상태 폴링 간격 설정(환경변수로도 오버라이드 가능)
 RATE = SimpleNamespace(
     HEADER_PRICE_INTERVAL=5.0,   # 헤더 Price 갱신 간격
-    STATUS_BALANCE_INTERVAL=3.0,   # 카드별 accountValue/밸런스 갱신 최소 간격
-    STATUS_LOOP_MIN=1.0,           # 카드 상태 루프 sleep 최소
-    STATUS_LOOP_MAX=2.0,           # 카드 상태 루프 sleep 최대(지터)
+    STATUS_POS_INTERVAL=0.5,          # [추가] 포지션 갱신 최소 간격
+    STATUS_COLLATERAL_INTERVAL=5.0,   # [추가] 담보(USDC+USDH) 갱신 최소 간격
+    STATUS_LOOP_MIN=0.2,           # 카드 상태 루프 sleep 최소
+    STATUS_LOOP_MAX=0.5,           # 카드 상태 루프 sleep 최대(지터)
     CARD_PRICE_EVERY=5.0,          # 카드 Price 갱신 최소 간격
 )
 
@@ -138,6 +139,7 @@ class UrwidApp:
         self._hl_cache_task: asyncio.Task | None = None
         
         self._last_balance_at: Dict[str, float] = {}  # [추가]
+        self._last_pos_at: Dict[str, float] = {}       # [추가] 포지션 마지막 업데이트
         self.card_price_text: Dict[str, urwid.Text] = {}  # 거래소별 가격 라인 위젯
         self.card_quote_text: Dict[str, urwid.Text] = {}  # [추가] 거래소별 quote 텍스트 위젯
         self._last_card_price_at: Dict[str, float] = {} # 카드별 최근 가격 갱신 시각(스로틀링 용)
@@ -805,7 +807,8 @@ class UrwidApp:
         while True:
             try:
                 now = time.monotonic()
-                need_balance = (now - self._last_balance_at.get(name, 0.0) >= RATE.STATUS_BALANCE_INTERVAL)
+                need_collat = (now - self._last_balance_at.get(name, 0.0) >= RATE.STATUS_COLLATERAL_INTERVAL)
+                need_pos    = (now - self._last_pos_at.get(name, 0.0)    >= RATE.STATUS_POS_INTERVAL)
 
                 sym_coin = _normalize_symbol_input(self.symbol_by_ex.get(name) or self.symbol)
                 dex = self.dex_by_ex.get(name, self.header_dex)
@@ -844,9 +847,18 @@ class UrwidApp:
                         self.card_quote_text[name].set_text(("", ""))
 
                 # 포지션/담보는 종전 로직 유지
-                pos_str, col_str, col_val = await self.service.fetch_status(name, sym, need_balance=need_balance)
-                if need_balance:
+                pos_str, col_str, col_val = await self.service.fetch_status(
+                    name, sym,
+                    need_balance=need_collat,
+                    need_position=need_pos
+                )
+                # 타임스탬프 갱신(각 주기별)
+                if need_collat:
                     self._last_balance_at[name] = now
+                    self.collateral[name] = float(col_val)
+                    self.total_text.set_text(("info", f"Total: {self._collateral_sum():,.2f} USDC"))
+                if need_pos:
+                    self._last_pos_at[name] = now
 
                 pos_str = self._inject_usdc_value_into_pos(name, pos_str)
                 self.collateral[name] = float(col_val)
