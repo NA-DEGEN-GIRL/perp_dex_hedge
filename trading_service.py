@@ -10,7 +10,7 @@ except Exception:
     symbol_create = None
     logging.warning("[mpdex] exchange_factory.symbol_create 를 찾지 못했습니다. 비-HL 거래소는 비활성화됩니다.")
     
-DEBUG_FRONTEND = True
+DEBUG_FRONTEND = False
 logger = logging.getLogger("trading_service")
 logger.propagate = True                    # 루트로 전파해 main.py의 FileHandler만 사용
 logger.setLevel(logging.DEBUG if DEBUG_FRONTEND else logging.INFO)
@@ -1013,8 +1013,10 @@ class TradingService:
             
             except Exception as e:
                 logger.info(f"[{exchange_name}] non-HL fetch_status error: {e}")
-                cached = self._last_status.get(exchange_name)
-                return cached if cached else ("📊 Position: Error", "💰 Collateral: Error", 0.0)
+                last_col_val = self._last_collateral.get(exchange_name, 0.0)
+                pos_str = "📊 Position: Error"
+                col_str = f"💰 Collateral: {last_col_val:,.2f} USDC (Stale)"
+                return pos_str, col_str, last_col_val
             
         else:
             now = time.monotonic()
@@ -1022,7 +1024,9 @@ class TradingService:
                 cached = self._last_status.get(exchange_name)
                 if cached:
                     return cached
-                return "📊 Position: N/A", f"💰 Collateral: {self._last_collateral.get(exchange_name, 0.0):,.2f} USDC", self._last_collateral.get(exchange_name, 0.0)
+                # 쿨다운 상태에서도 캐시가 없으면 마지막 collateral 값을 사용합니다.
+                last_col_val = self._last_collateral.get(exchange_name, 0.0)
+                return "📊 Position: N/A", f"💰 Collateral: {last_col_val:,.2f} USDC (Cooldown)", last_col_val
 
             try:
                 # collateral(USDC total)  —  주기적으로만 갱신
@@ -1057,13 +1061,6 @@ class TradingService:
                     pnl_color  = "green" if pnl >= 0 else "red"
                     pos_str = f"📊 [{side_color}]{side}[/] {size:.5f} | PnL: [{pnl_color}]{pnl:,.2f}[/]"
 
-                    # clearinghouseState에 총 계정 가치가 있으면 collateral로 덮어쓰기(선택)
-                    try:
-                        if "collateral" in pos_data:
-                            col_val = float(pos_data["collateral"])
-                    except Exception:
-                        pass
-
                 col_str = f"💰 Collateral: {col_val:,.2f} USDC"
                 if usdh_val and usdh_val > 0:
                     col_str += f" | USDH {usdh_val:,.2f}"
@@ -1080,10 +1077,16 @@ class TradingService:
                     new_backoff = min(current * 2.0, 15.0)
                     self._backoff_sec[exchange_name] = new_backoff
                     self._cooldown_until[exchange_name] = now + new_backoff
-                cached = self._last_status.get(exchange_name)
-                if cached:
-                    return cached
-                return "📊 Position: Error", "💰 Collateral: Error", 0.0
+                
+                # 실패 시 0을 반환하는 대신, 마지막으로 성공한 collateral 값을 사용합니다.
+                last_col_val = self._last_collateral.get(exchange_name, 0.0)
+                last_usdh_val = self._spot_usdh_by_ex.get(exchange_name, 0.0)
+                pos_str = "📊 Position: Error"
+                col_str = f"💰 Collateral: {last_col_val:,.2f} USDC (Stale)"
+                if last_usdh_val > 0:
+                    col_str += f" | USDH {last_usdh_val:,.2f}"
+
+                return pos_str, col_str, last_col_val
     
     
     async def execute_order(

@@ -19,11 +19,11 @@ from types import SimpleNamespace
 
 # [추가] 가격/상태 폴링 간격 설정(환경변수로도 오버라이드 가능)
 RATE = SimpleNamespace(
-    HEADER_PRICE_INTERVAL=2.5,   # 헤더 Price 갱신 간격
+    HEADER_PRICE_INTERVAL=3.5,   # 헤더 Price 갱신 간격
     STATUS_BALANCE_INTERVAL=2.5,   # 카드별 accountValue/밸런스 갱신 최소 간격
     STATUS_LOOP_MIN=0.5,           # 카드 상태 루프 sleep 최소
     STATUS_LOOP_MAX=1.2,           # 카드 상태 루프 sleep 최대(지터)
-    CARD_PRICE_EVERY=1.0,          # 카드 Price 갱신 최소 간격
+    CARD_PRICE_EVERY=2.5,          # 카드 Price 갱신 최소 간격
 )
 
 # urwid의 레이아웃 경고(PileWarning)를 화면에 출력하지 않도록 억제
@@ -785,10 +785,17 @@ class UrwidApp:
                         self._last_card_price_at[name] = now
                         try:
                             self.card_last_price[name] = float(str(px_str).replace(",", ""))
-                        except Exception:
+                        except (ValueError, TypeError):
+                            # 가격 변환 실패는 무시하고 계속 진행 (에러 문자열이 올 수 있음)
                             pass
+
                 except Exception:
-                    pass
+                    # 가격 조회 실패 시, 로그에 전체 traceback을 기록하고 UI에 에러를 표시합니다.
+                    logging.error(f"[{name}] Price fetch failed in status_loop", exc_info=True)
+                    if name in self.card_price_text:
+                        self.card_price_text[name].set_text(('pnl_neg', "Price: Error"))
+                    if name in self.card_quote_text:
+                        self.card_quote_text[name].set_text(("", "")) # quote는 비웁니다.
 
                 pos_str, col_str, col_val = await self.service.fetch_status(name, sym, need_balance=need_balance)
 
@@ -813,7 +820,15 @@ class UrwidApp:
                 break
 
             except Exception as e:
-                logging.error(f"status loop {name}: {e}")
+                # 루프 전체에서 에러 발생 시, 로그에 전체 traceback을 기록하고 UI에 에러를 표시합니다.
+                logging.error(f"[CRITICAL] Unhandled error in status_loop for '{name}'", exc_info=True)
+                if name in self.info_text:
+                    # UI에 직접 에러 메시지를 표시하여 즉각적으로 문제를 인지할 수 있게 합니다.
+                    error_msg_for_ui = "Status Error: Check logs"
+                    self.info_text[name].set_text([('pnl_neg', error_msg_for_ui)])
+                    self._request_redraw()
+                
+                # 에러 발생 후에도 루프가 계속 돌 수 있도록 sleep을 유지합니다.
                 jitter = RATE.STATUS_LOOP_MIN + random.uniform(0.0, max(0.0, RATE.STATUS_LOOP_MAX - RATE.STATUS_LOOP_MIN))
                 await asyncio.sleep(jitter)
 
@@ -914,7 +929,7 @@ class UrwidApp:
         if not side:
             self._log(f"[{name.upper()}] LONG/SHORT 미선택"); return
 
-        max_retry = 3
+        max_retry = 5
         for attempt in range(1,max_retry+1):
             # 루프 중에도 즉시 중단
             if self.repeat_cancel.is_set() or self.burn_cancel.is_set():
@@ -961,7 +976,7 @@ class UrwidApp:
                 if attempt >= max_retry:
                     self._log(f"[{name.upper()}] 재시도 한도 초과, 중단")
                     return
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(1.0)
 
     async def _exec_all(self):
         # 즉시 중단 체크
