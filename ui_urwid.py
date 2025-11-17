@@ -19,6 +19,29 @@ import time
 # urwid의 레이아웃 경고(PileWarning)를 화면에 출력하지 않도록 억제
 warnings.simplefilter("ignore", PileWarning)
 
+def _normalize_symbol_input(sym: str) -> str:
+        """
+        사용자 입력 심볼 정규화:
+        - HIP-3 'dex:coin' → 'dex_lower:COIN_UPPER' (입력은 보통 coin만 받지만, 방어)
+        - 일반 HL        → 'SYMBOL_UPPER'
+        """
+        if not sym:
+            return ""
+        s = sym.strip()
+        if ":" in s:
+            _, coin = s.split(":", 1)
+            return coin.upper()
+        return s.upper()
+
+def _compose_symbol(dex: str, coin: str) -> str:
+    """
+    dex가 'HL'이면 coin(upper)만, HIP-3이면 'dex:COIN'으로 합성.
+    """
+    coin_u = (coin or "").upper()
+    if dex and dex != "HL":
+        return f"{dex.lower()}:{coin_u}"
+    return coin_u
+
 class CustomFrame(urwid.Frame):
     """Tab/Shift+Tab을 앱 핸들러로만 보내고 기본 동작 차단"""
     def __init__(self, *args, app_ref=None, **kwargs):
@@ -110,6 +133,12 @@ class UrwidApp:
         self.ticker_edit_by_ex: Dict[str, urwid.Edit] = {}                                        # 거래소별 Ticker 입력 위젯
         self._lev_alarm_by_ex: Dict[str, object] = {} 
         self._bulk_updating_tickers: bool = False
+
+        self.dex_names: List[str] = ["HL"]                  # 헤더/카드에서 선택 가능한 dex 명단
+        self.header_dex: str = "HL"                         # 헤더에서 선택된 dex
+        self.dex_by_ex: Dict[str, str] = {n: "HL" for n in self.mgr.all_names()}  # 카드별 dex
+        self.dex_btns_header: Dict[str, urwid.AttrMap] = {}                      # 헤더 버튼 래퍼
+        self.dex_btns_by_ex: Dict[str, Dict[str, urwid.AttrMap]] = {}            # 카드별 dex 
 
     def _status_bracket_to_urwid(self, pos_str: str, col_str: str):
         """
@@ -237,6 +266,87 @@ class UrwidApp:
             pass
 
     # --------- 유틸/화면 갱신 ----------
+    
+
+    def _build_header_dex_row(self) -> urwid.Widget:
+        """
+        헤더용 HIP3-DEX 선택 행을 GridFlow 형태로 구성.
+        self.dex_names에 있는 dex들을 버튼화하고, 선택된 dex는 btn_dex_on으로 표시.
+        """
+        buttons = []
+        self.dex_btns_header.clear()
+
+        # 'HL' + 나머지 dex들
+        for dex in self.dex_names:
+            label = dex.upper() if dex != "HL" else "HL"
+            b = urwid.Button(label)
+            def on_sel(btn, d=dex):
+                self._on_header_dex_select(d)
+            urwid.connect_signal(b, "click", on_sel)
+            wrap = urwid.AttrMap(b, "btn_dex_on" if dex == self.header_dex else "btn_dex", "btn_focus")
+            self.dex_btns_header[dex] = wrap
+            buttons.append(('given', max(6, len(label)+4), wrap))  # 고정 폭
+
+        row = urwid.Columns(buttons, dividechars=1)
+        return urwid.Columns([(12, urwid.Text(("label", "HIP3-DEX:"))), row], dividechars=1)
+
+    def _on_header_dex_select(self, dex: str):
+        """
+        헤더에서 dex 하나를 선택 → 전체 카드에 dex 일괄 적용 + 버튼 스타일 동기화.
+        """
+        self.header_dex = dex
+        # 헤더 버튼 스타일 반영
+        for d, w in self.dex_btns_header.items():
+            w.set_attr_map({None: "btn_dex_on" if d == dex else "btn_dex"})
+        # 모든 카드 dex 동기화
+        self._bulk_updating_tickers = True
+        try:
+            for n in self.mgr.all_names():
+                self.dex_by_ex[n] = dex
+            # 화면에 보이는 카드 버튼 스타일 갱신
+            for n in self.mgr.visible_names():
+                self._update_card_dex_styles(n)
+        finally:
+            self._bulk_updating_tickers = False
+
+    def _update_card_dex_styles(self, name: str):
+        """
+        카드의 dex 버튼 스타일을 현재 self.dex_by_ex[name]에 맞게 갱신.
+        """
+        cur = self.dex_by_ex.get(name, "HL")
+        row_btns = self.dex_btns_by_ex.get(name, {})
+        for d, w in row_btns.items():
+            w.set_attr_map({None: "btn_dex_on" if d == cur else "btn_dex"})
+
+    def _build_card_dex_row(self, name: str) -> urwid.Widget:
+        """
+        카드 한 장의 HIP3-DEX 선택 행.
+        """
+        row_btns: Dict[str, urwid.AttrMap] = {}
+        buttons = []
+        cur = self.dex_by_ex.get(name, "HL")
+
+        for dex in self.dex_names:
+            label = dex.upper() if dex != "HL" else "HL"
+            b = urwid.Button(label)
+            def on_sel(btn, d=dex, ex_name=name):
+                self._on_card_dex_select(ex_name, d)
+            urwid.connect_signal(b, "click", on_sel)
+            wrap = urwid.AttrMap(b, "btn_dex_on" if dex == cur else "btn_dex", "btn_focus")
+            row_btns[dex] = wrap
+            buttons.append(('given', max(6, len(label)+4), wrap))
+
+        self.dex_btns_by_ex[name] = row_btns
+        row = urwid.Columns(buttons, dividechars=1)
+        return urwid.Columns([(6, urwid.Text(("label", "DEX:"))), row], dividechars=1)
+
+    def _on_card_dex_select(self, name: str, dex: str):
+        """
+        해당 카드만 dex 설정을 변경.
+        """
+        self.dex_by_ex[name] = dex
+        self._update_card_dex_styles(name)
+
     def _request_redraw(self):
         """다음 틱에 화면을 다시 그리도록 스케줄"""
         if self.loop:
@@ -286,6 +396,10 @@ class UrwidApp:
             ],
             dividechars=1,
         )
+
+        # 2.5행 HIP3‑DEX (처음엔 HL만, _bootstrap에서 갱신)
+        self.header_dex_row = self._build_header_dex_row()
+
         # 3행
         self.repeat_times = urwid.Edit(("label", "Times: "))
         self.repeat_min = urwid.Edit(("label", "min(s): "))
@@ -316,7 +430,7 @@ class UrwidApp:
         )
 
         # pack 대신 기본(FLOW)로 두어 경고 제거
-        return urwid.Pile([row1, row2, row3, row4])
+        return urwid.Pile([row1, row2, self.header_dex_row, row3, row4])
 
     # --------- 거래소 카드 ----------
     def _row(self, name: str):
@@ -330,30 +444,30 @@ class UrwidApp:
 
         def on_ticker_changed(edit, new, n=name):
             # 대문자로 정규화하여 저장
-            sym = (new or self.symbol).upper()
-            self.symbol_by_ex[n] = sym
+            coin = _normalize_symbol_input(new or self.symbol)
+            self.symbol_by_ex[n] = coin
 
             # [추가] 헤더에서 일괄 동기화 중에는 per‑card 레버리지 예약을 건너뜁니다.
             if self._bulk_updating_tickers:
                 return
 
             # HL이면 0.4초 디바운스 후 “해당 거래소/심볼” 최대 레버리지/마진 모드 적용
-            try:
-                if self._lev_alarm_by_ex.get(n):
-                    self.loop.remove_alarm(self._lev_alarm_by_ex[n])
-            except Exception:
-                pass
-
-            def _apply_max_lev(loop_, data):
-                # 단일 거래소/심볼 보장 (서비스 내부 캐시로 과호출 방지)
+            if self.dex_by_ex.get(n, "HL") == "HL":
                 try:
-                    asyncio.get_event_loop().create_task(
-                        self.service.ensure_hl_max_leverage_for_exchange(n, sym)
-                    )
-                except Exception as e:
-                    logging.info(f"[LEVERAGE] ensure_hl_max_leverage_for_exchange({n},{sym}) failed: {e}")
+                    if self._lev_alarm_by_ex.get(n):
+                        self.loop.remove_alarm(self._lev_alarm_by_ex[n])
+                except Exception:
+                    pass
 
-            self._lev_alarm_by_ex[n] = self.loop.set_alarm_in(0.4, _apply_max_lev)
+                def _apply_max_lev(loop_, data):
+                    try:
+                        asyncio.get_event_loop().create_task(
+                            self.service.ensure_hl_max_leverage_for_exchange(n, coin)
+                        )
+                    except Exception as e:
+                        logging.info(f"[LEVERAGE] ensure_hl_max_leverage_for_exchange({n},{coin}) failed: {e}")
+
+                self._lev_alarm_by_ex[n] = self.loop.set_alarm_in(0.4, _apply_max_lev)
 
         urwid.connect_signal(t_edit.base_widget, "change", on_ticker_changed)
 
@@ -396,6 +510,7 @@ class UrwidApp:
         info = urwid.Text(("info", "📊 Position: N/A | 💰 Collateral: N/A"))
         self.info_text[name] = info
 
+        card_dex_row = self._build_card_dex_row(name)  # NEW
         controls = urwid.Columns(
             [
                 (12, urwid.Text(("title", f"[{name.upper()}]"))),
@@ -410,7 +525,7 @@ class UrwidApp:
             ],
             dividechars=1,
         )
-        card = urwid.Pile([controls, info])  # ← 기존에는 바로 return 하던 부분
+        card = urwid.Pile([controls, card_dex_row, info])  # ← 기존에는 바로 return 하던 부분
 
         # [추가] 카드 생성 직후 현재 상태에 맞게 버튼 강조 반영
         # 초기 enabled[name]은 False이므로 OFF 버튼이 강조(btn_off_on)로 보입니다.
@@ -594,7 +709,10 @@ class UrwidApp:
             try:
                 self.symbol = (self.ticker_edit.edit_text or "BTC").upper()
                 # 서비스 사용: HL 가격 공유 1회 조회
-                self.current_price = await self.service.fetch_hl_price(self.symbol)
+                raw = self.ticker_edit.edit_text or "BTC"
+                coin = _normalize_symbol_input(raw)
+                sym_for_price = _compose_symbol(self.header_dex, coin)
+                self.current_price = await self.service.fetch_hl_price(sym_for_price)
                 self.price_text.set_text(("info", f"Price: {self.current_price}"))
                 self.total_text.set_text(("info", f"Total: {self._collateral_sum():,.2f} USDC"))
                 self._request_redraw()
@@ -613,9 +731,11 @@ class UrwidApp:
                 now = time.monotonic()
                 need_balance = (now - self._last_balance_at.get(name, 0.0) >= 2.5)
                 
-                sym = (self.symbol_by_ex.get(name) or self.symbol).upper()
+                sym_coin = _normalize_symbol_input(self.symbol_by_ex.get(name) or self.symbol)
+                dex = self.dex_by_ex.get(name, self.header_dex)
+                sym = _compose_symbol(dex, sym_coin)
                 pos_str, col_str, col_val = await self.service.fetch_status(name, sym, need_balance=need_balance)
-                
+
                 if need_balance:
                     self._last_balance_at[name] = now
 
@@ -760,7 +880,9 @@ class UrwidApp:
                     price = float(str(self.current_price).replace(",", ""))
                 
                 self._log(f"[{name.upper()}] {side.upper()} {amount} {self.symbol} @ {otype}")
-                sym = (self.symbol_by_ex.get(name) or self.symbol).upper()
+                sym_coin = _normalize_symbol_input(self.symbol_by_ex.get(name) or self.symbol)
+                dex = self.dex_by_ex.get(name, self.header_dex)
+                sym = _compose_symbol(dex, sym_coin)
                 order = await self.service.execute_order(
                     exchange_name=name,
                     symbol=sym,
@@ -964,7 +1086,9 @@ class UrwidApp:
                 except Exception:
                     hint = None
 
-                sym = (self.symbol_by_ex.get(name) or self.symbol).upper()
+                sym_coin = _normalize_symbol_input(self.symbol_by_ex.get(name) or self.symbol)
+                dex = self.dex_by_ex.get(name, self.header_dex)
+                sym = _compose_symbol(dex, sym_coin)
                 order = await self.service.close_position(
                     exchange_name=name,
                     symbol=sym,
@@ -1289,6 +1413,7 @@ class UrwidApp:
 
         except Exception as e:
             logging.error(f"Tab prev exception: {e}", exc_info=True)
+
     # ====================== Exchanges(푸터) Tab 이동 ======================
     def _get_switcher_pile(self):
         try:
@@ -1592,6 +1717,9 @@ class UrwidApp:
             ("short_col",   "light red",      ""),
             ("pnl_pos",     "light green",    ""),
             ("pnl_neg",     "light red",      ""),
+
+            ("btn_dex",    "white",       ""),
+            ("btn_dex_on", "black",       "light green"),
         ]
 
         root = self.build()
@@ -1612,6 +1740,24 @@ class UrwidApp:
                 await self.mgr.initialize_all()
             except Exception as e:
                 logging.warning(f"initialize_all failed: {e}")
+            
+            try:
+                dex_list = await self.service.fetch_perp_dexs()
+            except Exception as e:
+                logging.info(f"[HIP3] fetch_perp_dexs failed: {e}")
+                dex_list = []
+            self.dex_names = ["HL"] + dex_list
+            try:
+                header_pile = self.header
+                new_row = self._build_header_dex_row()
+                # row 인덱스: [row1, row2, header_dex_row, row3, row4] → 2
+                header_pile.contents[2] = (new_row, header_pile.options())
+                self.header_dex_row = new_row
+            except Exception as e:
+                logging.info(f"[HIP3] header dex row update failed: {e}")
+
+            # 4) 카드 전체 재구성(DEX 행 추가 반영)
+            self._rebuild_body_rows()
 
             # 가격/상태 주기 작업 시작 (표시 중인 거래소만 상태 루프)
             self._price_task = loop.create_task(self._price_loop())
@@ -1629,27 +1775,27 @@ class UrwidApp:
 
             # Ticker 변경 즉시 반영
             def ticker_changed(edit, new):
-                sym = (new or "BTC").upper()
-                self.symbol = sym
+                coin = _normalize_symbol_input(new or "BTC")
+                self.symbol = coin
                 self._bulk_updating_tickers = True
 
                 try:
                     # 모든 거래소(표시/비표시 포함)의 심볼 상태를 먼저 갱신
                     for ex_name in self.mgr.all_names():
-                        self.symbol_by_ex[ex_name] = sym
+                        self.symbol_by_ex[ex_name] = coin
 
                     # 화면에 보이는 카드의 T 입력칸 텍스트를 갱신 (체인지 시그널은 발생해도 레버리지 예약은 벌크 플래그로 억제됨)
                     for ex_name in self.mgr.visible_names():
                         try:
                             edit_w = self.ticker_edit_by_ex.get(ex_name)
                             if edit_w:
-                                edit_w.set_edit_text(sym)
+                                edit_w.set_edit_text(coin)
                         except Exception:
                             pass
                 finally:
                     # 벌크 모드 해제
                     self._bulk_updating_tickers = False
-                    
+
                 # 직전 예약 취소(디바운스)
                 try:
                     if self._ticker_lev_alarm:

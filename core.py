@@ -80,6 +80,15 @@ class ExchangeManager:
                 wallet_address = os.getenv(f"{exchange_name.upper()}_WALLET_ADDRESS")
                 if builder_code and wallet_address:
                     fee_int = int(config.get(exchange_name, "fee_rate", fallback="0") or 0)
+                    dex_fee_map = {}
+                    for k, v in config.items(exchange_name):
+                        if k.endswith("_fee_rate"):
+                            # 예: 'xyz_fee_rate' → 'xyz'
+                            dex = k[:-len("_fee_rate")].lower()
+                            try:
+                                dex_fee_map[dex] = int(v)
+                            except Exception:
+                                pass
 
                     self.exchanges[exchange_name] = ccxt.hyperliquid(
                         {
@@ -87,13 +96,20 @@ class ExchangeManager:
                             "privateKey": os.getenv(f"{exchange_name.upper()}_PRIVATE_KEY"),
                             "walletAddress": wallet_address,
                             "options": {
-                                "builder": builder_code,
                                 "feeInt": fee_int,
-                                "builderFee": True,
-                                "approvedBuilderFee": True,
+                                "dexFeeInt": dex_fee_map,
+                                # builder는 있을 때만 주입
+                                **({"builder": builder_code} if builder_code else {}),
+                                #"builderFee": True,
+                                #"approvedBuilderFee": True,
                             },
                         }
                     )
+                    # 주소 options로 복제
+                    try:
+                        self.exchanges[exchange_name].options["walletAddress"] = wallet_address
+                    except Exception:
+                        pass
             else:
                 # non-HL(lighter 등)은 initialize_all에서 생성
                 self.exchanges[exchange_name] = None
