@@ -134,6 +134,8 @@ class UrwidApp:
         # 거래소별 status 루프 태스크 관리
         self._status_tasks: Dict[str, asyncio.Task] = {}
         self._price_task: asyncio.Task | None = None      # 가격 루프 태스크 보관
+        # [추가] HL 공유 캐시 갱신 태스크
+        self._hl_cache_task: asyncio.Task | None = None
         
         self._last_balance_at: Dict[str, float] = {}  # [추가]
         self.card_price_text: Dict[str, urwid.Text] = {}  # 거래소별 가격 라인 위젯
@@ -191,7 +193,44 @@ class UrwidApp:
         # col_str은 색상 없이 붙입니다.
         parts.append((None, f" | {col_str}"))
         return parts
-    
+
+    # [추가] HL 공유 캐시 갱신 루프: 화면에서 사용 중인 모든 dex에 대해 주기 갱신
+    async def _hl_shared_cache_loop(self):
+        """
+        - metaAndAssetCtxs(dex?)는 첫 번째 HL 거래소에서만 호출
+        - 여기서 각 dex(메인 'HL' 포함) 가격맵을 주기적으로 갱신
+        - 카드 루프에서는 get_cached_hl_price로 캐시만 읽도록 구성
+        """
+        try:
+            while True:
+                try:
+                    # 현재 화면에서 사용 중인 dex 집합
+                    dexes_in_use = set()
+                    dexes_in_use.add(self.header_dex or "HL")
+                    for n in self.mgr.visible_names():
+                        if self.mgr.get_meta(n).get("hl", False):
+                            dexes_in_use.add(self.dex_by_ex.get(n, "HL"))
+
+                    # 캐시 갱신 + quote 1회 보장
+                    for d in dexes_in_use:
+                        dex_norm = None if d == "HL" else d
+                        # 가격맵 갱신(네트워크 1회/주기)
+                        await self.service.refresh_hl_cache_for_dex(dex_norm)
+                        # quote 보장(최초 1회)
+                        try:
+                            await self.service.ensure_quote_for_dex(dex_norm)
+                        except Exception:
+                            pass
+
+                    await asyncio.sleep(min(RATE.CARD_PRICE_EVERY, RATE.HEADER_PRICE_INTERVAL))
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    logging.error(f"_hl_shared_cache_loop error: {e}", exc_info=True)
+                    await asyncio.sleep(1.0)
+        except asyncio.CancelledError:
+            pass
+
     def _inject_usdc_value_into_pos(self, ex_name: str, pos_str: str) -> str:
         """
         pos_str 예: '📊 [green]LONG[/] 0.12345 | PnL: [red]-1.23[/]'
@@ -741,11 +780,16 @@ class UrwidApp:
         while True:
             try:
                 self.symbol = (self.ticker_edit.edit_text or "BTC").upper()
-                # 서비스 사용: HL 가격 공유 1회 조회
                 raw = self.ticker_edit.edit_text or "BTC"
                 coin = _normalize_symbol_input(raw)
-                sym_for_price = _compose_symbol(self.header_dex, coin)
-                self.current_price = await self.service.fetch_hl_price(sym_for_price)
+
+                # 캐시 조회 → 없으면 캐시 갱신만 트리거(공유 루프도 돌기 때문에 네트워크 최소화)
+                cached = self.service.get_cached_hl_price(coin, dex_hint=self.header_dex)
+                if cached is None:
+                    await self.service.refresh_hl_cache_for_dex(None if self.header_dex == "HL" else self.header_dex)
+                    cached = self.service.get_cached_hl_price(coin, dex_hint=self.header_dex)
+
+                self.current_price = cached or "..."
                 self.price_text.set_text(("info", f"Price: {self.current_price}"))
                 self.total_text.set_text(("info", f"Total: {self._collateral_sum():,.2f} USDC"))
                 self._request_redraw()
@@ -753,32 +797,37 @@ class UrwidApp:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logging.error(f"price loop: {e}")
+                logging.error(f"price loop: {e}", exc_info=True)
                 await asyncio.sleep(RATE.HEADER_PRICE_INTERVAL)
 
     async def _status_loop(self, name: str):
         await asyncio.sleep(random.uniform(0.0, 0.7))
         while True:
             try:
-                # balance는 거래소별 2.5 초마다만 요청
                 now = time.monotonic()
                 need_balance = (now - self._last_balance_at.get(name, 0.0) >= RATE.STATUS_BALANCE_INTERVAL)
-                
+
                 sym_coin = _normalize_symbol_input(self.symbol_by_ex.get(name) or self.symbol)
                 dex = self.dex_by_ex.get(name, self.header_dex)
                 sym = _compose_symbol(dex, sym_coin)
                 is_hl = self.mgr.get_meta(name).get("hl", False)
 
+                # [수정] HL 카드는 '캐시만' 사용하여 가격 표시(네트워크 호출 없음)
                 try:
                     last_px = self._last_card_price_at.get(name, 0.0)
                     if (now - last_px) >= RATE.CARD_PRICE_EVERY and name in self.card_price_text:
-                        px_str, quote_str = await self.service.fetch_price(
-                            exchange_name=name,
-                            symbol=sym_coin,
-                            dex_hint=(dex if self.mgr.get_meta(name).get("hl", False) else None)
-                        )
+                        if is_hl:
+                            px_str = self.service.get_cached_hl_price(sym_coin, dex_hint=dex) or "..."
+                            quote_str = await self.service.ensure_quote_for_dex(None if dex == "HL" else dex)
+                        else:
+                            # 비-HL은 기존 방식 유지(거래소별로 마크가격)
+                            px_only = await self.service.fetch_price(
+                                exchange_name=name, symbol=sym_coin, dex_hint=None
+                            )
+                            px_str = px_only if isinstance(px_only, str) else str(px_only)
+                            quote_str = "USDC"
+
                         self.card_price_text[name].set_text(("info", f"Price: {px_str}"))
-                        
                         if name in self.card_quote_text:
                             self.card_quote_text[name].set_text(("quote_color", quote_str))
 
@@ -786,49 +835,41 @@ class UrwidApp:
                         try:
                             self.card_last_price[name] = float(str(px_str).replace(",", ""))
                         except (ValueError, TypeError):
-                            # 가격 변환 실패는 무시하고 계속 진행 (에러 문자열이 올 수 있음)
                             pass
-
                 except Exception:
-                    # 가격 조회 실패 시, 로그에 전체 traceback을 기록하고 UI에 에러를 표시합니다.
-                    logging.error(f"[{name}] Price fetch failed in status_loop", exc_info=True)
+                    logging.error(f"[{name}] Price update failed in status_loop", exc_info=True)
                     if name in self.card_price_text:
                         self.card_price_text[name].set_text(('pnl_neg', "Price: Error"))
                     if name in self.card_quote_text:
-                        self.card_quote_text[name].set_text(("", "")) # quote는 비웁니다.
+                        self.card_quote_text[name].set_text(("", ""))
 
+                # 포지션/담보는 종전 로직 유지
                 pos_str, col_str, col_val = await self.service.fetch_status(name, sym, need_balance=need_balance)
-
                 if need_balance:
                     self._last_balance_at[name] = now
 
                 pos_str = self._inject_usdc_value_into_pos(name, pos_str)
-
                 self.collateral[name] = float(col_val)
+
                 if name in self.info_text and is_hl:
                     markup_parts = self._status_bracket_to_urwid(pos_str, col_str)
                     self.info_text[name].set_text(markup_parts)
+                elif name in self.info_text and not is_hl:
+                    self.info_text[name].set_text(("info", f"{pos_str} | {col_str}"))
 
                 self.total_text.set_text(("info", f"Total: {self._collateral_sum():,.2f} USDC"))
                 self._request_redraw()
 
-                # 상태 루프 sleep 지터
                 jitter = RATE.STATUS_LOOP_MIN + random.uniform(0.0, max(0.0, RATE.STATUS_LOOP_MAX - RATE.STATUS_LOOP_MIN))
                 await asyncio.sleep(jitter)
 
             except asyncio.CancelledError:
                 break
-
-            except Exception as e:
-                # 루프 전체에서 에러 발생 시, 로그에 전체 traceback을 기록하고 UI에 에러를 표시합니다.
+            except Exception:
                 logging.error(f"[CRITICAL] Unhandled error in status_loop for '{name}'", exc_info=True)
                 if name in self.info_text:
-                    # UI에 직접 에러 메시지를 표시하여 즉각적으로 문제를 인지할 수 있게 합니다.
-                    error_msg_for_ui = "Status Error: Check logs"
-                    self.info_text[name].set_text([('pnl_neg', error_msg_for_ui)])
+                    self.info_text[name].set_text([('pnl_neg', "Status Error: Check logs")])
                     self._request_redraw()
-                
-                # 에러 발생 후에도 루프가 계속 돌 수 있도록 sleep을 유지합니다.
                 jitter = RATE.STATUS_LOOP_MIN + random.uniform(0.0, max(0.0, RATE.STATUS_LOOP_MAX - RATE.STATUS_LOOP_MIN))
                 await asyncio.sleep(jitter)
 
@@ -968,7 +1009,7 @@ class UrwidApp:
                     side=side,
                     price=price,
                 )
-                self._log(f"[{name.upper()}] 주문 성공: #{order['id']}")
+                self._log(f"[{name.upper()}] 주문 성공: #{order['id']} #price{price}")
                 break
             except Exception as e:
                 self._log(f"[{name.upper()}] 주문 실패: {e}")
@@ -1714,6 +1755,9 @@ class UrwidApp:
             tasks.append(self._price_task)
         self._price_task = None
 
+        if self._hl_cache_task and not self._hl_cache_task.done():
+            self._hl_cache_task.cancel()
+            
         # (3) 실제 취소 대기 (CancelledError 억제)
         if tasks:
             try:
@@ -1839,6 +1883,9 @@ class UrwidApp:
 
             # 4) 카드 전체 재구성(DEX 행 추가 반영)
             self._rebuild_body_rows()
+
+            # [추가] HL 공유 캐시 갱신 루프 시작
+            self._hl_cache_task = loop.create_task(self._hl_shared_cache_loop())
 
             # 가격/상태 주기 작업 시작 (표시 중인 거래소만 상태 루프)
             self._price_task = loop.create_task(self._price_loop())

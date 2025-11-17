@@ -47,8 +47,7 @@ class TradingService:
         self._asset_index_cache_by_ex: Dict[str, Dict[str, Any]] = {} 
         #  HIP-3 레버리지 적용 여부 캐시: (exchange_name, hip3_coin) -> bool
         self._leverage_applied: Dict[tuple[str, str], bool] = {}
-        # key: 'HL' | dex('xyz' 등) -> {'ts': float, 'map': {name->px}}
-        self._hl_px_cache_by_dex: Dict[str, Dict[str, Any]] = {}  
+        self._hl_px_cache_by_dex: Dict[str, Dict[str, Any]] = {}  # {'HL'|'xyz': {'ts': float, 'map': {...}}}
         # HL 빌더 DEX 목록 캐시(앱 시작 시 1회)
         self._perp_dex_list: Optional[list[str]] = None 
         # [추가/정리] (dex_or_HL, coin_key) -> decimals
@@ -64,6 +63,66 @@ class TradingService:
         self._leverage_last_check: dict[tuple[str, str], float] = {}   # 마지막 체크 시각(스로틀)
         self._leverage_check_interval: float = 5.0                     # 스로틀 간격(초) - 필요시 조정
         self._spot_usdh_by_ex: dict[str, float] = {}  # HL: 거래소별 마지막 USDH 잔고
+
+
+    # [추가] HL 가격맵 캐시를 특정 dex(또는 메인 HL)에 대해 1회 갱신
+    async def refresh_hl_cache_for_dex(self, dex: Optional[str] = None, ttl: float = 3.0) -> None:
+        """
+        첫 번째 HL 거래소에서만 metaAndAssetCtxs(dex?)를 호출하여
+        self._hl_px_cache_by_dex[dex or 'HL'] = {'ts': now, 'map': {...}} 형태로 갱신.
+        """
+        ex = self.manager.first_hl_exchange()
+        if not ex:
+            return
+
+        cache_key = dex if dex else "HL"
+        ent = self._hl_px_cache_by_dex.get(cache_key, {})
+        now = time.monotonic()
+        # 너무 잦은 호출 방지(절반 TTL 안에서는 스킵)
+        if ent and (now - float(ent.get("ts", 0.0))) < (ttl * 0.5):
+            return
+
+        px_map = await self._hl_price_map(ex, dex)
+        if px_map:
+            self._hl_px_cache_by_dex[cache_key] = {"ts": now, "map": px_map}
+
+    # [추가] 캐시에서만 가격 문자열 조회(네트워크 호출 없음)
+    def get_cached_hl_price(self, symbol: str, dex_hint: Optional[str] = None) -> Optional[str]:
+        """
+        - 메인: symbol='BTC' → cache['HL']['map']['BTC']
+        - HIP-3: dex_hint='xyz', symbol='BTC' → cache['xyz']['map']['xyz:BTC']
+        캐시에 없으면 None 리턴(호출측에서 refresh_hl_cache_for_dex로 보강).
+        """
+        dex, hip3_coin = _parse_hip3_symbol(symbol)
+        if dex is None and dex_hint and dex_hint != "HL":
+            dex = dex_hint.lower()
+            hip3_coin = f"{dex}:{symbol.upper()}"
+
+        cache_key = dex if dex else "HL"
+        ent = self._hl_px_cache_by_dex.get(cache_key)
+        if not ent:
+            return None
+
+        px_map = ent.get("map", {}) or {}
+        key = hip3_coin if dex else symbol.upper()
+        px = px_map.get(key)
+        if px is None:
+            return None
+        try:
+            return f"{float(px):,.2f}"
+        except Exception:
+            return None
+
+    # [추가] 외부에서 dex 별 quote를 보장적으로 가져올 수 있는 래퍼(최초 1회 네트워크)
+    async def ensure_quote_for_dex(self, dex: Optional[str]) -> str:
+        """
+        - dex=None → 'HL' 범위
+        - 이미 캐시에 있으면 캐시 리턴, 없으면 첫 HL 거래소를 통해 1회 조회 후 캐시.
+        """
+        ex = self.manager.first_hl_exchange()
+        if not ex:
+            return "USDC"
+        return await self._fetch_dex_quote(ex, dex)
 
     async def _hl_get_spot_usdh(self, ex) -> float:
         """
