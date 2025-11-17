@@ -19,11 +19,11 @@ from types import SimpleNamespace
 
 # [추가] 가격/상태 폴링 간격 설정(환경변수로도 오버라이드 가능)
 RATE = SimpleNamespace(
-    HEADER_PRICE_INTERVAL=3.5,   # 헤더 Price 갱신 간격
-    STATUS_BALANCE_INTERVAL=2.5,   # 카드별 accountValue/밸런스 갱신 최소 간격
-    STATUS_LOOP_MIN=0.5,           # 카드 상태 루프 sleep 최소
-    STATUS_LOOP_MAX=1.2,           # 카드 상태 루프 sleep 최대(지터)
-    CARD_PRICE_EVERY=2.5,          # 카드 Price 갱신 최소 간격
+    HEADER_PRICE_INTERVAL=5.0,   # 헤더 Price 갱신 간격
+    STATUS_BALANCE_INTERVAL=3.0,   # 카드별 accountValue/밸런스 갱신 최소 간격
+    STATUS_LOOP_MIN=1.0,           # 카드 상태 루프 sleep 최소
+    STATUS_LOOP_MAX=2.0,           # 카드 상태 루프 sleep 최대(지터)
+    CARD_PRICE_EVERY=5.0,          # 카드 Price 갱신 최소 간격
 )
 
 # urwid의 레이아웃 경고(PileWarning)를 화면에 출력하지 않도록 억제
@@ -801,7 +801,7 @@ class UrwidApp:
                 await asyncio.sleep(RATE.HEADER_PRICE_INTERVAL)
 
     async def _status_loop(self, name: str):
-        await asyncio.sleep(random.uniform(0.0, 0.7))
+        #await asyncio.sleep(random.uniform(0.0, 1.0))
         while True:
             try:
                 now = time.monotonic()

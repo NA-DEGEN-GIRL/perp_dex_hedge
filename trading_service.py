@@ -24,6 +24,17 @@ def _parse_hip3_symbol(sym: str) -> Tuple[Optional[str], str]:
         return dex_l, f"{dex_l}:{coin_u}"
     return None, sym
 
+# [추가] 소수부의 0만 제거하는 안전 유틸
+def _strip_decimal_trailing_zeros(s: str) -> str:
+    """
+    문자열 s가 '123.4500'이면 '123.45'로,
+    '123.000'이면 '123'으로 변환한다.
+    소수점이 없으면(예: '26350') 정수부의 0는 절대 제거하지 않는다.
+    """
+    if "." in s:
+        return s.rstrip("0").rstrip(".")  # comment: 정수부는 건드리지 않음
+    return s
+
 class TradingService:
     """
     UI에서 거래소(ccxt) 호출을 공통 처리:
@@ -64,7 +75,8 @@ class TradingService:
         self._leverage_check_interval: float = 5.0                     # 스로틀 간격(초) - 필요시 조정
         self._spot_usdh_by_ex: dict[str, float] = {}  # HL: 거래소별 마지막 USDH 잔고
 
-    
+
+
     # [추가] 가격 소수자릿수(px decimals) 조회 유틸: metaAndAssetCtxs 캐시 기반
     def _get_px_decimals(self, dex: Optional[str], coin_key: str, fallback_by_sz: Optional[int] = None) -> int:
         """
@@ -287,24 +299,44 @@ class TradingService:
             return 0
 
     def _format_perp_price(self, px: float, decimals_max: int) -> str:
-        # comment: 유효숫자 5 제한 + 말미 0 제거 (지정가/시장가 최종 문자열 포맷 공통)
+        """
+        Perp 가격 포맷:
+        - tick_decimals(=decimals_max)로 반올림
+        - 유효숫자 최대 5 자리 제한
+        - 소수부의 0만 제거(정수부 0는 보존)
+        """
         d = Decimal(str(px))
+        # 1) 소수자릿수 제한으로 반올림
         quant = Decimal(f"1e-{decimals_max}") if decimals_max > 0 else Decimal("1")
         d = d.quantize(quant, rounding=ROUND_HALF_UP)
+
         s = format(d, "f")
         if "." not in s:
+            # 정수 가격은 그대로 반환 (예: '26350' → '26350')
             return s
+
         int_part, frac_part = s.split(".", 1)
-        if int_part in ("", "0"):
-            sig_digits = len(frac_part.lstrip("0")); int_digits = 0
+        # 현재 유효숫자 계산
+        if int_part == "" or int_part == "0":
+            sig_digits = len(frac_part.lstrip("0"))
+            int_digits = 0
         else:
-            int_digits = len(int_part.lstrip("0")); sig_digits = int_digits + len(frac_part)
+            int_digits = len(int_part.lstrip("0"))
+            sig_digits = int_digits + len(frac_part)
+
         if sig_digits <= 5:
-            return s.rstrip("0").rstrip(".")
-        allow_frac = max(0, min(5 - int_digits, decimals_max))
+            # 소수부 0만 제거
+            return _strip_decimal_trailing_zeros(s)
+
+        # 2) 유효숫자 5로 축소(소수부만 축소)
+        allow_frac = max(0, 5 - int_digits)
+        allow_frac = min(allow_frac, decimals_max)
         quant2 = Decimal(f"1e-{allow_frac}") if allow_frac > 0 else Decimal("1")
         d2 = d.quantize(quant2, rounding=ROUND_HALF_UP)
-        return format(d2, "f").rstrip("0").rstrip(".")
+
+        s2 = format(d2, "f")
+        # [중요 수정] 정수부의 끝자리 0가 잘리지 않도록, 소수부가 있을 때만 0 제거
+        return _strip_decimal_trailing_zeros(s2)
 
     # HL Info API로 user 상태 가져오기 (clearinghouseState)
     async def _hl_get_user_state(self, ex, dex: Optional[str], user_addr: str) -> Optional[dict]:
@@ -706,7 +738,8 @@ class TradingService:
                 px_eff = min(max(px_eff, lo), hi)
 
             d_tick = self._round_to_tick(px_eff, tick_decimals, up=is_buy)
-            price_str = self._format_perp_price(float(d_tick), tick_decimals)  # 유효숫자 5 + tick_decimals 제한
+            # [변경] 최종 문자열 생성 시 정수부 0 보존
+            price_str = self._format_perp_price(float(d_tick), tick_decimals)
             if not price_str:
                 price_str = "0"
 
@@ -715,7 +748,7 @@ class TradingService:
             if price is None:
                 raise RuntimeError("limit order requires price")
             tif = self._tif_capitalize(time_in_force, default="Gtc")
-            price_str = self._format_perp_price(float(price), px_decimals)  # ← [수정] px_decimals 사용
+            price_str = self._format_perp_price(float(price), tick_decimals)
 
         # 4) 수량 문자열
         if int(sz_dec) > 0:
@@ -723,7 +756,9 @@ class TradingService:
             sz_d = Decimal(str(amount)).quantize(q, rounding=ROUND_HALF_UP)
         else:
             sz_d = Decimal(int(round(amount)))
-        size_str = format(sz_d, "f").rstrip("0").rstrip(".")
+        size_str = format(sz_d, "f")
+        # [중요 수정] size도 정수부 0가 잘리지 않도록 소수부가 있을 때만 제거
+        size_str = _strip_decimal_trailing_zeros(size_str)
 
         # 5) raw payload 구성
         order_obj = {
@@ -1110,7 +1145,7 @@ class TradingService:
             try:
                 # collateral(USDC total)  —  주기적으로만 갱신
                 col_val = self._last_collateral.get(exchange_name, 0.0)
-                if need_balance or (now - self._last_balance_at.get(exchange_name, 0.0) >= self._balance_every):
+                if need_balance:
                     av_sum = await self._hl_sum_account_value(ex)
                     col_val = float(av_sum)
                     self._last_collateral[exchange_name] = col_val
