@@ -81,7 +81,135 @@ class TradingService:
         #  값: {"ts": monotonic, "av": float, "usdh": float}
         self._agg_av_cache: Dict[str, Dict[str, float]] = {}
         self._agg_refresh_secs: float = 1.0  # comment: 합산 재계산 최소 주기(초)
-    
+        # [ADD] 표시 자리수 설정 (환경변수 오버라이드 가능)
+        self._disp_dec_max = 8
+        self._disp_sig_max = 7
+
+    def format_price_simple(self, px: float) -> str:
+        """
+        간단 표시 규칙(고정 자릿수 표기, 소수부 0도 유지):
+          - abs(px) >= 10      → 소수 2자리
+          - 1 <= abs(px) < 10  → 소수 3자리
+          - 0.1 <= abs(px) < 1 → 소수 4자리
+          - 0.01 <= abs(px) < 0.1  → 소수 5자리
+          - 0.001 <= abs(px) < 0.01 → 소수 6자리
+          - 그 미만(아주 작은 값) → 소수 6자리(최대)
+        """
+        try:
+            v = float(px)
+        except Exception:
+            return str(px)
+
+        a = abs(v)
+        if a >= 10:
+            dec = 2
+        elif a >= 1:
+            dec = 3
+        elif a >= 0.1:
+            dec = 4
+        elif a >= 0.01:
+            dec = 5
+        elif a >= 0.001:
+            dec = 6
+        else:
+            dec = 6  # 최대 소수 자리
+
+        q = Decimal(f"1e-{dec}") if dec > 0 else Decimal("1")
+        d = Decimal(str(v)).quantize(q, rounding=ROUND_HALF_UP)
+        s = format(d, "f")  # comment: 소수부 0 제거하지 않음(고정 자릿수 유지)  <-- FIX
+
+        # 천단위 구분
+        return self._format_with_grouping(s)
+
+    def _format_with_grouping(self, s: str) -> str:
+        """
+        '12345.6700' → '12,345.67', '0.0001200' → '0.00012'
+        s는 소수부 0 제거가 이미 반영된 문자열이라고 가정.
+        """
+        if not s:
+            return s
+        neg = s.startswith("-")
+        if neg:
+            s = s[1:]
+        if "." in s:
+            ip, fp = s.split(".", 1)
+        else:
+            ip, fp = s, None
+        try:
+            ip_g = f"{int(ip or '0'):,}"
+        except Exception:
+            # int 변환 실패 시 안전 폴백
+            ip_g = ip or "0"
+        out = ip_g if fp is None else f"{ip_g}.{fp}"
+        return f"-{out}" if neg else out
+
+    # [ADD] 일반(spot/비-HL) 표시용 포맷터
+    def _format_generic_price(self, px: float, dec_max: int | None = None, sig_max: int | None = None) -> str:
+        """
+        - dec_max(최대 소수), sig_max(최대 유효숫자) 기준으로 표시 문자열 생성.
+        - 기본값: dec_max=self._disp_dec_max(기본 8), sig_max=self._disp_sig_max(기본 7)
+        - 소수부 0은 제거, 정수부 0은 보존. 천단위 구분기호 적용.
+        """
+        dec_max = self._disp_dec_max if dec_max is None else max(0, int(dec_max))
+        sig_max = self._disp_sig_max if sig_max is None else max(1, int(sig_max))
+
+        d = Decimal(str(px))
+        # 1) 우선 dec_max로 반올림
+        q = Decimal(f"1e-{dec_max}") if dec_max > 0 else Decimal("1")
+        d1 = d.quantize(q, rounding=ROUND_HALF_UP)
+        s1 = format(d1, "f")
+
+        # 유효숫자 계산
+        if "." in s1:
+            ip, fp = s1.split(".", 1)
+        else:
+            ip, fp = s1, ""
+        int_digits = len(ip.lstrip("-").lstrip("0")) if ip not in ("", "0", "-0") else 0
+        frac_digits = len(fp)
+        sig_digits = int_digits + (len(fp.lstrip("0")) if int_digits == 0 else frac_digits)
+
+        if sig_digits <= sig_max:
+            return self._format_with_grouping(_strip_decimal_trailing_zeros(s1))
+
+        # 2) 유효숫자 제한에 맞춰 소수부 축소
+        allow_frac = max(0, sig_max - int_digits)
+        allow_frac = min(allow_frac, dec_max)
+        q2 = Decimal(f"1e-{allow_frac}") if allow_frac > 0 else Decimal("1")
+        d2 = d.quantize(q2, rounding=ROUND_HALF_UP)
+        s2 = format(d2, "f")
+        return self._format_with_grouping(_strip_decimal_trailing_zeros(s2))
+
+    # [ADD] HL 표시용 포맷터(Perp은 tick_decimals 준수)
+    async def format_price_for_display(
+        self,
+        ex,
+        dex: Optional[str],
+        coin_key: str,
+        px_val: float,
+        is_spot: bool = False
+    ) -> str:
+        """
+        - HL Perp: szDecimals → tick_decimals(=6 - sz)로 _format_perp_price 사용 후 천단위 적용
+        - Spot/기타: _format_generic_price 사용
+        coin_key:
+          - 메인 HL Perp: 'BTC' 같은 UPPER
+          - HIP-3 Perp: 'xyz:XYZ100' 원문
+          - Spot: 'BASE/QUOTE' 등 (is_spot=True로 호출 권장)
+        """
+        if is_spot:
+            return self._format_generic_price(px_val)
+
+        # Perp(HL 메인/HIP-3)
+        try:
+            sz_dec = await self._hl_sz_decimals(ex, dex, coin_key)
+            tick_decimals = max(0, 6 - int(sz_dec))
+        except Exception:
+            # 정보 실패 시 일반 포맷터로 폴백
+            return self._format_generic_price(px_val)
+
+        core = self._format_perp_price(float(px_val), tick_decimals)  # comment: tick 규칙 + 유효숫자(5) 포함
+        return self._format_with_grouping(core)
+
     def _sanitize_http_base(self, ex: Any, url_template: Optional[str]) -> str:
         """
         ccxt 인스턴스(ex)의 hostname 속성을 읽어 '{hostname}' 템플릿을 치환하고,
@@ -1092,7 +1220,7 @@ class TradingService:
             if not meta.get("hl", False):
                 native = self._to_native_symbol(exchange_name, symbol)
                 px = await ex.get_mark_price(native)
-                return f"{float(px):,.2f}"
+                return self.format_price_simple(float(px))
 
             # HL: 스코프 결정
             dex, hip3_coin = _parse_hip3_symbol(symbol)
@@ -1104,15 +1232,19 @@ class TradingService:
             # Perp / Spot 구분
             if dex:  # HIP-3 perp
                 px = ws.get_price(hip3_coin)  # 'xyz:COIN'
+                return self.format_price_simple(float(px)) if px is not None else "..."
             else:
                 if "/" in symbol:            # Spot pair
                     px = ws.get_spot_pair_px(symbol.upper())
+                    return self.format_price_simple(float(px)) if px is not None else "..."
                 else:                         # Perp(HL) → 'BTC'
                     px = ws.get_price(symbol.upper())
-                    if px is None:            # 베이스 spot(USDC 가정) 보조
-                        px = ws.get_spot_px_base(symbol.upper())
+                    if px is not None:
+                        return self.format_price_simple(float(px))
+                    # 보조: base spot
+                    px = ws.get_spot_px_base(symbol.upper())
+                    return self.format_price_simple(float(px)) if px is not None else "..."
 
-            return f"{float(px):,.2f}" if px is not None else "..."
         except Exception as e:
             logger.info("[PRICE] %s fetch_price failed: %s", exchange_name, e)
             return "Error"
@@ -1191,7 +1323,7 @@ class TradingService:
         col_str: str = (
             last_col_str
             if last_col_str
-            else "💰: [red]PERP[/] "
+            else "💰 Account Value: [red]PERP[/] "
                  f"{last_col_val:,.1f} USDC | [cyan]SPOT[/] 0.0 USDH, 0.0 USDC"
         )
         
@@ -1206,7 +1338,7 @@ class TradingService:
                 upnl = float(p.get("upnl") or 0.0)
                 side_color = "green" if side == "LONG" else "red"
                 pnl_color = "green" if upnl >= 0 else "red"
-                pos_str = f"📊 [{side_color}]{side}[/] {size:g} | PnL: [{pnl_color}]{upnl:,.2f}[/]"
+                pos_str = f"📊 [{side_color}]{side}[/] {size:g} | PnL: [{pnl_color}]{upnl:,.1f}[/]"
             else:
                 # 포지션이 진짜 0일 때만 N/A로 갱신. (데이터 미도착으로 None인 경우는 위에서 캐시 유지)
                 pos_str = "📊 Position: N/A"
@@ -1218,7 +1350,7 @@ class TradingService:
                 col_val = float(total_av)  # comment: 헤더 합계용(여전히 PERP AV)
                 # comment: [CHG] 표시 포맷: PERP(USDC) | SPOT USDH, USDC
                 col_str = (
-                    f"💰: [red]PERP[/] {col_val:,.1f} USDC | "
+                    f"💰 Account Value: [red]PERP[/] {col_val:,.1f} USDC | "
                     f"[cyan]SPOT[/] {float(usdh):,.1f} USDH, {float(usdc):,.1f} USDC"
                 )
             except Exception as e:

@@ -221,7 +221,7 @@ class UrwidApp:
         col_parts = self._parse_bracket_markup(col_str)
 
         # 3) 결합: ' | ' 구분자 뒤에 collateral 파트 연결
-        return pos_parts + [(None, " | ")] + col_parts
+        return pos_parts + [(None, "\n")] + col_parts
 
     def _inject_usdc_value_into_pos(self, ex_name: str, pos_str: str) -> str:
         """
@@ -775,12 +775,11 @@ class UrwidApp:
                 raw = self.ticker_edit.edit_text or "BTC"
                 coin = _normalize_symbol_input(raw)
 
-                px_str = self.current_price or "..."  # [수정] 기존 값을 기본값으로 유지
-                # HL 환경이면 WS 클라이언트에서만 가격을 가져옵니다.
+                px_str = self.current_price or "..."
                 dex = self.header_dex
                 scope = "hl" if dex == "HL" else dex
                 
-                # [수정] HL 거래소 선택 로직 보강: first_hl_exchange 실패 시 '보이는' HL 거래소로 폴백
+                # HL 우선 선택(없으면 가시 HL로 폴백)
                 ex = self.mgr.first_hl_exchange()
                 if not ex:
                     try:
@@ -791,26 +790,25 @@ class UrwidApp:
                     except Exception:
                         ex = None
 
-                if ex:
-                    ws = await self.service._get_ws_for_scope(scope, ex)
-                else:
-                    ws = None
+                ws = await self.service._get_ws_for_scope(scope, ex) if ex else None
 
-                if ws:
-                    # [안전] 키 생성: HL이면 'BTC', HIP‑3이면 'dex:COIN'
-                    key = _compose_symbol(dex, coin)
-                    px_val = ws.get_price(key)
-
-                    # HL 메인 코인의 보조 스팟 가격(없을 때만)
+                if ws and ex:
+                    # HL: 키 생성
+                    sym = _compose_symbol(dex, coin)  # HL → 'BTC', HIP-3 → 'dex:COIN'
+                    px_val = ws.get_price(sym)
                     if px_val is None and dex == "HL":
                         px_val = ws.get_spot_px_base(coin)
 
                     if px_val is not None:
-                        px_str = f"{px_val:,.2f}"
+                        # [FIX] 단순 포맷터 사용
+                        px_str = self.service.format_price_simple(float(px_val))
+                else:
+                    # [FIX] 서비스가 단순 포맷으로 반환
+                    px_str = await self.service.fetch_price(next(iter(self.mgr.all_names()), ""), _compose_symbol(dex, coin))
                 
                 self.current_price = px_str
                 self.price_text.set_text(("info", f"Price: {self.current_price}"))
-                self.total_text.set_text(("info", f"Total: {self._collateral_sum():,.2f} USDC"))
+                self.total_text.set_text(("info", f"Total: {self._collateral_sum():,.1f} USDC"))
                 self._request_redraw()
 
                 await asyncio.sleep(RATE.GAP_FOR_INF)
@@ -865,9 +863,9 @@ class UrwidApp:
                                 px_val = ws.get_spot_px_base(sym_coin)
 
                             if px_val is not None:
-                                px_str = f"{px_val:,.2f}"
+                                px_str = self.service.format_price_simple(float(px_val))
                                 self.card_price_text[name].set_text(("info", f"Price: {px_str}"))
-                                self.card_last_price[name] = px_val
+                                self.card_last_price[name] = float(px_val)
 
                             if name in self.card_quote_text:
                                 quote_str = ws.get_collateral_quote() or "USDC"
