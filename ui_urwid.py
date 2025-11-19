@@ -1,4 +1,3 @@
-# ui_urwid.py
 import asyncio
 import random
 import logging
@@ -19,12 +18,11 @@ from types import SimpleNamespace
 
 # [추가] 가격/상태 폴링 간격 설정(환경변수로도 오버라이드 가능)
 RATE = SimpleNamespace(
-    HEADER_PRICE_INTERVAL=5.0,   # 헤더 Price 갱신 간격
-    STATUS_POS_INTERVAL=1.8,          # [추가] 포지션 갱신 최소 간격
-    STATUS_COLLATERAL_INTERVAL=10.0,   # [추가] 담보(USDC+USDH) 갱신 최소 간격
-    STATUS_LOOP_MIN=0.2,           # 카드 상태 루프 sleep 최소
-    STATUS_LOOP_MAX=0.5,           # 카드 상태 루프 sleep 최대(지터)
-    CARD_PRICE_EVERY=5.0,          # 카드 Price 갱신 최소 간격
+    GAP_FOR_INF=0.1, # need small gap for infinite loop
+    # all for non hl
+    STATUS_POS_INTERVAL={"default":0.5, "lighter":2.0},
+    STATUS_COLLATERAL_INTERVAL={"default":0.5, "lighter":5.0},
+    CARD_PRICE_INTERVAL={"default":1.0, "lighter":5.0},
 )
 
 # urwid의 레이아웃 경고(PileWarning)를 화면에 출력하지 않도록 억제
@@ -157,24 +155,58 @@ class UrwidApp:
         self.dex_by_ex: Dict[str, str] = {n: "HL" for n in self.mgr.all_names()}  # 카드별 dex
         self.dex_btns_header: Dict[str, urwid.AttrMap] = {}                      # 헤더 버튼 래퍼
         self.dex_btns_by_ex: Dict[str, Dict[str, urwid.AttrMap]] = {}            # 카드별 dex 
+        self._status_locks: Dict[str, asyncio.Lock] = {name: asyncio.Lock() for name in self.mgr.all_names()}
+
+    # [ADD] 브래킷 마크업 파서(urwid용)
+    def _parse_bracket_markup(self, s: str) -> list[tuple[Optional[str], str]]:
+        """
+        '[red]PERP[/] 123 | [cyan]SPOT[/] ...' 형태의 문자열을
+        urwid Text.set_text가 받는 (attr, text) 튜플 리스트로 변환합니다.
+        지원 태그: [red], [green], [cyan], [/]
+        색 매핑:
+          - red   -> 'pnl_neg'   (팔레트: light red)
+          - green -> 'pnl_pos'   (팔레트: light green)
+          - cyan  -> 'label'     (팔레트: light cyan)
+        """
+        color_map = {
+            "red": "pnl_neg",
+            "green": "pnl_pos",
+            "cyan": "label",
+        }
+        # 토큰으로 분할: [tag] / [/]
+        tokens = re.split(r'(\[[a-zA-Z_]+\]|\[/\])', s)
+        parts: list[tuple[Optional[str], str]] = []
+        cur_attr: Optional[str] = None
+
+        for tok in tokens:
+            if not tok:
+                continue
+            if tok == "[/]":
+                cur_attr = None
+                continue
+            m = re.fullmatch(r"\[([a-zA-Z_]+)\]", tok)
+            if m:
+                cur_attr = color_map.get(m.group(1).lower())
+                continue
+            # 일반 텍스트
+            parts.append((cur_attr, tok))
+        return parts
 
     def _status_bracket_to_urwid(self, pos_str: str, col_str: str):
         """
-        trading_service.fetch_status가 주는 문자열(예: '[green]LONG[/] 0.1 | PnL: [red]-0.02[/]')
-        을 urwid 마크업 리스트로 변환.
-        규칙:
-        - 첫 번째 [green]/[red] 블록 → side 색(long_col/short_col)
-        - 두 번째 [green]/[red] 블록 → pnl 색(pnl_pos/pnl_neg)
+        trading_service.fetch_status가 주는 문자열을 urwid 마크업 리스트로 변환.
+        - pos_str: 첫 번째 [green]/[red] 블록은 LONG/SHORT 색(long_col/short_col),
+                   두 번째 [green]/[red] 블록은 PnL 색(pnl_pos/pnl_neg)로 처리(기존 동작 유지)
+        - col_str: [red] / [cyan] 등 마크업을 실제 색으로 파싱(신규)
         """
-        # 태그 토큰화
+        # 1) pos_str: 기존 규칙 유지(1번째=side, 2번째=PNL)
         tokens = re.split(r'(\[green\]|\[red\]|\[/\])', pos_str)
-        parts = []
+        pos_parts: list[tuple[Optional[str], str]] = []
         attr = None
         seen_colored_blocks = 0
 
         for tok in tokens:
             if tok in ('[green]', '[red]'):
-                # 어떤 블록인지에 따라 attr 결정
                 seen_colored_blocks += 1
                 if seen_colored_blocks == 1:
                     attr = 'long_col' if tok == '[green]' else 'short_col'
@@ -183,55 +215,13 @@ class UrwidApp:
             elif tok == '[/]':
                 attr = None
             elif tok:
-                # 실제 텍스트
-                if attr:
-                    parts.append((attr, tok))
-                else:
-                    parts.append((None, tok))
+                pos_parts.append((attr, tok))
 
-        # 앞에 아이콘 + 뒤에 collateral 문자열 붙이기
-        # pos_str 앞의 "📊 "은 서비스에서 이미 포함되어 있을 수 있음. 일관성을 위해 교체.
-        # pos_str에서 '📊 '이 없는 경우도 있으니, 아이콘은 여기서 추가하지 않고 그대로 parts만 사용.
-        # col_str은 색상 없이 붙입니다.
-        parts.append((None, f" | {col_str}"))
-        return parts
+        # 2) col_str: 색 마크업 파싱(신규)
+        col_parts = self._parse_bracket_markup(col_str)
 
-    # [추가] HL 공유 캐시 갱신 루프: 화면에서 사용 중인 모든 dex에 대해 주기 갱신
-    async def _hl_shared_cache_loop(self):
-        """
-        - metaAndAssetCtxs(dex?)는 첫 번째 HL 거래소에서만 호출
-        - 여기서 각 dex(메인 'HL' 포함) 가격맵을 주기적으로 갱신
-        - 카드 루프에서는 get_cached_hl_price로 캐시만 읽도록 구성
-        """
-        try:
-            while True:
-                try:
-                    # 현재 화면에서 사용 중인 dex 집합
-                    dexes_in_use = set()
-                    dexes_in_use.add(self.header_dex or "HL")
-                    for n in self.mgr.visible_names():
-                        if self.mgr.get_meta(n).get("hl", False):
-                            dexes_in_use.add(self.dex_by_ex.get(n, "HL"))
-
-                    # 캐시 갱신 + quote 1회 보장
-                    for d in dexes_in_use:
-                        dex_norm = None if d == "HL" else d
-                        # 가격맵 갱신(네트워크 1회/주기)
-                        await self.service.refresh_hl_cache_for_dex(dex_norm)
-                        # quote 보장(최초 1회)
-                        try:
-                            await self.service.ensure_quote_for_dex(dex_norm)
-                        except Exception:
-                            pass
-
-                    await asyncio.sleep(min(RATE.CARD_PRICE_EVERY, RATE.HEADER_PRICE_INTERVAL))
-                except asyncio.CancelledError:
-                    break
-                except Exception as e:
-                    logging.error(f"_hl_shared_cache_loop error: {e}", exc_info=True)
-                    await asyncio.sleep(1.0)
-        except asyncio.CancelledError:
-            pass
+        # 3) 결합: ' | ' 구분자 뒤에 collateral 파트 연결
+        return pos_parts + [(None, " | ")] + col_parts
 
     def _inject_usdc_value_into_pos(self, ex_name: str, pos_str: str) -> str:
         """
@@ -664,7 +654,7 @@ class UrwidApp:
 
         # 라벨 최대 길이에 여유분(브래킷·공백 등) 더해 셀 폭 산정
         max_label = max(len(n.upper()) for n in names)
-        cell_w = max(12, max_label + 6)  # 최소 12칸, 보통 [ ] + 공백 여유 6
+        cell_w = max(12, max_label + 4)  # 최소 12칸, 보통 [ ] + 공백 여유 6
 
         # 두 줄로 균등 분할
         half = (len(names) + 1) // 2
@@ -785,106 +775,161 @@ class UrwidApp:
                 raw = self.ticker_edit.edit_text or "BTC"
                 coin = _normalize_symbol_input(raw)
 
-                # 캐시 조회 → 없으면 캐시 갱신만 트리거(공유 루프도 돌기 때문에 네트워크 최소화)
-                cached = self.service.get_cached_hl_price(coin, dex_hint=self.header_dex)
-                if cached is None:
-                    await self.service.refresh_hl_cache_for_dex(None if self.header_dex == "HL" else self.header_dex)
-                    cached = self.service.get_cached_hl_price(coin, dex_hint=self.header_dex)
+                px_str = self.current_price or "..."  # [수정] 기존 값을 기본값으로 유지
+                # HL 환경이면 WS 클라이언트에서만 가격을 가져옵니다.
+                dex = self.header_dex
+                scope = "hl" if dex == "HL" else dex
+                
+                # [수정] HL 거래소 선택 로직 보강: first_hl_exchange 실패 시 '보이는' HL 거래소로 폴백
+                ex = self.mgr.first_hl_exchange()
+                if not ex:
+                    try:
+                        for nm in self.mgr.visible_names():
+                            if self.mgr.get_meta(nm).get("hl", False) and self.mgr.get_exchange(nm):
+                                ex = self.mgr.get_exchange(nm)
+                                break
+                    except Exception:
+                        ex = None
 
-                self.current_price = cached or "..."
+                if ex:
+                    ws = await self.service._get_ws_for_scope(scope, ex)
+                else:
+                    ws = None
+
+                if ws:
+                    # [안전] 키 생성: HL이면 'BTC', HIP‑3이면 'dex:COIN'
+                    key = _compose_symbol(dex, coin)
+                    px_val = ws.get_price(key)
+
+                    # HL 메인 코인의 보조 스팟 가격(없을 때만)
+                    if px_val is None and dex == "HL":
+                        px_val = ws.get_spot_px_base(coin)
+
+                    if px_val is not None:
+                        px_str = f"{px_val:,.2f}"
+                
+                self.current_price = px_str
                 self.price_text.set_text(("info", f"Price: {self.current_price}"))
                 self.total_text.set_text(("info", f"Total: {self._collateral_sum():,.2f} USDC"))
                 self._request_redraw()
-                await asyncio.sleep(RATE.HEADER_PRICE_INTERVAL)
+
+                await asyncio.sleep(RATE.GAP_FOR_INF)
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logging.error(f"price loop: {e}", exc_info=True)
-                await asyncio.sleep(RATE.HEADER_PRICE_INTERVAL)
+                logging.debug(f"price loop: {e}")
+                await asyncio.sleep(RATE.GAP_FOR_INF)
 
     async def _status_loop(self, name: str):
-        #await asyncio.sleep(random.uniform(0.0, 1.0))
+        await asyncio.sleep(random.uniform(0.0, 0.7))
+
+        lock = self._status_locks.get(name)
+        if not lock:
+            return
+
         while True:
             try:
+                # [수정] 수동으로 락 획득
+                await lock.acquire()
+
                 now = time.monotonic()
-                need_collat = (now - self._last_balance_at.get(name, 0.0) >= RATE.STATUS_COLLATERAL_INTERVAL)
-                need_pos    = (now - self._last_pos_at.get(name, 0.0)    >= RATE.STATUS_POS_INTERVAL)
+                exchange_platform = self.mgr.get_meta(name).get("exchange","hyperliquid")
+                try:
+                    STATUS_COLLATERAL_INTERVAL = RATE.STATUS_COLLATERAL_INTERVAL[exchange_platform]
+                    STATUS_POS_INTERVAL = RATE.STATUS_POS_INTERVAL[exchange_platform]
+                    CARD_PRICE_INTERVAL = RATE.CARD_PRICE_INTERVAL[exchange_platform]
+                except Exception:
+                    STATUS_COLLATERAL_INTERVAL = RATE.STATUS_COLLATERAL_INTERVAL["default"]
+                    STATUS_POS_INTERVAL = RATE.STATUS_POS_INTERVAL["default"]
+                    CARD_PRICE_INTERVAL = RATE.CARD_PRICE_INTERVAL["default"]
+                
+                need_collat = (now - self._last_balance_at.get(name, 0.0) >= STATUS_COLLATERAL_INTERVAL)
+                need_pos = (now - self._last_pos_at.get(name, 0.0) >= STATUS_POS_INTERVAL)
+                need_price  = (now - self._last_card_price_at.get(name, 0.0) >= CARD_PRICE_INTERVAL)
 
                 sym_coin = _normalize_symbol_input(self.symbol_by_ex.get(name) or self.symbol)
-                dex = self.dex_by_ex.get(name, self.header_dex)
+                dex = self.dex_by_ex.get(name, "HL")
                 sym = _compose_symbol(dex, sym_coin)
                 is_hl = self.mgr.get_meta(name).get("hl", False)
 
-                # [수정] HL 카드는 '캐시만' 사용하여 가격 표시(네트워크 호출 없음)
-                try:
-                    last_px = self._last_card_price_at.get(name, 0.0)
-                    if (now - last_px) >= RATE.CARD_PRICE_EVERY and name in self.card_price_text:
-                        if is_hl:
-                            px_str = self.service.get_cached_hl_price(sym_coin, dex_hint=dex) or "..."
-                            quote_str = await self.service.ensure_quote_for_dex(None if dex == "HL" else dex)
-                        else:
-                            # 비-HL은 기존 방식 유지(거래소별로 마크가격)
-                            px_only = await self.service.fetch_price(
-                                exchange_name=name, symbol=sym_coin, dex_hint=None
-                            )
-                            px_str = px_only if isinstance(px_only, str) else str(px_only)
-                            quote_str = "USDC"
+                # 가격/quote 업데이트 (WS 캐시)
+                if is_hl:
+                    try:
+                        scope = "hl" if dex == "HL" else dex
+                        ws = await self.service._get_ws_for_scope(scope, self.mgr.get_exchange(name))
 
-                        self.card_price_text[name].set_text(("info", f"Price: {px_str}"))
-                        if name in self.card_quote_text:
-                            self.card_quote_text[name].set_text(("quote_color", quote_str))
+                        if ws:
+                            px_val = ws.get_price(sym)
+                            if px_val is None:
+                                px_val = ws.get_spot_px_base(sym_coin)
 
-                        self._last_card_price_at[name] = now
+                            if px_val is not None:
+                                px_str = f"{px_val:,.2f}"
+                                self.card_price_text[name].set_text(("info", f"Price: {px_str}"))
+                                self.card_last_price[name] = px_val
+
+                            if name in self.card_quote_text:
+                                quote_str = ws.get_collateral_quote() or "USDC"
+                                self.card_quote_text[name].set_text(("quote_color", quote_str))
+                    except Exception as px_e:
+                        logging.debug(f"[UI] Price update for {name} failed: {px_e}")
+                        self.card_price_text[name].set_text(("pnl_neg", "Price: Error"))
+                else:
+                    if need_price:
                         try:
-                            self.card_last_price[name] = float(str(px_str).replace(",", ""))
-                        except (ValueError, TypeError):
-                            pass
-                except Exception:
-                    logging.error(f"[{name}] Price update failed in status_loop", exc_info=True)
-                    if name in self.card_price_text:
-                        self.card_price_text[name].set_text(('pnl_neg', "Price: Error"))
-                    if name in self.card_quote_text:
-                        self.card_quote_text[name].set_text(("", ""))
+                            px_str = await self.service.fetch_price(name, sym)
+                            self.card_price_text[name].set_text(("info", f"Price: {px_str}"))
+                            # 주입용 숫자 캐시
+                            try:
+                                self.card_last_price[name] = float(str(px_str).replace(",", ""))
+                            except Exception:
+                                pass
+                            self._last_card_price_at[name] = now  # [추가] 타임스탬프 갱신
+                        except Exception as e:
+                            logging.debug(f"[UI] non-HL price update for {name} failed: {e}")
+                            self.card_price_text[name].set_text(("pnl_neg", "Price: Error"))
 
-                # 포지션/담보는 종전 로직 유지
-                pos_str, col_str, col_val = await self.service.fetch_status(
-                    name, sym,
-                    need_balance=need_collat,
-                    need_position=need_pos
-                )
-                # 타임스탬프 갱신(각 주기별)
+                if is_hl:
+                    # websocket so no need to worry
+                    need_collat = True
+                    need_pos = True
+
+                pos_str, col_str, col_val = await self.service.fetch_status(name, sym, need_balance=need_collat, need_position=need_pos)
+
                 if need_collat:
-                    self._last_balance_at[name] = now
                     self.collateral[name] = float(col_val)
-                    self.total_text.set_text(("info", f"Total: {self._collateral_sum():,.2f} USDC"))
-                if need_pos:
+                    if not is_hl:
+                        self._last_balance_at[name] = now
+                        self.total_text.set_text(("info", f"Total: {self._collateral_sum():,.1f} USDC"))
+                
+                if need_pos and not is_hl:
                     self._last_pos_at[name] = now
 
                 pos_str = self._inject_usdc_value_into_pos(name, pos_str)
-                self.collateral[name] = float(col_val)
 
-                if name in self.info_text and is_hl:
+                if name in self.info_text:
                     markup_parts = self._status_bracket_to_urwid(pos_str, col_str)
                     self.info_text[name].set_text(markup_parts)
-                elif name in self.info_text and not is_hl:
-                    self.info_text[name].set_text(("info", f"{pos_str} | {col_str}"))
-
-                self.total_text.set_text(("info", f"Total: {self._collateral_sum():,.2f} USDC"))
+                
                 self._request_redraw()
 
-                jitter = RATE.STATUS_LOOP_MIN + random.uniform(0.0, max(0.0, RATE.STATUS_LOOP_MAX - RATE.STATUS_LOOP_MIN))
-                await asyncio.sleep(jitter)
+                await asyncio.sleep(RATE.GAP_FOR_INF)
 
             except asyncio.CancelledError:
                 break
-            except Exception:
+
+            except Exception as e:
                 logging.error(f"[CRITICAL] Unhandled error in status_loop for '{name}'", exc_info=True)
                 if name in self.info_text:
                     self.info_text[name].set_text([('pnl_neg', "Status Error: Check logs")])
                     self._request_redraw()
-                jitter = RATE.STATUS_LOOP_MIN + random.uniform(0.0, max(0.0, RATE.STATUS_LOOP_MAX - RATE.STATUS_LOOP_MIN))
-                await asyncio.sleep(jitter)
-
+                await asyncio.sleep(1.0) # 에러 시 잠시 대기
+            finally:
+                # [수정] 무조건 락 해제
+                if lock.locked():
+                    lock.release()
+    
     # --------- 버튼 핸들러 ----------
     def _on_exec_all(self, btn):
         asyncio.get_event_loop().create_task(self._exec_all())
@@ -1807,6 +1852,23 @@ class UrwidApp:
                 await asyncio.gather(*pending, return_exceptions=True)
             except Exception:
                 pass
+    # [추가] /root/codes/perp_dex_hedge/ui_urwid.py 파일, UrwidApp 클래스 내부
+    def _header_ticker_changed(self, edit, new_text):
+        """
+        헤더의 Ticker 입력칸이 변경될 때 호출됩니다.
+        (현재는 비어 있음 - 향후 로직 추가 가능)
+        """
+        # 전역 심볼 업데이트 등
+        self.symbol = _normalize_symbol_input(new_text or "BTC")
+        pass
+
+    def _apply_to_all_qty(self, new_text):
+        """
+        헤더의 All Qty 입력칸이 변경될 때 모든 카드에 반영합니다.
+        """
+        for name in self.mgr.all_names():
+            if name in self.qty_edit:
+                self.qty_edit[name].set_edit_text(new_text or "")
 
     # --------- 실행/루프 ----------
     def run(self):
@@ -1876,35 +1938,40 @@ class UrwidApp:
             except Exception as e:
                 logging.warning(f"initialize_all failed: {e}")
             
+            # DEX 목록 가져와 헤더/카드 UI 동적 구성 (비동기)
             try:
-                dex_list = await self.service.fetch_perp_dexs()
+                dexs = await self.service.fetch_perp_dexs()
+                self.dex_names = ["HL"] + dexs
+                # [중요 수정] Frame.header(LineBox)의 original_widget을 교체해야 실제로 헤더가 재그려집니다.
+                # 기존 코드는 self.header(original_widget 아님)에 새 Pile을 할당해 효과가 없었습니다.
+                new_header_pile = self._hdr_widgets()  # 새 헤더 Pile 생성
+                frame = self.loop.widget
+                if isinstance(frame, urwid.Frame):
+                    lb = frame.header
+                    if isinstance(lb, urwid.LineBox):
+                        lb.original_widget = new_header_pile  # LineBox 내부 교체
+                    else:
+                        frame.header = urwid.LineBox(new_header_pile)
+                # 내부 참조도 최신으로 갱신(신규 위젯 핸들 유지)
+                self.header = new_header_pile
+
+                # 바디 카드 재구성(카드의 DEX 버튼들도 새 목록 반영)
+                self._rebuild_body_rows()
             except Exception as e:
-                logging.info(f"[HIP3] fetch_perp_dexs failed: {e}")
-                dex_list = []
-            
-            self.service.set_perp_dexs(dex_list)
-            self.dex_names = ["HL"] + dex_list
-            try:
-                header_pile = self.header
-                new_row = self._build_header_dex_row()
-                # row 인덱스: [row1, row2, header_dex_row, row3, row4] → 2
-                header_pile.contents[2] = (new_row, header_pile.options())
-                self.header_dex_row = new_row
-            except Exception as e:
-                logging.info(f"[HIP3] header dex row update failed: {e}")
+                self._log(f"Error fetching DEX list: {e}")
 
-            # 4) 카드 전체 재구성(DEX 행 추가 반영)
-            self._rebuild_body_rows()
+            # 3) 보이는 카드 리스트 재구성 + 초기 포커스 설정
+            self.loop.set_alarm_in(0.1, self._set_initial_focus)
 
-            # [추가] HL 공유 캐시 갱신 루프 시작
-            self._hl_cache_task = loop.create_task(self._hl_shared_cache_loop())
-
-            # 가격/상태 주기 작업 시작 (표시 중인 거래소만 상태 루프)
-            self._price_task = loop.create_task(self._price_loop())
+            # 4) 가격/상태 주기 작업 시작
+            self._price_task = asyncio.get_event_loop().create_task(self._price_loop())
             for n in self.mgr.visible_names():
-                # 태스크 딕셔너리에 관리 (중복 방지)
                 if n not in self._status_tasks or self._status_tasks[n].done():
-                    self._status_tasks[n] = loop.create_task(self._status_loop(n))
+                    self._status_tasks[n] = asyncio.get_event_loop().create_task(self._status_loop(n))
+            
+
+            urwid.connect_signal(self.ticker_edit, 'change', self._header_ticker_changed)
+            urwid.connect_signal(self.allqty_edit, 'change', lambda _, new: self._apply_to_all_qty(new))
 
             # All Qty → 각 카드 Q 동기화
             def allqty_changed(edit, new):

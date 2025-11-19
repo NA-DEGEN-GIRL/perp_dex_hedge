@@ -68,11 +68,20 @@ class ExchangeManager:
         self.meta = {}
         for exchange_name in EXCHANGES:
             show = config.get(exchange_name, "show", fallback="True").strip().lower() == "true"
-            hl = config.get(exchange_name, "hl", fallback="True").strip().lower() == "true"
+            
+            # deprecated
+            # hl = config.get(exchange_name, "hl", fallback="True").strip().lower() == "true"
+            
+            exchange_platform = config.get(exchange_name, "exchange", fallback='hyperliquid')
+            if exchange_platform == 'hyperliquid':
+                hl = True
+            else:
+                hl = False
+
             # FrontendMarket 플래그 로딩
             fm_raw = config.get(exchange_name, "FrontendMarket", fallback="False")
             frontend_market = (fm_raw or "").strip().lower() == "true"
-            self.meta[exchange_name] = {"show": show, "hl": hl, "frontend_market": frontend_market}
+            self.meta[exchange_name] = {"show": show, "hl": hl, "frontend_market": frontend_market, "exchange": exchange_platform}
 
             # 하이퍼리퀴드 엔진 거래소만 현재 인스턴스 생성 (hl=True + 키/설정 유효)
             if hl:

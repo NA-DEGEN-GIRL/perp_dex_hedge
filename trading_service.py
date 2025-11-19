@@ -2,6 +2,7 @@
 import logging
 import time
 from typing import Tuple, Optional, Dict, Any
+from hl_ws.hl_ws_client import HLWSClientRaw, http_to_wss
 from core import ExchangeManager
 import asyncio
 from decimal import Decimal, ROUND_HALF_UP, ROUND_UP, ROUND_DOWN 
@@ -10,7 +11,7 @@ try:
 except Exception:
     symbol_create = None
     logging.warning("[mpdex] exchange_factory.symbol_create 를 찾지 못했습니다. 비-HL 거래소는 비활성화됩니다.")
-    
+
 DEBUG_FRONTEND = False
 logger = logging.getLogger("trading_service")
 logger.propagate = True                    # 루트로 전파해 main.py의 FileHandler만 사용
@@ -37,16 +38,16 @@ def _strip_decimal_trailing_zeros(s: str) -> str:
     return s
 
 class TradingService:
-    """
-    UI에서 거래소(ccxt) 호출을 공통 처리:
-    - fetch_hl_price(symbol) : hl=True 거래소 중 하나에서 현재가 1회 조회
-    - fetch_status(name, symbol) : 포지션/담보 조회 문자열 + 수치 반환
-    - execute_order(...)     : 주문 실행(시장가 price None이면 last로 보정 시도)
-    - is_configured(name)    : 연결/설정 여부
-    - is_hl(name)            : hl 엔진 여부
-    """
     def __init__(self, manager: ExchangeManager):
         self.manager = manager
+        # [WS] HL WebSocket Client
+        self.hl_ws: Optional[HLWSClientRaw] = None
+        self._ws_lock = asyncio.Lock()
+        self._ws_started = False
+        # [추가] 스코프별(hl/xyz/...) WS 풀
+        self._ws_by_scope: Dict[str, HLWSClientRaw] = {}
+        self._ws_scope_locks: Dict[str, asyncio.Lock] = {}
+
         #  상태/쿨다운 캐시
         self._last_collateral: dict[str, float] = {}
         self._last_status: dict[str, Tuple[str, str, float]] = {}  # (pos_str, col_str, col_val)
@@ -76,9 +77,54 @@ class TradingService:
         self._leverage_check_interval: float = 5.0                     # 스로틀 간격(초) - 필요시 조정
         self._spot_usdh_by_ex: dict[str, float] = {}  # HL: 거래소별 마지막 USDH 잔고
 
+        # [추가] 주소별 합산 AV 캐시: key="address" (또는 exchange fallback)
+        #  값: {"ts": monotonic, "av": float, "usdh": float}
+        self._agg_av_cache: Dict[str, Dict[str, float]] = {}
+        self._agg_refresh_secs: float = 1.0  # comment: 합산 재계산 최소 주기(초)
+    
+    def _sanitize_http_base(self, ex: Any, url_template: Optional[str]) -> str:
+        """
+        ccxt 인스턴스(ex)의 hostname 속성을 읽어 '{hostname}' 템플릿을 치환하고,
+        올바른 base URL을 반환합니다.
+        
+        예시:
+        - ex.hostname = 'hyperliquid.xyz', url_template = 'https://api.{hostname}' -> 'https://api.hyperliquid.xyz'
+        - url_template이 없으면 'https://api.hyperliquid.xyz'로 폴백
+        """
+        try:
+            from urllib.parse import urlparse
 
+            # 1. 템플릿 URL이 없으면 기본값
+            if not url_template:
+                return "https://api.hyperliquid.xyz"
 
-    # [추가] 가격 소수자릿수(px decimals) 조회 유틸: metaAndAssetCtxs 캐시 기반
+            # 2. '{hostname}' 템플릿이 있는지 확인
+            if '{hostname}' in url_template:
+                # ex 객체에서 hostname 가져오기
+                hostname = getattr(ex, 'hostname', None)
+                if hostname:
+                    # hostname으로 치환
+                    final_url = url_template.format(hostname=hostname)
+                else:
+                    # ex에 hostname 없으면 기본값으로 치환
+                    final_url = url_template.format(hostname='hyperliquid.xyz')
+                
+                u = urlparse(final_url)
+                if u.scheme and u.netloc:
+                    return f"{u.scheme}://{u.netloc}"
+            
+            # 3. 템플릿이 없는 일반 URL이면 기존 로직으로 정규화
+            u = urlparse(url_template)
+            if u.scheme and u.netloc:
+                return f"{u.scheme}://{u.netloc}"
+            
+            # 4. 모든 시도 실패 시 최종 폴백
+            return "https://api.hyperliquid.xyz"
+
+        except Exception as e:
+            logging.debug(f"[_sanitize_http_base] fallback due to error: {e}")
+            return "https://api.hyperliquid.xyz"
+    
     def _get_px_decimals(self, dex: Optional[str], coin_key: str, fallback_by_sz: Optional[int] = None) -> int:
         """
         _hl_price_map 호출 시 저장된 (dex_or_HL, coin_key) → px_decimals 캐시를 우선 사용.
@@ -98,89 +144,6 @@ class TradingService:
         d = Decimal(str(value))
         return d.quantize(q, rounding=(ROUND_UP if up else ROUND_DOWN))
 
-    # [추가] HL 가격맵 캐시를 특정 dex(또는 메인 HL)에 대해 1회 갱신
-    async def refresh_hl_cache_for_dex(self, dex: Optional[str] = None, ttl: float = 3.0) -> None:
-        """
-        첫 번째 HL 거래소에서만 metaAndAssetCtxs(dex?)를 호출하여
-        self._hl_px_cache_by_dex[dex or 'HL'] = {'ts': now, 'map': {...}} 형태로 갱신.
-        """
-        ex = self.manager.first_hl_exchange()
-        if not ex:
-            return
-
-        cache_key = dex if dex else "HL"
-        ent = self._hl_px_cache_by_dex.get(cache_key, {})
-        now = time.monotonic()
-        # 너무 잦은 호출 방지(절반 TTL 안에서는 스킵)
-        if ent and (now - float(ent.get("ts", 0.0))) < (ttl * 0.5):
-            return
-
-        px_map = await self._hl_price_map(ex, dex)
-        if px_map:
-            self._hl_px_cache_by_dex[cache_key] = {"ts": now, "map": px_map}
-
-    # [추가] 캐시에서만 가격 문자열 조회(네트워크 호출 없음)
-    def get_cached_hl_price(self, symbol: str, dex_hint: Optional[str] = None) -> Optional[str]:
-        """
-        - 메인: symbol='BTC' → cache['HL']['map']['BTC']
-        - HIP-3: dex_hint='xyz', symbol='BTC' → cache['xyz']['map']['xyz:BTC']
-        캐시에 없으면 None 리턴(호출측에서 refresh_hl_cache_for_dex로 보강).
-        """
-        dex, hip3_coin = _parse_hip3_symbol(symbol)
-        if dex is None and dex_hint and dex_hint != "HL":
-            dex = dex_hint.lower()
-            hip3_coin = f"{dex}:{symbol.upper()}"
-
-        cache_key = dex if dex else "HL"
-        ent = self._hl_px_cache_by_dex.get(cache_key)
-        if not ent:
-            return None
-
-        px_map = ent.get("map", {}) or {}
-        key = hip3_coin if dex else symbol.upper()
-        px = px_map.get(key)
-        if px is None:
-            return None
-        try:
-            return f"{float(px):,.2f}"
-        except Exception:
-            return None
-
-    # [추가] 외부에서 dex 별 quote를 보장적으로 가져올 수 있는 래퍼(최초 1회 네트워크)
-    async def ensure_quote_for_dex(self, dex: Optional[str]) -> str:
-        """
-        - dex=None → 'HL' 범위
-        - 이미 캐시에 있으면 캐시 리턴, 없으면 첫 HL 거래소를 통해 1회 조회 후 캐시.
-        """
-        ex = self.manager.first_hl_exchange()
-        if not ex:
-            return "USDC"
-        return await self._fetch_dex_quote(ex, dex)
-
-    async def _hl_get_spot_usdh(self, ex) -> float:
-        """
-        spotClearinghouseState(user)에서 USDH 잔고(total)를 찾아 반환.
-        실패/없음이면 0.0
-        """
-        user = self._hl_user_address(ex)
-        if not user:
-            return 0.0
-        try:
-            state = await ex.publicPostInfo({"type": "spotClearinghouseState", "user": user})
-            if not isinstance(state, dict):
-                return 0.0
-            balances = state.get("balances") or []
-            for b in balances:
-                try:
-                    if isinstance(b, dict) and str(b.get("coin", "")).upper() == "USDH":
-                        return float(b.get("total") or 0.0)
-                except Exception:
-                    continue
-            return 0.0
-        except Exception as e:
-            logger.info("[HL] spotClearinghouseState failed: %s", e)
-            return 0.0
-
     async def fetch_perp_dexs(self) -> list[str]:
         """
         HL 첫 거래소에서 publicPostInfo({"type":"perpDexs"}) 호출 → dex 이름 목록(lowercase) 반환.
@@ -198,15 +161,37 @@ class TradingService:
         try:
             resp = await ex.publicPostInfo({"type": "perpDexs"})
             names: list[str] = []
+
+            # [수정] 다양한 응답 포맷을 수용
+            # 1) 리스트인 경우: ["xyz","abc"] 또는 [{"name":"xyz"}, ...]
             if isinstance(resp, list):
                 for e in resp:
-                    if isinstance(e, dict) and e.get("name"):
-                        try:
-                            names.append(str(e["name"]).lower())
-                        except Exception:
-                            continue
-            # 중복 제거 + 정렬 + 캐시
+                    if isinstance(e, str):
+                        names.append(e.lower())
+                    elif isinstance(e, dict):
+                        # name / dex / id 후보 키
+                        for k in ("name", "dex", "id"):
+                            v = e.get(k)
+                            if isinstance(v, str) and v.strip():
+                                names.append(v.strip().lower())
+                                break
+            # 2) 딕셔너리인 경우: {"dexes":[...]} | {"names":[...]} | {"list":[...]}
+            elif isinstance(resp, dict):
+                for key in ("dexes", "names", "list"):
+                    lst = resp.get(key)
+                    if isinstance(lst, list):
+                        for e in lst:
+                            if isinstance(e, str):
+                                names.append(e.lower())
+                            elif isinstance(e, dict):
+                                v = e.get("name") or e.get("dex") or e.get("id")
+                                if isinstance(v, str) and v.strip():
+                                    names.append(v.strip().lower())
+
+            # HL 자체는 버튼 리스트에서 제외, 중복 제거 + 정렬
+            names = [n for n in names if n and n != "hl"]
             self._perp_dex_list = sorted(set(names))
+            logger.info("[HIP3] perpDexs loaded: %s", self._perp_dex_list)
             return self._perp_dex_list
         except Exception as e:
             logger.info("[HIP3] fetch_perp_dexs failed: %s", e)
@@ -260,6 +245,68 @@ class TradingService:
         if addr:
             return str(addr).lower()
         return None
+
+    def _ws_key(self, scope: str, ex) -> str:
+        """
+        WS 풀을 'scope|address'로 분리해 계정(주소)별로 독립적인 WS를 유지.
+        scope: 'hl' 또는 'dex명'
+        """
+        scope_l = (scope or "hl").lower()
+        addr = self._hl_user_address(ex) or "noaddr"
+        return f"{scope_l}|{addr}"
+
+    async def _get_ws_for_scope(self, scope: str, ex) -> Optional[HLWSClientRaw]:
+        """
+        DEX 스코프별 + 주소별 WS 클라이언트를 관리/생성합니다.
+        - scope: 'hl', 'xyz', 'flx' 등
+        - ex: ccxt HL 인스턴스 (URL 및 지갑 주소 참조용)
+        """
+        if HLWSClientRaw is None or not ex:
+            return None
+
+        scope_l = (scope or "hl").lower()
+        address = self._hl_user_address(ex)
+        key = self._ws_key(scope_l, ex)  # comment: "scope|address"
+
+        # 1) 이미 생성된 클라이언트가 있으면 반환
+        if key in self._ws_by_scope:
+            return self._ws_by_scope[key]
+
+        # 2) 키별 락 생성 및 획득
+        if key not in self._ws_scope_locks:
+            self._ws_scope_locks[key] = asyncio.Lock()
+        async with self._ws_scope_locks[key]:
+            # 더블 체크
+            if key in self._ws_by_scope:
+                return self._ws_by_scope[key]
+
+            try:
+                http_base = self._sanitize_http_base(ex, getattr(ex, "urls", {}).get("api", {}).get("public"))
+                ws_url = http_to_wss(http_base)
+                dex_arg = None if scope_l == "hl" else scope_l
+
+                logger.info(
+                    "[WS] Creating client for key='%s' (scope='%s', addr=%s, http=%s)",
+                    key, scope_l, address, http_base
+                )
+
+                ws = HLWSClientRaw(
+                    ws_url=ws_url,
+                    dex=dex_arg,
+                    address=address,   # comment: 주소별로 독립
+                    coins=[],
+                    http_base=http_base
+                )
+                await ws.ensure_spot_token_map_http()
+                await ws.connect()
+                await ws.ensure_core_subs()
+                await ws.subscribe()
+
+                self._ws_by_scope[key] = ws
+                return ws
+            except Exception as e:
+                logger.error(f"[WS] key='{key}' start failed: {e}", exc_info=True)
+                return None
 
     async def _hl_sz_decimals(self, ex, dex: Optional[str], coin_key: str) -> int:
         """
@@ -339,7 +386,6 @@ class TradingService:
         # [중요 수정] 정수부의 끝자리 0가 잘리지 않도록, 소수부가 있을 때만 0 제거
         return _strip_decimal_trailing_zeros(s2)
 
-    # HL Info API로 user 상태 가져오기 (clearinghouseState)
     async def _hl_get_user_state(self, ex, dex: Optional[str], user_addr: str) -> Optional[dict]:
         """
         clearinghouseState(user, dex)를 Info API로 조회.
@@ -384,42 +430,65 @@ class TradingService:
             logger.info("[HL] clearinghouseState failed: %s", e)
             return None
 
-    async def _hl_sum_account_value(self, ex) -> float:
-        """
-        HL 전체(메인 + 모든 HIP-3 dex)의 accountValue 합계를 반환.
-        - user 주소: _hl_user_address(ex)
-        - dex 목록: 캐시(self._perp_dex_list) 사용. 없을 경우 최초 1회 fetch 후 캐시.
-        """
-        user = self._hl_user_address(ex)
-        if not user:
-            return 0.0
+    def _agg_key(self, ex) -> str:
+        addr = self._hl_user_address(ex)
+        if addr:
+            return addr.lower()
+        # 주소 미확인 시 exchange 인스턴스 id로 대체(동일 프로세스 내 유효)
+        return f"ex:{id(ex)}"
 
-        # perpDexs 캐시 준비(최초 1회만 네트워크 호출)
-        if self._perp_dex_list is None:
+    async def _get_hl_total_account_value_and_usdh(self, ex) -> Tuple[float, float, float]:
+        """
+        반환: (total_perp_av, usdh_spot, usdc_spot)
+        - total_perp_av: 'hl' + 모든 HIP-3 dex의 accountValue 합(Perp 마진 계정 USDC 기준)
+        - usdh_spot: HL spot의 USDH 잔고
+        - usdc_spot: HL spot의 USDC 잔고
+        캐시 만료(_agg_refresh_secs) 전에는 캐시 반환(깜빡임 방지).
+        """
+        if not ex:
+            return 0.0, 0.0, 0.0  # comment: [ADD] 기본값에 usdc 포함
+
+        key = self._agg_key(ex)
+        now = time.monotonic()
+        cached = self._agg_av_cache.get(key)
+        if cached and (now - float(cached.get("ts", 0.0)) < self._agg_refresh_secs):
+            return float(cached.get("av", 0.0)), float(cached.get("usdh", 0.0)), float(cached.get("usdc", 0.0))
+
+        total_av = 0.0
+        usdh = 0.0
+        usdc = 0.0  # comment: [ADD] SPOT USDC 합산 대상(현 사양상 HL 스코프만)
+
+        # 스코프 목록: 'hl' + 알려진 HIP-3 DEX들
+        dex_list = (self._perp_dex_list or [])
+        scopes: list[str] = ["hl"] + [d for d in dex_list if d and d != "hl"]
+
+        # WS들을 병렬 확보
+        ws_tasks = [self._get_ws_for_scope(sc, ex) for sc in scopes]
+        results = await asyncio.gather(*ws_tasks, return_exceptions=True)
+
+        for sc, ws in zip(scopes, results):
+            if isinstance(ws, Exception) or ws is None:
+                continue
             try:
-                await self.fetch_perp_dexs()
-            except Exception:
-                self._perp_dex_list = []
+                av = ws.get_account_value_by_dex("hl" if sc == "hl" else sc)
+                if av is not None:
+                    total_av += float(av)
+                if sc == "hl":
+                    # USDH는 HL spot에만 존재한다는 전제
+                    u_h = ws.get_spot_balance("USDH")
+                    u_c = ws.get_spot_balance("USDC")
+                    if u_h is not None:
+                        usdh = float(u_h)
+                    if u_c is not None:
+                        usdc = float(u_c)
+            except Exception as e:
+                logging.warning(f"_get_hl_total_account_value_and_usdh: {e}")
+                # 개별 스코프 실패는 무시하고 계속 합산
+                continue
 
-        total = 0.0
-        try:
-            # 메인(HL) + 캐시된 dex
-            all_scopes = [None] + (self._perp_dex_list or [])
-            for d in all_scopes:
-                st = await self._hl_get_user_state(ex, d, user)
-                #await asyncio.sleep(0.25)
-                if not st or not isinstance(st, dict):
-                    continue
-                ms = st.get("marginSummary", {}) or {}
-                av = ms.get("accountValue")
-                try:
-                    if av is not None:
-                        total += float(av)
-                except Exception:
-                    continue
-        except Exception:
-            pass
-        return total
+        # 캐시 저장
+        self._agg_av_cache[key] = {"ts": now, "av": total_av, "usdh": usdh, "usdc": usdc}
+        return total_av, usdh, usdc
 
     def _hl_parse_position_from_state(self, state: dict, coin_key: str) -> Optional[dict]:
         """
@@ -636,6 +705,7 @@ class TradingService:
         self._leverage_inflight.add(key)
 
         try:
+            
             # 3) maxLeverage/isolated 여부 (메타)
             max_lev, only_iso = await self._get_max_leverage_unified(ex, dex, coin_key)
             if not max_lev:
@@ -1006,14 +1076,12 @@ class TradingService:
             logger.info("[HL] metaAndAssetCtxs payload=%s failed: %s",
                         {"type": "metaAndAssetCtxs", **({"dex": dex} if dex else {})}, e)
             return {}
-
-    # [추가] 통합 가격 API: HL은 기존 fetch_hl_price, 비-HL은 mpdex.get_mark_price 사용
+    
     async def fetch_price(self, exchange_name: str, symbol: str, dex_hint: Optional[str] = None) -> str:
         """
-        카드별 가격 조회(통합):
-        - HL: fetch_hl_price(symbol, dex_hint) 사용(내부 metaAndAssetCtxs 캐시)
-        - 비-HL(mpdex): native 심볼로 변환 후 exchange.get_mark_price(native)
-        반환은 "12,345.67" 형태 문자열 또는 "Error"/"N/A".
+        가격 조회:
+        - HL: WS 캐시 우선 사용
+        - 비-HL: REST API
         """
         ex = self.manager.get_exchange(exchange_name)
         if not ex:
@@ -1021,68 +1089,32 @@ class TradingService:
         meta = self.manager.get_meta(exchange_name) or {}
 
         try:
-            if meta.get("hl", False):
-                # HL: dex_hint가 있으면 HIP‑3, 없으면 메인
-                return await self.fetch_hl_price(symbol, dex_hint=dex_hint)
-            else:
-                # 비-HL: mpdex 클라이언트 get_mark_price(native)
+            if not meta.get("hl", False):
                 native = self._to_native_symbol(exchange_name, symbol)
                 px = await ex.get_mark_price(native)
                 return f"{float(px):,.2f}"
+
+            # HL: 스코프 결정
+            dex, hip3_coin = _parse_hip3_symbol(symbol)
+            scope = dex if dex else "hl"
+            ws = await self._get_ws_for_scope(scope, ex)
+            if not ws:
+                return "WS Error"
+
+            # Perp / Spot 구분
+            if dex:  # HIP-3 perp
+                px = ws.get_price(hip3_coin)  # 'xyz:COIN'
+            else:
+                if "/" in symbol:            # Spot pair
+                    px = ws.get_spot_pair_px(symbol.upper())
+                else:                         # Perp(HL) → 'BTC'
+                    px = ws.get_price(symbol.upper())
+                    if px is None:            # 베이스 spot(USDC 가정) 보조
+                        px = ws.get_spot_px_base(symbol.upper())
+
+            return f"{float(px):,.2f}" if px is not None else "..."
         except Exception as e:
             logger.info("[PRICE] %s fetch_price failed: %s", exchange_name, e)
-            return "Error"
-
-    async def fetch_hl_price(self, symbol: str, dex_hint: Optional[str] = None) -> str:
-        """
-        HL 가격 조회(캐시 3초):
-        - HIP‑3: symbol='xyz:XYZ100' 또는 dex_hint='xyz' + symbol='XYZ100'
-        - 메인: symbol='BTC'
-        """
-        ex = self.manager.first_hl_exchange()
-        if not ex:
-            return "N/A"
-        try:
-            dex, hip3_coin = _parse_hip3_symbol(symbol)
-            if dex is None and dex_hint and dex_hint != "HL":
-                dex = dex_hint.lower()
-                hip3_coin = f"{dex}:{symbol.upper()}"
-
-            # 캐시 키: 'HL' 또는 dex
-            cache_key = dex if dex else "HL"
-            ent = self._hl_px_cache_by_dex.get(cache_key, {})
-            now = time.monotonic()
-            ttl = 3.0
-
-            if not ent or (now - ent.get("ts", 0.0) >= ttl):
-                px_map = await self._hl_price_map(ex, dex)
-                if px_map:
-                    self._hl_px_cache_by_dex[cache_key] = {"ts": now, "map": px_map}
-                    ent = self._hl_px_cache_by_dex[cache_key]
-
-            px_map = ent.get("map", {}) if ent else {}
-            if dex:  # HIP‑3
-                px = px_map.get(hip3_coin)
-            else:    # 메인
-                px = px_map.get(symbol.upper())
-
-            if px is not None:
-                return f"{px:,.2f}"
-
-            # 한 번 더 즉시 갱신 시도(신규/갱신 지연 대비)
-            px_map2 = await self._hl_price_map(ex, dex)
-            if px_map2:
-                self._hl_px_cache_by_dex[cache_key] = {"ts": time.monotonic(), "map": px_map2}
-                if dex:
-                    px = px_map2.get(hip3_coin)
-                else:
-                    px = px_map2.get(symbol.upper())
-                if px is not None:
-                    return f"{px:,.2f}"
-
-            return "Error"
-        except Exception as e:
-            logger.error("HL price fetch error: %s", e, exc_info=True)
             return "Error"
 
     async def fetch_status(
@@ -1093,19 +1125,24 @@ class TradingService:
         need_position: bool = True,    # 포지션 갱신 여부
     ) -> Tuple[str, str, float]:
         """
-        returns: (pos_str, col_str, col_val)
-        - need_balance=False면 balance를 건너뛰고 캐시 last_collateral을 사용
-        - 429 백오프 중이면 캐시를 즉시 반환
+        - HL 카드의 collateral을 'HL+모든 DEX 합산 AV'로 표기
+        - USDH는 항상 함께 표기(0일 때도)
+        - 데이터 미수신 시 직전 캐시 유지로 깜빡임 방지
         """
         meta = self.manager.get_meta(exchange_name) or {}
         ex = self.manager.get_exchange(exchange_name)
         if not ex:
             return "📊 Position: N/A", "💰 Collateral: N/A", 0.0
         
-        # [공통] 직전 캐시
+        # 직전 캐시 불러오기 (없으면 기본값)
         last_pos_str, last_col_str, last_col_val = self._last_status.get(
-            exchange_name, ("📊 Position: N/A", "💰 Collateral: N/A", self._last_collateral.get(exchange_name, 0.0))
+            exchange_name,
+            ("📊 Position: N/A", "💰 Collateral: N/A", self._last_collateral.get(exchange_name, 0.0)),
         )
+
+        # 거래소 객체 없음 → 이전 값 유지(깜빡임 방지)
+        if not ex:
+            return last_pos_str, last_col_str, last_col_val
 
         # 1) mpdex (hl=False) 처리
         if not meta.get("hl", False):
@@ -1137,77 +1174,62 @@ class TradingService:
             
             except Exception as e:
                 logger.info(f"[{exchange_name}] non-HL fetch_status error: {e}")
-                # 실패 시 캐시 반환(표시에는 Stale 명시)
-                last_col_val = self._last_collateral.get(exchange_name, 0.0)
-                pos_str = last_pos_str
-                col_str = f"💰 Collateral: {last_col_val:,.2f} USDC (Stale)"
-                return pos_str, col_str, last_col_val
+                # 실패 시에도 이전 값을 그대로 반환(깜빡임 방지)
+                return last_pos_str, last_col_str, last_col_val
             
-        # 2) HL
-        now = time.monotonic()
-        if now < self._cooldown_until.get(exchange_name, 0.0):
-            cached = self._last_status.get(exchange_name)
-            if cached:
-                return cached
-            last_col_val = self._last_collateral.get(exchange_name, 0.0)
-            return "📊 Position: N/A", f"💰 Collateral: {last_col_val:,.2f} USDC (Cooldown)", last_col_val
-
+        # 2) Hyperliquid (WebSocket 기반)
+        dex, hip3_coin = _parse_hip3_symbol(symbol)
+        scope = dex if dex else "hl"
         try:
-            # 담보(USDC 합계 + USDH spot) — need_balance일 때만 네트워크 호출
-            col_val = self._last_collateral.get(exchange_name, 0.0)
-            if need_balance:
-                av_sum = await self._hl_sum_account_value(ex)
-                col_val = float(av_sum)
-                self._last_collateral[exchange_name] = col_val
-                self._last_balance_at[exchange_name] = now
+            ws = await self._get_ws_for_scope(scope, ex)
+        except Exception:
+            ws = None
 
-            usdh_val = self._spot_usdh_by_ex.get(exchange_name, 0.0)
-            if need_balance:
-                usdh_val = await self._hl_get_spot_usdh(ex)
-                self._spot_usdh_by_ex[exchange_name] = usdh_val
-
-            # 포지션 — need_position일 때만 네트워크 호출
-            pos_str = last_pos_str
-            if need_position:
-                dex, hip3_coin = _parse_hip3_symbol(symbol)
-                coin_key = hip3_coin if dex else symbol.upper()
-                user_addr = self._hl_user_address(ex)
-                state = await self._hl_get_user_state(ex, dex, user_addr)
-                pos_data = self._hl_parse_position_from_state(state or {}, coin_key)
-
+         # [핵심 변경] 기본은 '직전 캐시 그대로'
+        pos_str: str = last_pos_str
+        col_val: float = last_col_val
+        col_str: str = (
+            last_col_str
+            if last_col_str
+            else "💰: [red]PERP[/] "
+                 f"{last_col_val:,.1f} USDC | [cyan]SPOT[/] 0.0 USDH, 0.0 USDC"
+        )
+        
+        if need_position and ws:
+            key = "hl" if scope == "hl" else scope
+            positions = ws.get_positions_by_dex(key) or {}
+            search = hip3_coin.upper() if dex else symbol.upper()
+            p = positions.get(search)
+            if p and p.get("size", 0) > 0:
+                size = float(p["size"])
+                side = "LONG" if p["side"] == "long" else "SHORT"
+                upnl = float(p.get("upnl") or 0.0)
+                side_color = "green" if side == "LONG" else "red"
+                pnl_color = "green" if upnl >= 0 else "red"
+                pos_str = f"📊 [{side_color}]{side}[/] {size:g} | PnL: [{pnl_color}]{upnl:,.2f}[/]"
+            else:
+                # 포지션이 진짜 0일 때만 N/A로 갱신. (데이터 미도착으로 None인 경우는 위에서 캐시 유지)
                 pos_str = "📊 Position: N/A"
-                if pos_data:
-                    side = "LONG" if pos_data["side"] == "long" else "SHORT"
-                    size = float(pos_data["size"])
-                    pnl  = float(pos_data["unrealized_pnl"])
-                    side_color = "green" if side == "LONG" else "red"
-                    pnl_color  = "green" if pnl >= 0 else "red"
-                    pos_str = f"📊 [{side_color}]{side}[/] {size:.5f} | PnL: [{pnl_color}]{pnl:,.2f}[/]"
 
-            col_str = f"💰 Collateral: {col_val:,.2f} USDC"
-            col_str += f" | USDH {usdh_val:,.2f}"
+         # (b) 담보(계정가치) 갱신이 필요한 틱에만 담보 재계산
+        if need_balance:
+            try:
+                total_av, usdh, usdc = await self._get_hl_total_account_value_and_usdh(ex)
+                col_val = float(total_av)  # comment: 헤더 합계용(여전히 PERP AV)
+                # comment: [CHG] 표시 포맷: PERP(USDC) | SPOT USDH, USDC
+                col_str = (
+                    f"💰: [red]PERP[/] {col_val:,.1f} USDC | "
+                    f"[cyan]SPOT[/] {float(usdh):,.1f} USDH, {float(usdc):,.1f} USDC"
+                )
+            except Exception as e:
+                logger.info(f"[{exchange_name}] HL agg collateral failed: {e}")
+                # 실패: 캐시 유지
 
-            self._last_status[exchange_name] = (pos_str, col_str, col_val)
-            self._backoff_sec[exchange_name] = 0.0
-            return pos_str, col_str, col_val
+        # 캐시 갱신(이번 틱에서 실제로 갱신된 값만 반영됨)
+        self._last_status[exchange_name] = (pos_str, col_str, col_val)
+        self._last_collateral[exchange_name] = col_val
 
-        except Exception as e:
-            logger.error(f"[{exchange_name}] fetch_status error: {e}", exc_info=True)
-            if self._is_rate_limited(e):
-                current = self._backoff_sec.get(exchange_name, 2.0) or 2.0
-                new_backoff = min(current * 2.0, 15.0)
-                self._backoff_sec[exchange_name] = new_backoff
-                self._cooldown_until[exchange_name] = now + new_backoff
-
-            # 실패 시 캐시 반환
-            last_col_val = self._last_collateral.get(exchange_name, 0.0)
-            last_usdh_val = self._spot_usdh_by_ex.get(exchange_name, 0.0)
-            pos_str = last_pos_str
-            col_str = f"💰 Collateral: {last_col_val:,.2f} USDC (Stale)"
-            if last_usdh_val > 0:
-                col_str += f" | USDH {last_usdh_val:,.2f}"
-            return pos_str, col_str, last_col_val
-    
+        return pos_str, col_str, col_val
     
     async def execute_order(
         self,

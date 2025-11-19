@@ -72,6 +72,16 @@ cp .env.example .env
 아래 키를 거래소별로 채웁니다(섹션명을 대문자 접두사로).
 
 ```env
+# Trade.xyz (일반 Hyperliquid 경로, 빌더코드 미사용 예시)
+TRADEXYZ_WALLET_ADDRESS=0x...
+TRADEXYZ_AGENT_API_KEY=
+TRADEXYZ_PRIVATE_KEY=0x...
+
+# Lit (일반 Hyperliquid 경로)
+LIT_WALLET_ADDRESS=0x...
+LIT_AGENT_API_KEY=
+LIT_PRIVATE_KEY=0x...
+
 # Dexari (HL)
 DEXARI_WALLET_ADDRESS=0x...
 DEXARI_AGENT_API_KEY=
@@ -92,7 +102,7 @@ BASEDONE_WALLET_ADDRESS=0x...
 BASEDONE_AGENT_API_KEY=
 BASEDONE_PRIVATE_KEY=0x...
 
-# ===== Lighter (mpdex, hl=False) =====
+# ===== Lighter (mpdex) =====
 # account_id 확인:
 # 1) https://app.lighter.xyz/explorer → 본인 주소 → 거래 상세의 account_index
 # 2) https://apidocs.lighter.xyz/reference/account-1 → by=l1_address, value=본인 EVM 주소 → "Try it!" → account_index
@@ -102,21 +112,21 @@ LIGHTER_PRIVATE_KEY=api_생성시_확인
 LIGHTER_API_KEY_ID=api_생성시_확인
 LIGHTER_L1_ADDRESS=your_evm_address
 
-# ===== Paradex (mpdex, hl=False) =====
+# ===== Paradex (mpdex) =====
 PARADEX_L1_ADDRESS=your_evm_address
 PARADEX_ADDRESS=paradex_접속시_표시
 PARADEX_PRIVATE_KEY=paradex에서_확인
 
-# ===== Edgex (mpdex, hl=False) =====
+# ===== Edgex (mpdex) =====
 EDGEX_ACCOUNT_ID=your_account_id
 EDGEX_PRIVATE_KEY=https://pro.edgex.exchange/keyManagement에서_확인(신청_필요)
 
-# ===== GRVT (mpdex, hl=False) =====
+# ===== GRVT (mpdex) =====
 GRVT_API_KEY=https://grvt.io/exchange/account/api-keys에서_발급
 GRVT_ACCOUNT_ID=your_account_id
 GRVT_SECRET_KEY=https://grvt.io/exchange/account/api-keys에서_발급
 
-# ===== Backpack (mpdex, hl=False) =====
+# ===== Backpack (mpdex) =====
 BACKPACK_API_KEY=https://backpack.exchange/portfolio/settings/api-keys에서_발급
 BACKPACK_SECRET_KEY=https://backpack.exchange/portfolio/settings/api-keys에서_발급
 ```
@@ -126,69 +136,91 @@ BACKPACK_SECRET_KEY=https://backpack.exchange/portfolio/settings/api-keys에서_
 
 ### B) config.ini (표시/엔진/수수료)
 ```ini
-# HL 예시
+# <!-- CHANGED: HL/비-HL 판별은 'exchange=' 유무로 합니다. hl=True/False는 더 이상 사용하지 않습니다. -->
+
+# 일반 Hyperliquid 엔진 (빌더코드 없이 호출하는 기본 경로)
+[tradexyz]                 ; <!-- CHANGED: README 예시에 tradexyz 추가 -->
+show = False
+# 설명: tradexyz 섹션은 특정 HIP-3 DEX를 지정하지 않는, 일반 HL 접속 예시입니다.
+
+# HL: Lit (일반 HL + 빌더코드 예시)
+[lit]
+builder_code = 0x24a747628494231347f4f6aead2ec14f50bcc8b7
+fee_rate = 25
+xyz_fee_rate = 50
+vntl_fee_rate = 50
+flx_fee_rate = 50
+show = True
+FrontendMarket = True
+
+# HL: Dexari
 [dexari]
 builder_code = 0x7975cafdff839ed5047244ed3a0dd82a89866081
 fee_rate = 10
 xyz_fee_rate = 10
 vntl_fee_rate = 10
 flx_fee_rate = 10
-hl = True
 show = True
+# fee_rate 본인 tier에 따라 다름 10~50 까지, 확인하고 고쳐 쓰기
 
+# HL: Liquid
 [liquid]
 builder_code = 0x6D4E7F472e6A491B98CBEeD327417e310Ae8ce48
 fee_rate = 50
 xyz_fee_rate = 50
-hl = True
-show = False
+show = True
 
+# HL: BasedOne
 [based]
 builder_code = 0x1924b8561eef20e70ede628a296175d358be80e5
 fee_rate = 25
 xyz_fee_rate = 25
-hl = True
 show = False
 FrontendMarket = True
 
+# HL: Supercexy
 [supercexy]
 builder_code = 0x0000000bfbf4c62c43c2e71ef0093f382bf7a7b4
 fee_rate = 16
 xyz_fee_rate = 1
 vntl_fee_rate = 1
 flx_fee_rate = 1
-hl = True
-show = False
+show = True
 FrontendMarket = True
+# fee_rate 본인 tier에 따라 다름 30~15 라고 되어 있으나 현재는 16으로 사용 중
+# 현재 xyz는 fee 1
 
-# 비‑HL(mpdex): show=True/False와 hl=False만 지정하면 됩니다.
+# 비‑HL(mpdex): 'exchange=<name>' 키가 있으면 mpdex 클라이언트를 사용합니다.
 [lighter]
-hl = False
 show = False
+exchange = lighter
 
 [edgex]
-hl = False
 show = False
+exchange = edgex
 
 [paradex]
-hl = False
 show = False
+exchange = paradex
 
 [grvt]
-hl = False
 show = False
+exchange = grvt
 
 [backpack]
-hl = False
 show = False
+exchange = backpack
 ```
 
 - show=True: 기본 표시, False: 기본 숨김(OFF 간주)
-- hl=True: Hyperliquid(ccxt), hl=False: mpdex 클라이언트 사용
+- <!-- CHANGED: HL/비‑HL 구분 방법을 명확화 -->
+  - HL: 섹션 안에 exchange 키가 없음(= Hyperliquid 엔진 사용), 필요 시 builder_code/fee_rate/FrontendMarket 등 설정
+  - 비‑HL(mpdex): 섹션 안에 exchange=< lighter | paradex | edgex | grvt | backpack > 키가 있으면 mpdex 사용
 - fee_rate: 기본 빌더 수수료 정수 / **dexari 같은 경우는 tier별로 수수료가 다르니 확인 후 수정**
 - dex_fee_rate: HIP‑3 DEX별 수수료 덮어쓰기(예: xyz_fee_rate, vntl_fee_rate, flx_fee_rate). 없으면 fee_rate 사용.
-- 퍼프덱스별로 HIP-3 DEX 별 수수료를 달리 하는 경우가 있으니, 본인의 티어 및 거래소 확인 후 설정.
+- 퍼프덱스별로 HIP‑3 DEX 별 수수료를 달리 하는 경우가 있으니, 본인의 티어 및 거래소 확인 후 설정.
 - builder_code를 설정하지 않으면 빌더/fee는 주문 payload에 포함되지 않습니다(기본 빌더주소 주입 없음)
+
 ---
 
 ## 3. 실행
@@ -263,9 +295,11 @@ python main.py
 1행(주문 입력/버튼)
 - T(코인): 그 카드에서 사용할 심볼.
   - HIP‑3를 카드에서 선택한 경우(2행 오른편 DEX 버튼), “코인만” 입력합니다(예: XYZ100 → 내부적으로 ‘xyz:XYZ100’).
+
 - Q(수량) / P(가격) / MKT/LMT
   - MKT(시장가): 카드별 가격 소스(아래 Price)를 사용하므로 P는 무시됩니다.
   - LMT(지정가): P(가격) 필수.
+
 - L/S/OFF/EX
   - L: LONG 선택(초록 강조, 카드 활성).
   - S: SHORT 선택(빨강 강조, 카드 활성).
@@ -285,6 +319,9 @@ python main.py
 3행(상태)
 - 📘 Position
   - 방향/사이즈/PNL. 사이즈 옆에 “(사이즈×현재가)” USDC 값도 함께 표시합니다(각 카드의 가격 사용).
+  - <!-- CHANGED: HIP‑3 포지션 키 정규화 설명 추가 -->
+    - HIP‑3 포맷의 키(예: ‘xyz:XYZ100’)는 내부에서 대소문자 정규화가 적용되어 ‘xyz:XYZ100’/‘XYZ:XYZ100’ 어느 형태로 입력해도 포지션이 올바르게 표시됩니다.
+
 - 💰 Collateral
   - HL: clearinghouseState.accountValue(메인+모든 HIP‑3 합산)에 기반합니다.
   - 비‑HL: 거래소가 제공하는 collateral/잔고 정보를 사용합니다.
@@ -304,7 +341,7 @@ python main.py
 ---
 
 ### 4‑3. Exchanges 박스(하단)
-- 모든 거래소를 체크박스로 2줄 정렬합니다.
+- 모든 거래소를 체크박스로 3줄 정렬합니다.
 - ON(체크): 카드가 생성되고 상태 루프 시작.
 - OFF: 카드가 숨겨지고 해당 루프 취소(네트워크 요청 감소).
 - config.ini의 show 기본값과 무관하게 실시간 토글 가능합니다.
@@ -312,7 +349,7 @@ python main.py
 ---
 
 ### 4‑4. 키보드(요약)
-- 영역 전환: Shift+Up/Down, PageUp/Down, Ctrl+J/K, F6
+- 영역 전환: Shift+Up/Down
 - 내부 이동: Tab/Shift+Tab(입력·버튼만 순회), 방향키
 - 래핑
   - EX → Tab → 다음 카드의 Q
@@ -320,36 +357,14 @@ python main.py
 
 ---
 
-## 5. 동작 참고
-
-- 가격(헤더/카드)
-  - HL: metaAndAssetCtxs(무 dex/with dex) 1회로 “전체 페어 가격”을 받아 3초 캐시. 모든 HL 경로가 공유
-  - 비‑HL: get_mark_price(native) 사용
-- 담보(Collateral)
-  - HL: clearinghouseState.marginSummary.accountValue를 메인+모든 HIP‑3 dex 합산해 표시(실보유 반영)
-- 레버리지 보장(멱등)
-  - ensure_hl_max_leverage_auto(exchange, symbol)
-    - 메타 기반으로 maxLeverage/isolated 여부 계산 → updateLeverage 1회만 적용
-    - in‑flight 가드 + 5초 스로틀 + 적용 완료 캐시로 과호출 방지
-- Perp Tick/Lot 규칙 준수
-  - Size: szDecimals로 반올림
-  - Price: 소수자릿수 ≤ 6 − szDecimals, 유효숫자(소수) ≤ 5자리(정수는 제한 없음)
-- RATE(레이트) 조절(환경변수)
-  - PDEX_HEADER_PRICE_SEC: 헤더 가격 갱신 간격(기본 2.5)
-  - PDEX_STATUS_BAL_SEC: 카드별 collateral 리프레시 간격(기본 2.5)
-  - PDEX_STATUS_MIN_SEC / PDEX_STATUS_MAX_SEC: 카드 상태 루프 지터 범위(기본 0.5~1.2)
-  - PDEX_CARD_PRICE_SEC: 카드 가격 갱신 최소 간격(기본 1.0)
-
----
-
-## 6. 로그/디버깅
+## 5. 로그/디버깅
 
 - 파일 로그: `debug.log`(UTF‑8 텍스트)
 - 콘솔 로그는 기본 비활성(urwid 화면 보전). 필요 시 `PDEX_LOG_CONSOLE=1`로 임시 활성화.
 
 ---
 
-## 7. 보안 주의
+## 6. 보안 주의
 
 - `.env`는 절대 커밋/공유 금지
 - 가능한 Agent API Key(또는 mpdex API 키) 사용(Private Key 직접 사용 지양)
@@ -357,7 +372,7 @@ python main.py
 
 ---
 
-## 8. 기술 스택
+## 7. 기술 스택
 
 - UI: urwid(기본), Textual(레거시)
 - 거래소 API: ccxt(Hyperliquid), mpdex(Lighter/Paradex/Edgex/GRVT/Backpack)
@@ -365,12 +380,13 @@ python main.py
 
 ---
 
-## 9. 로드맵
+## 8. 로드맵
 
 - ✅ urwid UI 안정화 / HL 가격 공유 / Exchanges 토글
 - ✅ REPEAT 즉시 중단 / Tab·Shift+Tab 탐색 안정화
 - ✅ CLOSE ALL / BURN 기능
 - ✅ 비‑HL(mpdex) 거래소: Lighter/Paradex/Edgex/GRVT/Backpack 연동
+- ✅ XYZ 지원
 - ✅ FLX / VNTL 지원 (USDH 페어)
 - 🔜 spot USDC 잔고 표기
 - 🔜 USDC <-> USDH swap 편의기능
