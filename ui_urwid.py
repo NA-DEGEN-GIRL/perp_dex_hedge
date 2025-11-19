@@ -3,6 +3,7 @@ import random
 import logging
 import warnings
 from typing import Dict, Optional, List
+import math
 
 import urwid
 from urwid.widget.pile import PileWarning  # urwid 레이아웃 경고 제거용
@@ -642,7 +643,7 @@ class UrwidApp:
     # --------- Exchanges 토글 박스 (GridFlow로 가로 나열) ----------
     def _build_switcher(self):
         """
-        Exchanges 토글 박스: 두 줄, 균일 폭 셀.
+        Exchanges 토글 박스: 세 줄, 균일 폭 셀.
         - 각 체크박스를 ('given', cell_w, widget)으로 전달해 고정 폭으로 배치
         - 이름 길이에 따라 cell_w를 동적으로 산정(최소 12)
         """
@@ -654,32 +655,31 @@ class UrwidApp:
 
         # 라벨 최대 길이에 여유분(브래킷·공백 등) 더해 셀 폭 산정
         max_label = max(len(n.upper()) for n in names)
-        cell_w = max(12, max_label + 4)  # 최소 12칸, 보통 [ ] + 공백 여유 6
+        cell_w = max(12, max_label + 4)  # 최소 12칸
 
-        # 두 줄로 균등 분할
-        half = (len(names) + 1) // 2
-        row1_widgets, row2_widgets = [], []
+        # [CHG] 2줄 → 3줄 균등 분배
+        chunk = max(1, math.ceil(len(names) / 3))  # comment: 한 줄당 항목 수
+        rows = [[], [], []]  # row1, row2, row3
 
         for idx, name in enumerate(names):
             show = self.mgr.get_meta(name).get("show", False)
             chk = urwid.CheckBox(name.upper(), state=show, on_state_change=self._on_toggle_show)
             self.switch_checks[name] = chk
-            # Columns에 'given' 폭으로 직접 넘깁니다 (Padding 불필요)
-            if idx < half:
-                row1_widgets.append(('given', cell_w, chk))
-            else:
-                row2_widgets.append(('given', cell_w, chk))
+            r = min(idx // chunk, 2)  # 0,1,2 중 하나
+            rows[r].append(('given', cell_w, chk))
 
         def to_columns(cells):
             if not cells:
+                # 빈 줄도 유지하여 '3줄' 레이아웃 고정
                 return urwid.Text("")
-            # dividechars로 셀 간 간격만 주면 모두 같은 폭으로 정렬됩니다.
             return urwid.Columns(cells, dividechars=2)
 
-        row1 = to_columns(row1_widgets)
-        row2 = to_columns(row2_widgets)
+        row1 = to_columns(rows[0])
+        row2 = to_columns(rows[1])
+        row3 = to_columns(rows[2])
 
-        return urwid.LineBox(urwid.Pile([row1, row2]), title="Exchanges")
+        # [CHG] 3줄 Pile
+        return urwid.LineBox(urwid.Pile([row1, row2, row3]), title="Exchanges")
 
     def _on_toggle_show(self, chk: urwid.CheckBox, state: bool):
         # meta 갱신
@@ -755,7 +755,7 @@ class UrwidApp:
 
         # Footer는 Exchanges 박스(고정 높이 4줄: 콘텐츠 2 + 테두리 2), Logs 패널은 pack
         self.footer = urwid.Pile([
-            ('fixed', 4, switcher),   # 2줄 + 테두리 2줄 = 4
+            ('fixed', 5, switcher),   # 3줄 + 테두리 2줄 = 5
             ('pack',  logs_panel),    # Logs는 내부에서 고정 높이를 이미 줌
         ])
 
