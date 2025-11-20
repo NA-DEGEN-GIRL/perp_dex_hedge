@@ -134,8 +134,6 @@ class UrwidApp:
         # 거래소별 status 루프 태스크 관리
         self._status_tasks: Dict[str, asyncio.Task] = {}
         self._price_task: asyncio.Task | None = None      # 가격 루프 태스크 보관
-        # [추가] HL 공유 캐시 갱신 태스크
-        self._hl_cache_task: asyncio.Task | None = None
         
         self._last_balance_at: Dict[str, float] = {}  # [추가]
         self._last_pos_at: Dict[str, float] = {}       # [추가] 포지션 마지막 업데이트
@@ -157,6 +155,15 @@ class UrwidApp:
         self.dex_btns_header: Dict[str, urwid.AttrMap] = {}                      # 헤더 버튼 래퍼
         self.dex_btns_by_ex: Dict[str, Dict[str, urwid.AttrMap]] = {}            # 카드별 dex 
         self._status_locks: Dict[str, asyncio.Lock] = {name: asyncio.Lock() for name in self.mgr.all_names()}
+
+    def _is_hl_like(self, name: str) -> bool:
+        try:
+            meta = self.mgr.get_meta(name) or {}
+            if meta.get("hl", False):
+                return True
+            return str(meta.get("exchange", "")).lower() == "superstack"  # <-- 추가
+        except Exception:
+            return False
 
     # [ADD] 브래킷 마크업 파서(urwid용)
     def _parse_bracket_markup(self, s: str) -> list[tuple[Optional[str], str]]:
@@ -246,7 +253,7 @@ class UrwidApp:
             return pos_str
 
         usdc_value = size * price
-        injected = f"{size_str} ({usdc_value:,.2f} USDC)"
+        injected = f"{size_str} ({usdc_value:,.1f} USDC)"
 
         # 캡처된 사이즈 부분만 교체
         start, end = m.span(1)
@@ -572,12 +579,12 @@ class UrwidApp:
             ],
             dividechars=1,
         )
-        is_hl = self.mgr.get_meta(name).get("hl", False)
+        is_hl_like = self._is_hl_like(name)
         
         price_line = urwid.Text(("info", "Price: ..."))
         self.card_price_text[name] = price_line
 
-        if is_hl:
+        if is_hl_like:
             quote_line = urwid.Text(("quote_color", "")) # 초기값은 비워둠
             self.card_quote_text[name] = quote_line
             price_and_dex = urwid.Columns(
@@ -849,10 +856,10 @@ class UrwidApp:
                 sym_coin = _normalize_symbol_input(self.symbol_by_ex.get(name) or self.symbol)
                 dex = self.dex_by_ex.get(name, "HL")
                 sym = _compose_symbol(dex, sym_coin)
-                is_hl = self.mgr.get_meta(name).get("hl", False)
+                is_hl_like = self._is_hl_like(name)  # <-- 변경
 
                 # 가격/quote 업데이트 (WS 캐시)
-                if is_hl:
+                if is_hl_like:
                     try:
                         scope = "hl" if dex == "HL" else dex
                         ws = await self.service._get_ws_for_scope(scope, self.mgr.get_exchange(name))
@@ -888,7 +895,7 @@ class UrwidApp:
                             logging.debug(f"[UI] non-HL price update for {name} failed: {e}")
                             self.card_price_text[name].set_text(("pnl_neg", "Price: Error"))
 
-                if is_hl:
+                if is_hl_like:
                     # websocket so no need to worry
                     need_collat = True
                     need_pos = True
@@ -897,11 +904,11 @@ class UrwidApp:
 
                 if need_collat:
                     self.collateral[name] = float(col_val)
-                    if not is_hl:
+                    if not is_hl_like:
                         self._last_balance_at[name] = now
                         self.total_text.set_text(("info", f"Total: {self._collateral_sum():,.1f} USDC"))
                 
-                if need_pos and not is_hl:
+                if need_pos and not is_hl_like:
                     self._last_pos_at[name] = now
 
                 pos_str = self._inject_usdc_value_into_pos(name, pos_str)
@@ -1810,9 +1817,6 @@ class UrwidApp:
             tasks.append(self._price_task)
         self._price_task = None
 
-        if self._hl_cache_task and not self._hl_cache_task.done():
-            self._hl_cache_task.cancel()
-
         # (3) 실제 취소 대기 (CancelledError 억제)
         if tasks:
             try:
@@ -1850,15 +1854,6 @@ class UrwidApp:
                 await asyncio.gather(*pending, return_exceptions=True)
             except Exception:
                 pass
-    # [추가] /root/codes/perp_dex_hedge/ui_urwid.py 파일, UrwidApp 클래스 내부
-    def _header_ticker_changed(self, edit, new_text):
-        """
-        헤더의 Ticker 입력칸이 변경될 때 호출됩니다.
-        (현재는 비어 있음 - 향후 로직 추가 가능)
-        """
-        # 전역 심볼 업데이트 등
-        self.symbol = _normalize_symbol_input(new_text or "BTC")
-        pass
 
     def _apply_to_all_qty(self, new_text):
         """
@@ -1967,17 +1962,6 @@ class UrwidApp:
                 if n not in self._status_tasks or self._status_tasks[n].done():
                     self._status_tasks[n] = asyncio.get_event_loop().create_task(self._status_loop(n))
             
-
-            urwid.connect_signal(self.ticker_edit, 'change', self._header_ticker_changed)
-            urwid.connect_signal(self.allqty_edit, 'change', lambda _, new: self._apply_to_all_qty(new))
-
-            # All Qty → 각 카드 Q 동기화
-            def allqty_changed(edit, new):
-                for n in self.mgr.visible_names():
-                    if n in self.qty_edit:
-                        self.qty_edit[n].set_edit_text(new)
-            urwid.connect_signal(self.allqty_edit, "change", allqty_changed)
-
             # Ticker 변경 즉시 반영
             def ticker_changed(edit, new):
                 coin = _normalize_symbol_input(new or "BTC")
@@ -2026,6 +2010,7 @@ class UrwidApp:
                 self._ticker_lev_alarm = self.loop.set_alarm_in(0.4, _apply_max_lev_all)
 
             urwid.connect_signal(self.ticker_edit, "change", ticker_changed)
+            urwid.connect_signal(self.allqty_edit, 'change', lambda _, new: self._apply_to_all_qty(new))
 
             self._request_redraw()
 

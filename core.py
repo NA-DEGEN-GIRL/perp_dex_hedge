@@ -55,6 +55,54 @@ config = load_config_with_encodings(CONFIG_PATH)
 
 EXCHANGES = sorted([section for section in config.sections()])
 
+# [ADD] 공통 유틸: "a b" / "a" 형태를 (limit, market) 튜플로 파싱
+def _parse_fee_pair(raw: str | tuple | list | None) -> tuple[int, int]:
+    """
+    "20 25" -> (20, 25), "20" -> (20, 20)
+    "20/25" "20,25" "20|25" 도 허용
+    tuple/list 입력도 허용: (20,25) -> (20,25), [20,25] -> (20,25)
+    """
+    if raw is None:
+        return (0, 0)
+    # tuple/list 면 그대로 정수 변환해서 반환
+    if isinstance(raw, (tuple, list)):
+        try:
+            if len(raw) == 1:
+                v = int(float(raw[0]))
+                return (v, v)
+            a = int(float(raw[0])); b = int(float(raw[1]))
+            return (a, b)
+        except Exception:
+            return (0, 0)
+
+    s = str(raw).strip()
+    if not s:
+        return (0, 0)
+    # 구분자 통일
+    for sep in [",", "/", "|"]:
+        s = s.replace(sep, " ")
+    toks = [t for t in s.split() if t]
+    if len(toks) == 1:
+        try:
+            v = int(float(toks[0])); return (v, v)
+        except Exception:
+            return (0, 0)
+    try:
+        a = int(float(toks[0])); b = int(float(toks[1]))
+        return (a, b)
+    except Exception:
+        return (0, 0)
+
+class Superstack:
+    def __init__(self, options):
+        # comment: ccxt.hyperliquid와 동일하게 '내부 options'를 self.options로 사용
+        inner = dict(options.get("options", {}) or {})
+        
+        for k in ("walletAddress", "apiKey"):
+            v = options.get(k)
+            if v is not None:
+                inner[k] = v
+        self.options = inner
 
 class ExchangeManager:
     """
@@ -69,53 +117,67 @@ class ExchangeManager:
         for exchange_name in EXCHANGES:
             show = config.get(exchange_name, "show", fallback="True").strip().lower() == "true"
             
-            # deprecated
-            # hl = config.get(exchange_name, "hl", fallback="True").strip().lower() == "true"
-            
             exchange_platform = config.get(exchange_name, "exchange", fallback='hyperliquid')
-            if exchange_platform == 'hyperliquid':
-                hl = True
-            else:
-                hl = False
+            hl = (exchange_platform == 'hyperliquid')
 
             # FrontendMarket 플래그 로딩
             fm_raw = config.get(exchange_name, "FrontendMarket", fallback="False")
             frontend_market = (fm_raw or "").strip().lower() == "true"
             self.meta[exchange_name] = {"show": show, "hl": hl, "frontend_market": frontend_market, "exchange": exchange_platform}
 
-            # 하이퍼리퀴드 엔진 거래소만 현재 인스턴스 생성 (hl=True + 키/설정 유효)
-            if hl:
+            # hl, but superstack needs its own signature method due to intrinsic wallet provider service
+            if hl or exchange_platform == 'superstack':
                 builder_code = config.get(exchange_name, "builder_code", fallback=None)
                 wallet_address = os.getenv(f"{exchange_name.upper()}_WALLET_ADDRESS")
                 
                 if wallet_address:
-                    fee_int = int(config.get(exchange_name, "fee_rate", fallback="0") or 0)
-                    dex_fee_map = {}
-                    for k, v in config.items(exchange_name):
-                        if k.endswith("_fee_rate"):
-                            # 예: 'xyz_fee_rate' → 'xyz'
-                            dex = k[:-len("_fee_rate")].lower()
-                            try:
-                                dex_fee_map[dex] = int(v)
-                            except Exception:
-                                pass
+                    # [CHG] 수수료: (limit, market) 페어 + DEX별 페어 맵 구성
+                    if config.has_option(exchange_name, "fee_rate"):
+                        fee_pair = _parse_fee_pair(config.get(exchange_name, "fee_rate"))
+                    else:
+                        fee_pair = "0,0"
+                        
+                    if config.has_option(exchange_name, "dex_fee_rate"):
+                        dex_fee_pair_default = _parse_fee_pair(config.get(exchange_name, "dex_fee_rate"))
+                    else:
+                        dex_fee_pair_default = None  # comment: 없을 때는 None → DEX 주문에서 fee_rate로 폴백
 
-                    self.exchanges[exchange_name] = ccxt.hyperliquid(
-                        {
-                            "apiKey": os.getenv(f"{exchange_name.upper()}_AGENT_API_KEY"),
-                            "privateKey": os.getenv(f"{exchange_name.upper()}_PRIVATE_KEY"),
-                            "walletAddress": wallet_address,
-                            "options": {
-                                "feeInt": fee_int,
-                                "dexFeeInt": dex_fee_map,
-                                # builder는 있을 때만 주입
-                                **({"builder": builder_code} if builder_code else {}),
-                                #"builderFee": True,
-                                #"approvedBuilderFee": True,
-                            },
-                        }
-                    )
-                    # 주소 options로 복제
+                    dex_fee_pair_map = {}
+                    for k, v in config.items(exchange_name):
+                        if not k.endswith("_fee_rate"):
+                            continue
+                        k_l = k.lower()
+                        if k_l == "dex_fee_rate" or k_l == "fee_rate":
+                            # 공통 키는 개별 dex 맵에 넣지 않음
+                            continue
+                        dex_name = k_l[:-len("_fee_rate")].strip()
+                        if not dex_name:
+                            continue
+                        dex_fee_pair_map[dex_name] = _parse_fee_pair(v)
+
+                    options = {
+                        "walletAddress": wallet_address,
+                        "options": {
+                            "feeIntPair": fee_pair,                                 # (limit, market)
+                            "dexFeeIntPairDefault": dex_fee_pair_default or None,   # (limit, market) or None
+                            "dexFeeIntPairMap": dex_fee_pair_map,                   # {dex: (limit, market)}
+                            # builder는 있을 때만 주입
+                            **({"builder": builder_code} if builder_code else {}),
+                        },
+                    }
+                    if exchange_platform == 'superstack':
+                        # api key of its own wallet provider
+                        options["apiKey"] = os.getenv(f"{exchange_name.upper()}_API_KEY")
+                    else:
+                        # normal hl
+                        options["apiKey"] = os.getenv(f"{exchange_name.upper()}_AGENT_API_KEY")
+                        options["privateKey"] = os.getenv(f"{exchange_name.upper()}_PRIVATE_KEY")
+
+                    if exchange_platform == 'superstack':
+                        self.exchanges[exchange_name] = Superstack(options)
+                    else:
+                        self.exchanges[exchange_name] = ccxt.hyperliquid(options)
+
                     try:
                         self.exchanges[exchange_name].options["walletAddress"] = wallet_address
                     except Exception:

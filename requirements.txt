@@ -21,8 +21,12 @@ annotated-types==0.7.0
     # via pydantic
 asn1crypto==1.5.1
     # via coincurve
+async-timeout==5.0.1
+    # via aiohttp
 attrs==25.4.0
     # via aiohttp
+backports-asyncio-runner==1.2.0
+    # via pytest-asyncio
 backports-weakref==1.0.post1
     # via grvt-pysdk
 bitarray==3.8.0
@@ -32,9 +36,7 @@ cachetools==6.2.1
 cairo-lang==0.13.5
     # via mpdex
 ccxt==4.5.17
-    # via
-    #   -r requirements.in
-    #   mpdex
+    # via mpdex
 certifi==2025.10.5
     # via
     #   ccxt
@@ -99,6 +101,8 @@ eth-utils==5.3.1
     #   eth-rlp
     #   rlp
     #   web3
+exceptiongroup==1.3.0
+    # via pytest
 execnet==2.1.1
     # via
     #   cairo-lang
@@ -132,15 +136,8 @@ iniconfig==2.3.0
     # via pytest
 lark==1.3.1
     # via cairo-lang
-lighter-sdk @ git+https://github.com/elliottech/lighter-python.git@c9b8de6fd6864ede0fd7fb61d85ffb3614d178c9
+lighter-sdk @ git+https://github.com/elliottech/lighter-python.git@f8c46e15538449ab6494354917f8a48e6aa12e97
     # via mpdex
-linkify-it-py==2.0.3
-    # via markdown-it-py
-markdown-it-py==4.0.0
-    # via
-    #   mdit-py-plugins
-    #   rich
-    #   textual
 marshmallow==3.26.1
     # via
     #   cairo-lang
@@ -154,23 +151,21 @@ marshmallow-enum==1.5.1
     # via cairo-lang
 marshmallow-oneofschema==3.2.0
     # via cairo-lang
-mdit-py-plugins==0.5.0
-    # via textual
-mdurl==0.1.2
-    # via markdown-it-py
-mpdex @ git+https://github.com/NA-DEGEN-GIRL/multi-perp-dex.git@9b57cf8de75ece6e0d4cb0fa1a85ba13d8d5d562
+mpdex @ git+https://github.com/NA-DEGEN-GIRL/multi-perp-dex.git@a2fee69ffeb2b76908a1905012ac7d5e9c8cba74
     # via -r requirements.in
 mpmath==1.3.0
     # via
     #   cairo-lang
     #   sympy
+msgpack==1.1.2
+    # via -r requirements.in
 multidict==6.7.0
     # via
     #   aiohttp
     #   yarl
 mypy-extensions==1.1.0
     # via typing-inspect
-numpy==2.3.4
+numpy==2.2.6
     # via cairo-lang
 packaging==25.0
     # via
@@ -183,8 +178,6 @@ pip==25.3
     # via pipdeptree
 pipdeptree==2.29.0
     # via cairo-lang
-platformdirs==4.5.0
-    # via textual
 pluggy==1.6.0
     # via pytest
 prometheus-client==0.23.1
@@ -210,10 +203,7 @@ pydantic==2.12.4
 pydantic-core==2.41.5
     # via pydantic
 pygments==2.19.2
-    # via
-    #   pytest
-    #   rich
-    #   textual
+    # via pytest
 pynacl==1.6.1
     # via mpdex
 pytest==9.0.0
@@ -244,8 +234,6 @@ requests==2.32.5
     #   grvt-pysdk
     #   lighter-sdk
     #   web3
-rich==14.2.0
-    # via textual
 rlp==4.1.0
     # via
     #   eth-account
@@ -259,8 +247,8 @@ six==1.17.0
     #   python-dateutil
 sympy==1.14.0
     # via cairo-lang
-textual==6.5.0
-    # via -r requirements.in
+tomli==2.3.0
+    # via pytest
 toolz==1.1.0
     # via cytoolz
 typeguard==2.13.3
@@ -271,12 +259,16 @@ typing-extensions==4.15.0
     # via
     #   aiosignal
     #   ccxt
+    #   cryptography
+    #   eth-rlp
     #   eth-typing
+    #   exceptiongroup
     #   lighter-sdk
+    #   marshmallow-dataclass
+    #   multidict
     #   pydantic
     #   pydantic-core
     #   pytest-asyncio
-    #   textual
     #   typing-inspect
     #   typing-inspection
     #   web3
@@ -286,8 +278,6 @@ typing-inspect==0.9.0
     #   marshmallow-dataclass
 typing-inspection==0.4.2
     # via pydantic
-uc-micro-py==1.0.3
-    # via linkify-it-py
 urllib3==2.0.7
     # via
     #   lighter-sdk

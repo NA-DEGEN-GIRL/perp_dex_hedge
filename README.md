@@ -53,10 +53,9 @@ pip install -r requirements.in
 
 requirements.in(발췌):
 ```
-ccxt
-textual
 python-dotenv
 urwid
+msgpack
 mpdex @ git+https://github.com/NA-DEGEN-GIRL/multi-perp-dex.git@master
 ```
 
@@ -102,6 +101,11 @@ BASEDONE_WALLET_ADDRESS=0x...
 BASEDONE_AGENT_API_KEY=
 BASEDONE_PRIVATE_KEY=0x...
 
+# Superstack (HL, 자체 지갑 provider 사용)
+# 지갑 주소는 HL 주소를 사용하며, API 키는 superstack 포털에서 발급
+SUPERSTACK_WALLET_ADDRESS=0x...
+SUPERSTACK_API_KEY=sk_...
+
 # ===== Lighter (mpdex) =====
 # account_id 확인:
 # 1) https://app.lighter.xyz/explorer → 본인 주소 → 거래 상세의 account_index
@@ -132,65 +136,64 @@ BACKPACK_SECRET_KEY=https://backpack.exchange/portfolio/settings/api-keys에서_
 ```
 
 - HL은 Agent API Key(또는 Private Key)를 사용합니다(Private Key 직접 사용은 비권장).
+- superstack은 HL이지만, exchange=superstack으로 설정합니다(아래 B) 참고). 주문 서명은 지갑 provider API를 통해 처리합니다.
 - 비‑HL(mpdex) 거래소는 .env만 맞으면 추가 설정 없이 동작합니다(내부에서 심볼 변환 symbol_create 사용).
 
 ### B) config.ini (표시/엔진/수수료)
 ```ini
-# <!-- CHANGED: HL/비-HL 판별은 'exchange=' 유무로 합니다. hl=True/False는 더 이상 사용하지 않습니다. -->
+# - HL: 섹션에 exchange 키가 없음(순수 Hyperliquid 경로)
+# - superstack: exchange=superstack (HL-like, 지갑 provider 서명)
+# - 비‑HL(mpdex): exchange=< lighter | paradex | edgex | grvt | backpack >
 
 # 일반 Hyperliquid 엔진 (빌더코드 없이 호출하는 기본 경로)
-[tradexyz]                 ; <!-- CHANGED: README 예시에 tradexyz 추가 -->
+[tradexyz]
 show = False
 # 설명: tradexyz 섹션은 특정 HIP-3 DEX를 지정하지 않는, 일반 HL 접속 예시입니다.
 
 # HL: Lit (일반 HL + 빌더코드 예시)
 [lit]
 builder_code = 0x24a747628494231347f4f6aead2ec14f50bcc8b7
-fee_rate = 25
-xyz_fee_rate = 50
-vntl_fee_rate = 50
-flx_fee_rate = 50
+fee_rate = 20 / 25         ; limit / market
+dex_fee_rate = 30 / 50     ; (선택) HIP-3 공통 DEX 수수료, 없으면 fee_rate 사용
 show = True
 FrontendMarket = True
 
 # HL: Dexari
 [dexari]
 builder_code = 0x7975cafdff839ed5047244ed3a0dd82a89866081
-fee_rate = 10
-xyz_fee_rate = 10
-vntl_fee_rate = 10
-flx_fee_rate = 10
+fee_rate = 10 / 10
 show = True
 # fee_rate 본인 tier에 따라 다름 10~50 까지, 확인하고 고쳐 쓰기
 
 # HL: Liquid
 [liquid]
 builder_code = 0x6D4E7F472e6A491B98CBEeD327417e310Ae8ce48
-fee_rate = 50
-xyz_fee_rate = 50
+fee_rate = 50 / 50
 show = True
 
 # HL: BasedOne
 [based]
 builder_code = 0x1924b8561eef20e70ede628a296175d358be80e5
-fee_rate = 25
-xyz_fee_rate = 25
+fee_rate = 25 / 25
 show = False
 FrontendMarket = True
 
 # HL: Supercexy
 [supercexy]
 builder_code = 0x0000000bfbf4c62c43c2e71ef0093f382bf7a7b4
-fee_rate = 16
-xyz_fee_rate = 1
-vntl_fee_rate = 1
-flx_fee_rate = 1
+fee_rate = 15 / 16
+dex_fee_rate = 1 / 1        ; HIP-3 공통 수수료(예: xyz/flx/vntl)
 show = True
 FrontendMarket = True
-# fee_rate 본인 tier에 따라 다름 30~15 라고 되어 있으나 현재는 16으로 사용 중
-# 현재 xyz는 fee 1
 
-# 비‑HL(mpdex): 'exchange=<name>' 키가 있으면 mpdex 클라이언트를 사용합니다.
+[superstack]
+builder_code = 0xcdb943570bcb48a6f1d3228d0175598fea19e87b
+fee_rate = 4 / 11
+show = True
+FrontendMarket = True
+exchange = superstack       ; need!
+
+# 비‑HL(mpdex)
 [lighter]
 show = False
 exchange = lighter
@@ -213,13 +216,14 @@ exchange = backpack
 ```
 
 - show=True: 기본 표시, False: 기본 숨김(OFF 간주)
-- <!-- CHANGED: HL/비‑HL 구분 방법을 명확화 -->
-  - HL: 섹션 안에 exchange 키가 없음(= Hyperliquid 엔진 사용), 필요 시 builder_code/fee_rate/FrontendMarket 등 설정
-  - 비‑HL(mpdex): 섹션 안에 exchange=< lighter | paradex | edgex | grvt | backpack > 키가 있으면 mpdex 사용
-- fee_rate: 기본 빌더 수수료 정수 / **dexari 같은 경우는 tier별로 수수료가 다르니 확인 후 수정**
-- dex_fee_rate: HIP‑3 DEX별 수수료 덮어쓰기(예: xyz_fee_rate, vntl_fee_rate, flx_fee_rate). 없으면 fee_rate 사용.
-- 퍼프덱스별로 HIP‑3 DEX 별 수수료를 달리 하는 경우가 있으니, 본인의 티어 및 거래소 확인 후 설정.
-- builder_code를 설정하지 않으면 빌더/fee는 주문 payload에 포함되지 않습니다(기본 빌더주소 주입 없음)
+  - fee_rate = L / M
+    - 메인 HL(DEX 미선택) 주문에 적용되는 기본 수수료(빌더 단위, 정수).
+  - dex_fee_rate = L / M
+    - HIP‑3 DEX 주문의 “공통 기본값”. 설정이 없으면 HIP‑3 주문도 fee_rate를 사용합니다.
+  - 개별 DEX 우선 적용: xyz_fee_rate, vntl_fee_rate, flx_fee_rate 등의 항목이 있으면 해당 DEX 주문에 최우선으로 적용됩니다.
+  - 정리(우선순위): HIP‑3 주문 시 “개별 DEX” → “dex_fee_rate” → “fee_rate”.
+- builder_code를 설정하지 않으면 빌더/fee는 주문 payload에 포함되지 않습니다(기본 빌더주소 주입 없음).
+  - superstack는 **exchange=superstack**로 지정합니다(주문 서명은 provider API).
 
 ---
 
@@ -228,9 +232,6 @@ exchange = backpack
 ```bash
 python main.py
 ```
-
-- 기본 UI는 urwid입니다(권장).
-- Textual(더이상 지원안함): `python main.py --ui textual`
 
 ---
 
@@ -319,7 +320,6 @@ python main.py
 3행(상태)
 - 📘 Position
   - 방향/사이즈/PNL. 사이즈 옆에 “(사이즈×현재가)” USDC 값도 함께 표시합니다(각 카드의 가격 사용).
-  - <!-- CHANGED: HIP‑3 포지션 키 정규화 설명 추가 -->
     - HIP‑3 포맷의 키(예: ‘xyz:XYZ100’)는 내부에서 대소문자 정규화가 적용되어 ‘xyz:XYZ100’/‘XYZ:XYZ100’ 어느 형태로 입력해도 포지션이 올바르게 표시됩니다.
 
 - 💰 Collateral
@@ -375,7 +375,7 @@ python main.py
 ## 7. 기술 스택
 
 - UI: urwid(기본), Textual(레거시)
-- 거래소 API: ccxt(Hyperliquid), mpdex(Lighter/Paradex/Edgex/GRVT/Backpack)
+- 거래소 API: hyperliquid api, mpdex(Lighter/Paradex/Edgex/GRVT/Backpack)
 - 설정: python‑dotenv, configparser
 
 ---
@@ -388,7 +388,7 @@ python main.py
 - ✅ 비‑HL(mpdex) 거래소: Lighter/Paradex/Edgex/GRVT/Backpack 연동
 - ✅ XYZ 지원
 - ✅ FLX / VNTL 지원 (USDH 페어)
-- 🔜 spot USDC 잔고 표기
+- ✅ spot USDC 잔고 표기
 - 🔜 USDC <-> USDH swap 편의기능
 - 🔜 비‑HL(mpdex) 거래소: Pacifica/Variational 연동
 - 🔜 limit 오더 관리
