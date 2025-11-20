@@ -1223,7 +1223,19 @@ class TradingService:
         # [CHG] is_hl_like 사용: HL(superstack 포함)은 그대로, 비‑HL만 변환
         if self._is_hl_like(meta):
             return coin
-        return symbol_create(exchange_name, coin)
+        # 비‑HL: 헤더/카드 DEX 선택의 영향을 제거한다.
+        # 'xyz:COIN' → 'COIN' 으로 정규화 (HIP‑3 접두사 제거)
+        sym = coin
+        try:
+            if isinstance(sym, str) and ":" in sym:
+                sym = sym.split(":", 1)[1]
+        except Exception:
+            pass
+
+        # mpdex 심볼 생성기 필요
+        if symbol_create is None:
+            raise RuntimeError("[mpdex] symbol_create 가 없어 비‑HL 심볼을 생성할 수 없습니다.")
+        return symbol_create(exchange_name, sym)
     
     def _extract_order_id(self, res) -> Optional[str]:
         if isinstance(res, list):
