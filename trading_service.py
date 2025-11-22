@@ -209,6 +209,22 @@ class TradingService:
         self._hl_asset_meta_cache: Dict[tuple[str, str], Dict[str, Any]] = {}
         #self._hl_asset_meta_ttl: float = 30.0  # comment: 캐시 TTL(초). 필요 시 조정
 
+    def get_display_builder_fee(self, exchange_name: str, dex: Optional[str], order_type: str) -> Optional[int]:
+        """
+        HL 카드 우상단 'FEE:' 표기를 위한 표시용 수수료 선택.
+        - dex: 'xyz' | 'flx' | 'vntl' | None(HL)
+        - order_type: 'market' | 'limit'
+        반환: feeInt(int) 또는 None(설정 없음)
+        """
+        try:
+            ex = self.manager.get_exchange(exchange_name)
+            if not ex:
+                return None
+            fee_int, _src, _pair = self._pick_fee_with_reason(ex, dex, order_type)
+            return int(fee_int) if fee_int is not None else None
+        except Exception:
+            return None
+
     def _hl_now_ms(self) -> int:
         """ex.milliseconds() 대체."""
         return int(time.time() * 1000)

@@ -155,6 +155,7 @@ class UrwidApp:
         self.dex_btns_header: Dict[str, urwid.AttrMap] = {}                      # 헤더 버튼 래퍼
         self.dex_btns_by_ex: Dict[str, Dict[str, urwid.AttrMap]] = {}            # 카드별 dex 
         self._status_locks: Dict[str, asyncio.Lock] = {name: asyncio.Lock() for name in self.mgr.all_names()}
+        self.fee_text: Dict[str, urwid.Text] = {}  # [ADD] 카드별 FEE 라벨 위젯
 
     def _is_hl_like(self, name: str) -> bool:
         try:
@@ -164,6 +165,27 @@ class UrwidApp:
             return str(meta.get("exchange", "")).lower() == "superstack"  # <-- 추가
         except Exception:
             return False
+
+    def _update_card_fee(self, name: str):
+        """
+        HL-like 카드에서 현재 DEX/주문타입에 맞는 feeInt를 표시.
+        비‑HL은 표기하지 않음.
+        """
+        try:
+            if not self._is_hl_like(name):
+                # 비‑HL은 FEE 위젯이 없거나 무의미 → 무시
+                return
+            dex = self.dex_by_ex.get(name, "HL")
+            dex_key = None if dex == "HL" else dex.lower()
+            order_type = (self.order_type.get(name) or "market").lower()
+            fee = self.service.get_display_builder_fee(name, dex_key, order_type)
+            lbl = f"Builder Fee: {fee}" if isinstance(fee, int) else "Builder Fee: -"
+            w = self.fee_text.get(name)
+            if w:
+                w.set_text(("label", lbl))
+        except Exception:
+            # 조용히 무시
+            pass
 
     # [ADD] 브래킷 마크업 파서(urwid용)
     def _parse_bracket_markup(self, s: str) -> list[tuple[Optional[str], str]]:
@@ -358,6 +380,7 @@ class UrwidApp:
             # 화면에 보이는 카드 버튼 스타일 갱신
             for n in self.mgr.visible_names():
                 self._update_card_dex_styles(n)
+                self._update_card_fee(n)
         finally:
             self._bulk_updating_tickers = False
 
@@ -389,8 +412,20 @@ class UrwidApp:
             buttons.append(('given', max(6, len(label)+4), wrap))
 
         self.dex_btns_by_ex[name] = row_btns
-        row = urwid.Columns(buttons, dividechars=1)
-        return urwid.Columns([(6, urwid.Text(("label", "DEX:"))), row], dividechars=1)
+        dex_row = urwid.Columns(buttons, dividechars=1)
+
+        # [ADD] 우측 FEE 라벨
+        fee_label = urwid.Text(("label", "Builder Fee: -"))
+        self.fee_text[name] = fee_label
+
+        # DEX 행을 왼쪽 가변폭으로, FEE 라벨은 오른쪽 고정 폭으로 배치
+        return urwid.Columns(
+            [
+                ('weight', 1, urwid.Padding(dex_row, left=0, right=1)),
+                ('weight', 1,    urwid.Padding(fee_label, left=0)),
+            ],
+            dividechars=1
+        )
 
     def _on_card_dex_select(self, name: str, dex: str):
         """
@@ -398,6 +433,7 @@ class UrwidApp:
         """
         self.dex_by_ex[name] = dex
         self._update_card_dex_styles(name)
+        self._update_card_fee(name)
 
     def _request_redraw(self):
         """다음 틱에 화면을 다시 그리도록 스케줄"""
@@ -529,6 +565,7 @@ class UrwidApp:
         def on_type(btn, n=name):
             self.order_type[n] = "limit" if self.order_type[n] == "market" else "market"
             self._refresh_type_label(n)
+            self._update_card_fee(n)
         type_btn = urwid.Button("MKT", on_press=on_type)
         type_wrap = urwid.AttrMap(type_btn, "btn_type", "btn_focus")
         self.type_btn[name] = type_btn
@@ -599,8 +636,10 @@ class UrwidApp:
         else:
             card = urwid.Pile([controls, price_line, info])
 
-        # [추가] 카드 생성 직후 현재 상태에 맞게 버튼 강조 반영
-        # 초기 enabled[name]은 False이므로 OFF 버튼이 강조(btn_off_on)로 보입니다.
+        # 초기 FEE 표기 1회 갱신(해당 카드가 HL-like일 경우)
+        if is_hl_like:
+            self._update_card_fee(name)
+
         self._refresh_side(name)
 
         return card
@@ -1959,6 +1998,8 @@ class UrwidApp:
             # 4) 가격/상태 주기 작업 시작
             self._price_task = asyncio.get_event_loop().create_task(self._price_loop())
             for n in self.mgr.visible_names():
+                if self._is_hl_like(n):
+                    self._update_card_fee(n)
                 if n not in self._status_tasks or self._status_tasks[n].done():
                     self._status_tasks[n] = asyncio.get_event_loop().create_task(self._status_loop(n))
             
