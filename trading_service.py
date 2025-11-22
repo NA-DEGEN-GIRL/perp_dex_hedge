@@ -1060,7 +1060,7 @@ class TradingService:
                 tif = "FrontendMarket"
             else:
                 tif = "Gtc"
-                if exchange_name.lower() in ['liquid']: # hard coding
+                if exchange_name.lower() in ['liquid','mass']: # hard coding
                     tif = "Ioc"
 
             px_eff = px_base * (1.0 + slippage) if is_buy else px_base * (1.0 - slippage)
