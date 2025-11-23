@@ -1,0 +1,888 @@
+1763884255.9855268 - mouse_event called: mouse press 1
+1763884263.3163605 - mouse_event called: mouse drag 1
+1763884263.4002786 - mouse_event called: mouse release 1
+1763884265.6026132 - mouse_event called: mouse press 1
+1763884265.95166 - mouse_event called: mouse press 5
+1763884265.963125 - mouse_event called: mouse press 5
+1763884265.9799018 - mouse_event called: mouse press 5
+1763884265.997652 - mouse_event called: mouse press 5
+1763884266.0115917 - mouse_event called: mouse press 5
+1763884266.0294833 - mouse_event called: mouse press 5
+1763884266.0467634 - mouse_event called: mouse press 5
+1763884266.0651693 - mouse_event called: mouse press 5
+1763884268.2129524 - mouse_event called: mouse press 1
+1763884268.4668708 - mouse_event called: mouse press 5
+1763884268.4789665 - mouse_event called: mouse press 5
+1763884268.4969766 - mouse_event called: mouse press 5
+1763884268.512632 - mouse_event called: mouse press 5
+1763884268.5292833 - mouse_event called: mouse press 5
+1763884268.5465114 - mouse_event called: mouse press 5
+1763884268.563395 - mouse_event called: mouse press 5
+1763884268.7989945 - mouse_event called: mouse press 5
+1763884268.813584 - mouse_event called: mouse press 5
+1763884268.8303385 - mouse_event called: mouse press 5
+1763884268.846443 - mouse_event called: mouse press 5
+1763884268.863256 - mouse_event called: mouse press 5
+1763884268.8804207 - mouse_event called: mouse press 5
+1763884269.0803509 - mouse_event called: mouse press 5
+1763884269.0962567 - mouse_event called: mouse press 5
+1763884269.1136172 - mouse_event called: mouse press 5
+1763884269.1298215 - mouse_event called: mouse press 5
+1763884269.1469026 - mouse_event called: mouse press 5
+1763884269.1631541 - mouse_event called: mouse press 5
+1763884269.1818159 - mouse_event called: mouse press 5
+1763884269.1969223 - mouse_event called: mouse press 5
+1763884269.3630226 - mouse_event called: mouse press 5
+1763884269.3840535 - mouse_event called: mouse press 5
+1763884269.3959675 - mouse_event called: mouse press 5
+1763884269.4134963 - mouse_event called: mouse press 5
+1763884269.4298255 - mouse_event called: mouse press 5
+1763884269.4464436 - mouse_event called: mouse press 5
+1763884269.4630227 - mouse_event called: mouse press 5
+1763884269.4788728 - mouse_event called: mouse press 5
+1763884269.6512578 - mouse_event called: mouse press 5
+1763884269.661165 - mouse_event called: mouse press 5
+1763884269.6788309 - mouse_event called: mouse press 5
+1763884269.6966913 - mouse_event called: mouse press 5
+1763884269.7135022 - mouse_event called: mouse press 5
+1763884269.729904 - mouse_event called: mouse press 5
+1763884269.746601 - mouse_event called: mouse press 5
+1763884269.762552 - mouse_event called: mouse press 5
+1763884269.7784142 - mouse_event called: mouse press 5
+1763884289.9379694 - mouse_event called: mouse press 5
+1763884289.9705255 - mouse_event called: mouse press 5
+1763884289.9882026 - mouse_event called: mouse press 5
+1763884290.0061982 - mouse_event called: mouse press 5
+1763884290.0215511 - mouse_event called: mouse press 5
+1763884290.9818823 - mouse_event called: mouse press 1
+1763884291.2753642 - mouse_event called: mouse press 5
+1763884291.2909455 - mouse_event called: mouse press 5
+1763884291.3075671 - mouse_event called: mouse press 5
+1763884291.325963 - mouse_event called: mouse press 5
+1763884291.340945 - mouse_event called: mouse press 5
+1763884291.35629 - mouse_event called: mouse press 5
+1763884291.8579001 - mouse_event called: mouse press 4
+1763884291.875154 - mouse_event called: mouse press 4
+1763884291.8913004 - mouse_event called: mouse press 4
+1763884291.9076636 - mouse_event called: mouse press 4
+1763884291.9241989 - mouse_event called: mouse press 4
+1763884291.9568796 - mouse_event called: mouse press 4
+1763884292.3763528 - mouse_event called: mouse press 4
+1763884292.3927557 - mouse_event called: mouse press 4
+1763884292.4086664 - mouse_event called: mouse press 4
+1763884292.4423323 - mouse_event called: mouse press 4
+1763884292.4588587 - mouse_event called: mouse press 4
+1763884292.624853 - mouse_event called: mouse press 5
+1763884292.6433618 - mouse_event called: mouse press 5
+1763884292.659373 - mouse_event called: mouse press 5
+1763884292.675921 - mouse_event called: mouse press 5
+1763884292.6919112 - mouse_event called: mouse press 5
+1763884292.7091148 - mouse_event called: mouse press 5
+1763884292.7257352 - mouse_event called: mouse press 5
+1763884292.9263034 - mouse_event called: mouse press 5
+1763884292.9431484 - mouse_event called: mouse press 5
+1763884292.961522 - mouse_event called: mouse press 5
+1763884292.9760516 - mouse_event called: mouse press 5
+1763884292.9931273 - mouse_event called: mouse press 5
+1763884293.0097432 - mouse_event called: mouse press 5
+1763884293.025303 - mouse_event called: mouse press 5
+1763884293.8123815 - mouse_event called: mouse press 1
+1763884294.0934331 - mouse_event called: mouse press 5
+1763884294.1095293 - mouse_event called: mouse press 5
+1763884294.1259356 - mouse_event called: mouse press 5
+1763884294.1429443 - mouse_event called: mouse press 5
+1763884294.1594825 - mouse_event called: mouse press 5
+1763884294.1763732 - mouse_event called: mouse press 5
+1763884294.1928492 - mouse_event called: mouse press 5
+1763884294.343359 - mouse_event called: mouse press 4
+1763884294.376894 - mouse_event called: mouse press 4
+1763884294.393793 - mouse_event called: mouse press 4
+1763884294.4106147 - mouse_event called: mouse press 4
+1763884294.4269762 - mouse_event called: mouse press 4
+1763884294.4442365 - mouse_event called: mouse press 4
+1763884294.9109519 - mouse_event called: mouse press 4
+1763884294.9269297 - mouse_event called: mouse press 4
+1763884294.9443636 - mouse_event called: mouse press 4
+1763884294.9600391 - mouse_event called: mouse press 4
+1763884294.97704 - mouse_event called: mouse press 4
+1763884294.9931018 - mouse_event called: mouse press 4
+1763884295.177613 - mouse_event called: mouse press 5
+1763884295.1939301 - mouse_event called: mouse press 5
+1763884295.2110338 - mouse_event called: mouse press 5
+1763884295.22973 - mouse_event called: mouse press 5
+1763884295.243943 - mouse_event called: mouse press 5
+1763884295.2619786 - mouse_event called: mouse press 5
+1763884295.2780335 - mouse_event called: mouse press 5
+1763884295.444707 - mouse_event called: mouse press 5
+1763884295.4792156 - mouse_event called: mouse press 5
+1763884295.4933903 - mouse_event called: mouse press 5
+1763884295.5101244 - mouse_event called: mouse press 5
+1763884295.5272677 - mouse_event called: mouse press 5
+1763884295.5445206 - mouse_event called: mouse press 5
+1763884295.5604005 - mouse_event called: mouse press 5
+1763884295.579429 - mouse_event called: mouse press 5
+1763884295.743993 - mouse_event called: mouse press 5
+1763884295.76047 - mouse_event called: mouse press 5
+1763884295.7804112 - mouse_event called: mouse press 5
+1763884295.7942686 - mouse_event called: mouse press 5
+1763884295.8111255 - mouse_event called: mouse press 5
+1763884295.8273904 - mouse_event called: mouse press 5
+1763884295.8434181 - mouse_event called: mouse press 5
+1763884295.8608224 - mouse_event called: mouse press 5
+1763884303.5959113 - mouse_event called: mouse press 1
+1763884303.890535 - mouse_event called: mouse press 4
+1763884303.9072442 - mouse_event called: mouse press 4
+1763884303.9230213 - mouse_event called: mouse press 4
+1763884303.939317 - mouse_event called: mouse press 4
+1763884303.9566846 - mouse_event called: mouse press 4
+1763884303.9729328 - mouse_event called: mouse press 4
+1763884304.2226713 - mouse_event called: mouse press 4
+1763884304.239725 - mouse_event called: mouse press 4
+1763884304.256867 - mouse_event called: mouse press 4
+1763884304.2727494 - mouse_event called: mouse press 4
+1763884304.2927494 - mouse_event called: mouse press 4
+1763884304.3065944 - mouse_event called: mouse press 4
+1763884304.3226483 - mouse_event called: mouse press 4
+1763884304.5889196 - mouse_event called: mouse press 4
+1763884304.6058884 - mouse_event called: mouse press 4
+1763884304.6223242 - mouse_event called: mouse press 4
+1763884304.6385286 - mouse_event called: mouse press 4
+1763884304.6555195 - mouse_event called: mouse press 4
+1763884304.6719873 - mouse_event called: mouse press 4
+1763884308.5670905 - mouse_event called: mouse press 5
+1763884308.5834107 - mouse_event called: mouse press 5
+1763884308.600052 - mouse_event called: mouse press 5
+1763884308.6168735 - mouse_event called: mouse press 5
+1763884308.6331224 - mouse_event called: mouse press 5
+1763884308.6500726 - mouse_event called: mouse press 5
+1763884308.8493233 - mouse_event called: mouse press 5
+1763884308.8663127 - mouse_event called: mouse press 5
+1763884308.882408 - mouse_event called: mouse press 5
+1763884308.8985984 - mouse_event called: mouse press 5
+1763884308.9148812 - mouse_event called: mouse press 5
+1763884308.9325256 - mouse_event called: mouse press 5
+1763884308.9492214 - mouse_event called: mouse press 5
+1763884329.3115585 - mouse_event called: mouse press 4
+1763884329.3284955 - mouse_event called: mouse press 4
+1763884329.3452575 - mouse_event called: mouse press 4
+1763884329.3605144 - mouse_event called: mouse press 4
+1763884329.378047 - mouse_event called: mouse press 4
+1763884329.7444248 - mouse_event called: mouse press 4
+1763884329.761346 - mouse_event called: mouse press 4
+1763884329.7783449 - mouse_event called: mouse press 4
+1763884329.7944386 - mouse_event called: mouse press 4
+1763884329.811334 - mouse_event called: mouse press 4
+1763884329.827047 - mouse_event called: mouse press 4
+1763884330.027309 - mouse_event called: mouse press 4
+1763884330.0438437 - mouse_event called: mouse press 4
+1763884330.0632005 - mouse_event called: mouse press 4
+1763884330.0771217 - mouse_event called: mouse press 4
+1763884330.0933182 - mouse_event called: mouse press 4
+1763884330.1099815 - mouse_event called: mouse press 4
+1763884330.3107839 - mouse_event called: mouse press 4
+1763884330.3273656 - mouse_event called: mouse press 4
+1763884330.3442826 - mouse_event called: mouse press 4
+1763884330.3615966 - mouse_event called: mouse press 4
+1763884330.3766687 - mouse_event called: mouse press 4
+1763884330.3927028 - mouse_event called: mouse press 4
+1763884330.725943 - mouse_event called: mouse press 5
+1763884330.7441592 - mouse_event called: mouse press 5
+1763884330.7607865 - mouse_event called: mouse press 5
+1763884330.7771413 - mouse_event called: mouse press 5
+1763884330.7935562 - mouse_event called: mouse press 5
+1763884330.8102362 - mouse_event called: mouse press 5
+1763884330.8275268 - mouse_event called: mouse press 5
+1763884330.9941874 - mouse_event called: mouse press 5
+1763884331.0281658 - mouse_event called: mouse press 5
+1763884331.0446188 - mouse_event called: mouse press 5
+1763884331.061994 - mouse_event called: mouse press 5
+1763884331.0795605 - mouse_event called: mouse press 5
+1763884331.0938354 - mouse_event called: mouse press 5
+1763884331.110979 - mouse_event called: mouse press 5
+1763884388.8967886 - mouse_event called: mouse press 1
+1763884388.9109712 - mouse_event called: mouse drag 1
+1763884389.0097208 - mouse_event called: mouse release 1
+1763884389.5249226 - mouse_event called: mouse press 5
+1763884389.5430732 - mouse_event called: mouse press 5
+1763884389.5594056 - mouse_event called: mouse press 5
+1763884389.5783086 - mouse_event called: mouse press 5
+1763884389.5933223 - mouse_event called: mouse press 5
+1763884389.6094184 - mouse_event called: mouse press 5
+1763884389.8940208 - mouse_event called: mouse press 4
+1763884389.909222 - mouse_event called: mouse press 4
+1763884389.925401 - mouse_event called: mouse press 4
+1763884389.942015 - mouse_event called: mouse press 4
+1763884394.8640907 - mouse_event called: mouse press 1
+1763884394.9522762 - mouse_event called: mouse release 1
+1763884395.2218072 - mouse_event called: mouse press 5
+1763884395.2408495 - mouse_event called: mouse press 5
+1763884395.255229 - mouse_event called: mouse press 5
+1763884395.272095 - mouse_event called: mouse press 5
+1763884395.2887092 - mouse_event called: mouse press 5
+1763884395.306257 - mouse_event called: mouse press 5
+1763884395.3230095 - mouse_event called: mouse press 5
+1763884395.4930837 - mouse_event called: mouse press 5
+1763884395.5219398 - mouse_event called: mouse press 5
+1763884395.539464 - mouse_event called: mouse press 5
+1763884395.554558 - mouse_event called: mouse press 5
+1763884395.5704653 - mouse_event called: mouse press 5
+1763884395.5878513 - mouse_event called: mouse press 5
+1763884395.8407266 - mouse_event called: mouse press 1
+1763884395.856923 - mouse_event called: mouse drag 1
+1763884395.907604 - mouse_event called: mouse release 1
+1763884396.2379327 - mouse_event called: mouse press 4
+1763884396.2565136 - mouse_event called: mouse press 4
+1763884396.269613 - mouse_event called: mouse press 4
+1763884396.2863827 - mouse_event called: mouse press 4
+1763884396.303822 - mouse_event called: mouse press 4
+1763884396.3209264 - mouse_event called: mouse press 4
+1763884396.5705354 - mouse_event called: mouse press 4
+1763884396.5854971 - mouse_event called: mouse press 4
+1763884396.6026511 - mouse_event called: mouse press 4
+1763884396.6187165 - mouse_event called: mouse press 4
+1763884396.6357615 - mouse_event called: mouse press 4
+1763884397.1208637 - mouse_event called: mouse press 5
+1763884397.138856 - mouse_event called: mouse press 5
+1763884397.1524284 - mouse_event called: mouse press 5
+1763884397.169789 - mouse_event called: mouse press 5
+1763884397.1874292 - mouse_event called: mouse press 5
+1763884397.2042358 - mouse_event called: mouse press 5
+1763884397.369411 - mouse_event called: mouse press 5
+1763884397.386041 - mouse_event called: mouse press 5
+1763884397.4184856 - mouse_event called: mouse press 5
+1763884397.4369166 - mouse_event called: mouse press 5
+1763884397.4530945 - mouse_event called: mouse press 5
+1763884397.4699018 - mouse_event called: mouse press 5
+1763884397.4875588 - mouse_event called: mouse press 5
+1763884397.653694 - mouse_event called: mouse press 5
+1763884397.6693296 - mouse_event called: mouse press 5
+1763884397.6858103 - mouse_event called: mouse press 5
+1763884397.7032833 - mouse_event called: mouse press 5
+1763884397.7194602 - mouse_event called: mouse press 5
+1763884397.736835 - mouse_event called: mouse press 5
+1763884397.9538414 - mouse_event called: mouse press 5
+1763884397.9688437 - mouse_event called: mouse press 5
+1763884397.9846349 - mouse_event called: mouse press 5
+1763884398.0025456 - mouse_event called: mouse press 5
+1763884398.0192041 - mouse_event called: mouse press 5
+1763884398.036032 - mouse_event called: mouse press 5
+1763884398.0543053 - mouse_event called: mouse press 5
+1763884398.0693564 - mouse_event called: mouse press 5
+1763884398.245762 - mouse_event called: mouse press 5
+1763884398.2670672 - mouse_event called: mouse press 5
+1763884398.285008 - mouse_event called: mouse press 5
+1763884398.3185627 - mouse_event called: mouse press 5
+1763884398.3360474 - mouse_event called: mouse press 5
+1763884398.3516273 - mouse_event called: mouse press 5
+1763884398.3683918 - mouse_event called: mouse press 5
+1763884398.5148873 - mouse_event called: mouse press 5
+1763884398.5339143 - mouse_event called: mouse press 5
+1763884398.5509143 - mouse_event called: mouse press 5
+1763884398.566831 - mouse_event called: mouse press 5
+1763884398.5857406 - mouse_event called: mouse press 5
+1763884398.6023583 - mouse_event called: mouse press 5
+1763884398.6197286 - mouse_event called: mouse press 5
+1763884398.6364133 - mouse_event called: mouse press 5
+1763884403.694432 - mouse_event called: mouse press 1
+1763884403.773354 - mouse_event called: mouse release 1
+1763884406.3257813 - mouse_event called: mouse press 5
+1763884406.3444555 - mouse_event called: mouse press 5
+1763884406.3589277 - mouse_event called: mouse press 5
+1763884406.375638 - mouse_event called: mouse press 5
+1763884406.3918324 - mouse_event called: mouse press 5
+1763884406.4073184 - mouse_event called: mouse press 5
+1763884410.6836643 - mouse_event called: mouse press 1
+1763884410.7327332 - mouse_event called: mouse drag 1
+1763884410.784049 - mouse_event called: mouse release 1
+1763884411.6585183 - mouse_event called: mouse press 1
+1763884411.752232 - mouse_event called: mouse release 1
+1763884417.9846654 - mouse_event called: mouse press 1
+1763884418.0332136 - mouse_event called: mouse drag 1
+1763884418.0470738 - mouse_event called: mouse release 1
+1763884422.0957382 - mouse_event called: mouse press 1
+1763884422.1835809 - mouse_event called: mouse release 1
+1763884423.9722443 - mouse_event called: mouse press 1
+1763884424.027362 - mouse_event called: mouse release 1
+1763884424.827425 - mouse_event called: mouse press 5
+1763884424.8605576 - mouse_event called: mouse press 5
+1763884424.8768737 - mouse_event called: mouse press 5
+1763884424.8934717 - mouse_event called: mouse press 5
+1763884424.909944 - mouse_event called: mouse press 5
+1763884424.926818 - mouse_event called: mouse press 5
+1763884428.1064618 - mouse_event called: mouse press 1
+1763884428.1965663 - mouse_event called: mouse release 1
+1763884430.4031978 - mouse_event called: mouse press 1
+1763884430.5335367 - mouse_event called: mouse release 1
+1763884736.639 - mouse_event: event=mouse press, btn=5, col=28, row=6
+1763884736.659 - mouse_event: event=mouse press, btn=5, col=28, row=6
+1763884736.673 - mouse_event: event=mouse press, btn=5, col=28, row=6
+1763884736.690 - mouse_event: event=mouse press, btn=5, col=28, row=6
+1763884736.708 - mouse_event: event=mouse press, btn=5, col=28, row=6
+1763884736.724 - mouse_event: event=mouse press, btn=5, col=28, row=6
+1763884736.740 - mouse_event: event=mouse press, btn=5, col=28, row=6
+1763884736.758 - mouse_event: event=mouse press, btn=5, col=28, row=6
+1763884736.958 - mouse_event: event=mouse press, btn=5, col=28, row=6
+1763884736.991 - mouse_event: event=mouse press, btn=5, col=28, row=6
+1763884737.007 - mouse_event: event=mouse press, btn=5, col=28, row=6
+1763884737.024 - mouse_event: event=mouse press, btn=5, col=28, row=6
+1763884737.040 - mouse_event: event=mouse press, btn=5, col=28, row=6
+1763884737.058 - mouse_event: event=mouse press, btn=5, col=28, row=6
+1763884737.258 - mouse_event: event=mouse press, btn=5, col=25, row=10
+1763884737.274 - mouse_event: event=mouse press, btn=5, col=24, row=12
+1763884737.291 - mouse_event: event=mouse press, btn=5, col=23, row=12
+1763884737.307 - mouse_event: event=mouse press, btn=5, col=23, row=13
+1763884737.324 - mouse_event: event=mouse press, btn=5, col=23, row=13
+1763884737.340 - mouse_event: event=mouse press, btn=5, col=23, row=13
+1763884737.359 - mouse_event: event=mouse press, btn=5, col=23, row=13
+1763884738.215 - mouse_event: event=mouse press, btn=5, col=23, row=13
+1763884738.244 - mouse_event: event=mouse press, btn=5, col=23, row=13
+1763884738.260 - mouse_event: event=mouse press, btn=5, col=23, row=13
+1763884738.276 - mouse_event: event=mouse press, btn=5, col=23, row=13
+1763884738.293 - mouse_event: event=mouse press, btn=5, col=23, row=13
+1763884738.310 - mouse_event: event=mouse press, btn=5, col=23, row=13
+1763884738.327 - mouse_event: event=mouse press, btn=5, col=23, row=13
+1763884738.519 - mouse_event: event=mouse press, btn=1, col=23, row=13
+1763884738.559 - mouse_event: event=mouse drag, btn=1, col=23, row=13
+1763884738.642 - mouse_event: event=mouse release, btn=1, col=23, row=13
+1763884738.976 - mouse_event: event=mouse press, btn=5, col=23, row=13
+1763884738.994 - mouse_event: event=mouse press, btn=5, col=22, row=13
+1763884739.009 - mouse_event: event=mouse press, btn=5, col=22, row=13
+1763884739.026 - mouse_event: event=mouse press, btn=5, col=22, row=13
+1763884739.042 - mouse_event: event=mouse press, btn=5, col=22, row=13
+1763884739.058 - mouse_event: event=mouse press, btn=5, col=22, row=13
+1763884739.075 - mouse_event: event=mouse press, btn=5, col=22, row=13
+1763884739.227 - mouse_event: event=mouse press, btn=5, col=22, row=13
+1763884739.243 - mouse_event: event=mouse press, btn=5, col=22, row=13
+1763884739.260 - mouse_event: event=mouse press, btn=5, col=22, row=13
+1763884739.277 - mouse_event: event=mouse press, btn=5, col=22, row=13
+1763884739.294 - mouse_event: event=mouse press, btn=5, col=21, row=13
+1763884739.312 - mouse_event: event=mouse press, btn=5, col=21, row=13
+1763884739.327 - mouse_event: event=mouse press, btn=5, col=21, row=13
+1763884739.343 - mouse_event: event=mouse press, btn=5, col=21, row=13
+1763884739.360 - mouse_event: event=mouse press, btn=5, col=21, row=13
+1763884741.035 - mouse_event: event=mouse press, btn=5, col=18, row=15
+1763884741.054 - mouse_event: event=mouse press, btn=5, col=17, row=15
+1763884741.068 - mouse_event: event=mouse press, btn=5, col=8, row=18
+1763884741.085 - mouse_event: event=mouse press, btn=5, col=8, row=18
+1763884741.101 - mouse_event: event=mouse press, btn=5, col=6, row=19
+1763884741.121 - mouse_event: event=mouse press, btn=5, col=6, row=19
+1763884741.319 - mouse_event: event=mouse press, btn=5, col=7, row=19
+1763884741.335 - mouse_event: event=mouse press, btn=5, col=7, row=19
+1763884741.352 - mouse_event: event=mouse press, btn=5, col=7, row=19
+1763884741.368 - mouse_event: event=mouse press, btn=5, col=7, row=19
+1763884741.386 - mouse_event: event=mouse press, btn=5, col=8, row=19
+1763884741.401 - mouse_event: event=mouse press, btn=5, col=9, row=19
+1763884741.418 - mouse_event: event=mouse press, btn=5, col=10, row=19
+1763884741.569 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884741.586 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884741.603 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884741.620 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884741.636 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884741.652 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884741.669 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884741.686 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884741.702 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884741.826 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884741.836 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884741.853 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884741.869 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884741.886 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884741.904 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884741.920 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884741.938 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884742.073 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884742.088 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884742.121 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884742.137 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884742.155 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884742.173 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884742.187 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884742.204 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884742.371 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884742.388 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884742.405 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884742.421 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884742.439 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884742.456 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884742.472 - mouse_event: event=mouse press, btn=5, col=11, row=19
+1763884742.489 - mouse_event: event=mouse press, btn=5, col=12, row=19
+1763884742.622 - mouse_event: event=mouse press, btn=5, col=12, row=19
+1763884742.639 - mouse_event: event=mouse press, btn=5, col=12, row=19
+1763884742.655 - mouse_event: event=mouse press, btn=5, col=12, row=19
+1763884742.671 - mouse_event: event=mouse press, btn=5, col=12, row=19
+1763884742.689 - mouse_event: event=mouse press, btn=5, col=12, row=19
+1763884742.706 - mouse_event: event=mouse press, btn=5, col=13, row=19
+1763884742.723 - mouse_event: event=mouse press, btn=5, col=13, row=19
+1763884742.740 - mouse_event: event=mouse press, btn=5, col=13, row=19
+1763884742.755 - mouse_event: event=mouse press, btn=5, col=13, row=19
+1763884745.744 - mouse_event: event=mouse press, btn=1, col=43, row=1
+1763884745.764 - mouse_event: event=mouse drag, btn=1, col=43, row=1
+1763884745.817 - mouse_event: event=mouse release, btn=1, col=43, row=1
+1763884746.064 - mouse_event: event=mouse press, btn=5, col=43, row=1
+1763884746.096 - mouse_event: event=mouse press, btn=5, col=43, row=1
+1763884746.112 - mouse_event: event=mouse press, btn=5, col=43, row=1
+1763884746.131 - mouse_event: event=mouse press, btn=5, col=42, row=1
+1763884746.144 - mouse_event: event=mouse press, btn=5, col=42, row=1
+1763884746.161 - mouse_event: event=mouse press, btn=5, col=42, row=1
+1763884746.178 - mouse_event: event=mouse press, btn=5, col=42, row=1
+1763884746.345 - mouse_event: event=mouse press, btn=5, col=42, row=1
+1763884746.378 - mouse_event: event=mouse press, btn=5, col=42, row=1
+1763884746.395 - mouse_event: event=mouse press, btn=5, col=42, row=1
+1763884746.411 - mouse_event: event=mouse press, btn=5, col=42, row=1
+1763884746.428 - mouse_event: event=mouse press, btn=5, col=42, row=1
+1763884746.444 - mouse_event: event=mouse press, btn=5, col=42, row=1
+1763884746.461 - mouse_event: event=mouse press, btn=5, col=42, row=1
+1763884746.616 - mouse_event: event=mouse press, btn=5, col=43, row=1
+1763884746.627 - mouse_event: event=mouse press, btn=5, col=43, row=1
+1763884746.646 - mouse_event: event=mouse press, btn=5, col=43, row=1
+1763884746.663 - mouse_event: event=mouse press, btn=5, col=43, row=1
+1763884746.679 - mouse_event: event=mouse press, btn=5, col=42, row=1
+1763884746.696 - mouse_event: event=mouse press, btn=5, col=42, row=1
+1763884746.711 - mouse_event: event=mouse press, btn=5, col=42, row=1
+1763884746.728 - mouse_event: event=mouse press, btn=5, col=42, row=1
+1763884746.745 - mouse_event: event=mouse press, btn=5, col=42, row=1
+1763884746.828 - mouse_event: event=mouse press, btn=4, col=42, row=1
+1763884746.848 - mouse_event: event=mouse press, btn=4, col=42, row=1
+1763884746.862 - mouse_event: event=mouse press, btn=4, col=41, row=2
+1763884746.879 - mouse_event: event=mouse press, btn=4, col=41, row=2
+1763884746.896 - mouse_event: event=mouse press, btn=4, col=41, row=2
+1763884746.912 - mouse_event: event=mouse press, btn=4, col=41, row=2
+1763884747.113 - mouse_event: event=mouse press, btn=4, col=39, row=2
+1763884747.130 - mouse_event: event=mouse press, btn=4, col=39, row=2
+1763884747.147 - mouse_event: event=mouse press, btn=4, col=39, row=2
+1763884747.162 - mouse_event: event=mouse press, btn=4, col=39, row=2
+1763884747.180 - mouse_event: event=mouse press, btn=4, col=39, row=2
+1763884747.196 - mouse_event: event=mouse press, btn=4, col=39, row=2
+1763884747.347 - mouse_event: event=mouse press, btn=4, col=38, row=2
+1763884747.379 - mouse_event: event=mouse press, btn=4, col=38, row=2
+1763884747.396 - mouse_event: event=mouse press, btn=4, col=38, row=2
+1763884747.413 - mouse_event: event=mouse press, btn=4, col=38, row=2
+1763884747.429 - mouse_event: event=mouse press, btn=4, col=38, row=2
+1763884747.445 - mouse_event: event=mouse press, btn=4, col=38, row=2
+1763884747.713 - mouse_event: event=mouse press, btn=1, col=61, row=5
+1763884747.775 - mouse_event: event=mouse release, btn=1, col=61, row=5
+1763884760.821 - mouse_event: event=mouse press, btn=5, col=91, row=7
+1763884760.853 - mouse_event: event=mouse press, btn=5, col=91, row=7
+1763884760.869 - mouse_event: event=mouse press, btn=5, col=91, row=7
+1763884760.907 - mouse_event: event=mouse press, btn=5, col=91, row=7
+1763884760.954 - mouse_event: event=mouse press, btn=5, col=91, row=7
+1763884761.377 - mouse_event: event=mouse press, btn=4, col=91, row=7
+1763884761.403 - mouse_event: event=mouse press, btn=4, col=91, row=7
+1763884761.435 - mouse_event: event=mouse press, btn=4, col=91, row=7
+1763884761.451 - mouse_event: event=mouse press, btn=4, col=91, row=7
+1763884761.468 - mouse_event: event=mouse press, btn=4, col=91, row=7
+1763884761.504 - mouse_event: event=mouse press, btn=4, col=91, row=7
+1763884761.950 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884761.983 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884761.999 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884762.082 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884762.099 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884762.880 - mouse_event: event=mouse press, btn=5, col=91, row=6
+1763884762.917 - mouse_event: event=mouse press, btn=5, col=91, row=6
+1763884762.931 - mouse_event: event=mouse press, btn=5, col=91, row=6
+1763884763.279 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884763.294 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884763.312 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884763.329 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884763.347 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884763.361 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884764.593 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884764.606 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884764.641 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884764.672 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884765.572 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884765.605 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884765.655 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884765.955 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884765.988 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884766.021 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884766.056 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884766.088 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884766.687 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884766.704 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884766.721 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884766.737 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884766.754 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884767.536 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884767.554 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884767.570 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884767.586 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884767.603 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884768.847 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884768.877 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884768.897 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884768.908 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884768.958 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884769.226 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884769.711 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884769.728 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884769.746 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884769.763 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884769.778 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884769.795 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884769.903 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884771.333 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884771.368 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884771.384 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884771.400 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884771.417 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884771.433 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884771.884 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884771.901 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884771.919 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884771.940 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884771.956 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884771.969 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884772.424 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884772.436 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884772.472 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884772.486 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884772.503 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884772.538 - mouse_event: event=mouse press, btn=4, col=92, row=6
+1763884772.820 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884772.836 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884772.857 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884772.870 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884772.887 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884772.904 - mouse_event: event=mouse press, btn=5, col=92, row=6
+1763884773.639 - mouse_event: event=mouse press, btn=1, col=97, row=17
+1763884776.691 - mouse_event: event=mouse press, btn=5, col=40, row=1
+1763884776.725 - mouse_event: event=mouse press, btn=5, col=40, row=1
+1763884776.742 - mouse_event: event=mouse press, btn=5, col=40, row=1
+1763884776.759 - mouse_event: event=mouse press, btn=5, col=40, row=1
+1763884776.775 - mouse_event: event=mouse press, btn=5, col=40, row=1
+1763884776.792 - mouse_event: event=mouse press, btn=5, col=40, row=1
+1763884776.809 - mouse_event: event=mouse press, btn=5, col=40, row=1
+1763884776.826 - mouse_event: event=mouse press, btn=5, col=40, row=1
+1763884777.093 - mouse_event: event=mouse press, btn=5, col=41, row=1
+1763884777.125 - mouse_event: event=mouse press, btn=5, col=41, row=1
+1763884777.142 - mouse_event: event=mouse press, btn=5, col=41, row=1
+1763884777.159 - mouse_event: event=mouse press, btn=5, col=41, row=1
+1763884777.176 - mouse_event: event=mouse press, btn=5, col=41, row=1
+1763884777.193 - mouse_event: event=mouse press, btn=5, col=41, row=1
+1763884777.212 - mouse_event: event=mouse press, btn=5, col=41, row=1
+1763884777.413 - mouse_event: event=mouse press, btn=5, col=41, row=1
+1763884777.426 - mouse_event: event=mouse press, btn=5, col=41, row=1
+1763884777.443 - mouse_event: event=mouse press, btn=5, col=41, row=1
+1763884777.459 - mouse_event: event=mouse press, btn=5, col=41, row=1
+1763884777.476 - mouse_event: event=mouse press, btn=5, col=41, row=1
+1763884777.493 - mouse_event: event=mouse press, btn=5, col=41, row=1
+1763884777.514 - mouse_event: event=mouse press, btn=5, col=41, row=1
+1763884783.141 - mouse_event: event=mouse press, btn=4, col=49, row=3
+1763884783.158 - mouse_event: event=mouse press, btn=4, col=49, row=3
+1763884783.173 - mouse_event: event=mouse press, btn=4, col=49, row=3
+1763884783.195 - mouse_event: event=mouse press, btn=4, col=49, row=3
+1763884783.207 - mouse_event: event=mouse press, btn=4, col=49, row=3
+1763884783.224 - mouse_event: event=mouse press, btn=4, col=49, row=3
+1763884783.241 - mouse_event: event=mouse press, btn=4, col=49, row=3
+1763884783.463 - mouse_event: event=mouse press, btn=4, col=49, row=3
+1763884783.474 - mouse_event: event=mouse press, btn=4, col=49, row=3
+1763884783.489 - mouse_event: event=mouse press, btn=4, col=49, row=3
+1763884783.523 - mouse_event: event=mouse press, btn=4, col=49, row=3
+1763884783.540 - mouse_event: event=mouse press, btn=4, col=49, row=3
+1763884783.557 - mouse_event: event=mouse press, btn=4, col=49, row=3
+1763884783.573 - mouse_event: event=mouse press, btn=4, col=49, row=3
+1763884783.958 - mouse_event: event=mouse press, btn=5, col=49, row=3
+1763884783.973 - mouse_event: event=mouse press, btn=5, col=49, row=3
+1763884783.989 - mouse_event: event=mouse press, btn=5, col=49, row=3
+1763884784.007 - mouse_event: event=mouse press, btn=5, col=49, row=3
+1763884784.024 - mouse_event: event=mouse press, btn=5, col=49, row=3
+1763884784.040 - mouse_event: event=mouse press, btn=5, col=49, row=3
+1763884784.056 - mouse_event: event=mouse press, btn=5, col=49, row=3
+1763884784.273 - mouse_event: event=mouse press, btn=5, col=49, row=3
+1763884784.290 - mouse_event: event=mouse press, btn=5, col=49, row=3
+1763884784.306 - mouse_event: event=mouse press, btn=5, col=49, row=3
+1763884784.323 - mouse_event: event=mouse press, btn=5, col=49, row=3
+1763884784.339 - mouse_event: event=mouse press, btn=5, col=49, row=3
+1763884784.356 - mouse_event: event=mouse press, btn=5, col=49, row=3
+1763884784.372 - mouse_event: event=mouse press, btn=5, col=49, row=3
+1763884784.827 - mouse_event: event=mouse press, btn=5, col=47, row=4
+1763884784.839 - mouse_event: event=mouse press, btn=5, col=47, row=4
+1763884784.855 - mouse_event: event=mouse press, btn=5, col=47, row=4
+1763884784.872 - mouse_event: event=mouse press, btn=5, col=47, row=4
+1763884784.889 - mouse_event: event=mouse press, btn=5, col=47, row=4
+1763884784.905 - mouse_event: event=mouse press, btn=5, col=47, row=4
+1763884785.389 - mouse_event: event=mouse press, btn=4, col=48, row=4
+1763884785.422 - mouse_event: event=mouse press, btn=4, col=48, row=4
+1763884785.439 - mouse_event: event=mouse press, btn=4, col=48, row=4
+1763884785.455 - mouse_event: event=mouse press, btn=4, col=48, row=4
+1763884785.472 - mouse_event: event=mouse press, btn=4, col=48, row=4
+1763884785.488 - mouse_event: event=mouse press, btn=4, col=48, row=4
+1763884785.521 - mouse_event: event=mouse press, btn=4, col=48, row=4
+1763884786.308 - mouse_event: event=mouse press, btn=5, col=48, row=4
+1763884786.437 - mouse_event: event=mouse press, btn=5, col=48, row=4
+1763884786.454 - mouse_event: event=mouse press, btn=5, col=48, row=4
+1763884786.486 - mouse_event: event=mouse press, btn=5, col=48, row=4
+1763884786.521 - mouse_event: event=mouse press, btn=5, col=48, row=4
+1763884786.771 - mouse_event: event=mouse press, btn=5, col=48, row=4
+1763884786.786 - mouse_event: event=mouse press, btn=5, col=48, row=4
+1763884786.804 - mouse_event: event=mouse press, btn=5, col=48, row=4
+1763884786.820 - mouse_event: event=mouse press, btn=5, col=48, row=4
+1763884786.837 - mouse_event: event=mouse press, btn=5, col=48, row=4
+1763884786.853 - mouse_event: event=mouse press, btn=5, col=48, row=4
+1763884787.502 - mouse_event: event=mouse press, btn=4, col=48, row=4
+1763884787.711 - mouse_event: event=mouse press, btn=4, col=48, row=4
+1763884787.736 - mouse_event: event=mouse press, btn=4, col=48, row=4
+1763884787.852 - mouse_event: event=mouse press, btn=4, col=48, row=4
+1763884787.885 - mouse_event: event=mouse press, btn=4, col=48, row=4
+1763884787.984 - mouse_event: event=mouse press, btn=4, col=48, row=4
+1763884788.402 - mouse_event: event=mouse press, btn=4, col=48, row=4
+1763884788.502 - mouse_event: event=mouse press, btn=4, col=47, row=4
+1763884788.825 - mouse_event: event=mouse press, btn=4, col=44, row=4
+1763884788.884 - mouse_event: event=mouse press, btn=4, col=44, row=4
+1763884789.100 - mouse_event: event=mouse press, btn=4, col=44, row=4
+1763884789.300 - mouse_event: event=mouse press, btn=5, col=44, row=4
+1763884789.350 - mouse_event: event=mouse press, btn=5, col=44, row=4
+1763884789.683 - mouse_event: event=mouse press, btn=5, col=44, row=4
+1763884789.866 - mouse_event: event=mouse press, btn=5, col=44, row=4
+1763884790.050 - mouse_event: event=mouse press, btn=5, col=44, row=4
+1763884790.465 - mouse_event: event=mouse press, btn=5, col=44, row=4
+1763884790.498 - mouse_event: event=mouse press, btn=5, col=44, row=4
+1763884790.581 - mouse_event: event=mouse press, btn=5, col=44, row=4
+1763884791.098 - mouse_event: event=mouse press, btn=5, col=56, row=4
+1763884791.114 - mouse_event: event=mouse press, btn=5, col=56, row=4
+1763884791.131 - mouse_event: event=mouse press, btn=5, col=56, row=4
+1763884791.363 - mouse_event: event=mouse press, btn=5, col=56, row=4
+1763884791.397 - mouse_event: event=mouse press, btn=5, col=56, row=4
+1763884791.414 - mouse_event: event=mouse press, btn=5, col=56, row=4
+1763884791.431 - mouse_event: event=mouse press, btn=5, col=56, row=4
+1763884791.449 - mouse_event: event=mouse press, btn=5, col=56, row=4
+1763884791.480 - mouse_event: event=mouse press, btn=5, col=56, row=4
+1763884791.613 - mouse_event: event=mouse press, btn=4, col=56, row=4
+1763884791.630 - mouse_event: event=mouse press, btn=4, col=56, row=4
+1763884791.663 - mouse_event: event=mouse press, btn=4, col=56, row=4
+1763884791.722 - mouse_event: event=mouse press, btn=4, col=56, row=4
+1763884791.812 - mouse_event: event=mouse press, btn=4, col=56, row=4
+1763884792.079 - mouse_event: event=mouse press, btn=4, col=56, row=4
+1763884792.128 - mouse_event: event=mouse press, btn=4, col=56, row=4
+1763884792.212 - mouse_event: event=mouse press, btn=4, col=56, row=4
+1763884792.512 - mouse_event: event=mouse press, btn=4, col=56, row=4
+1763884792.733 - mouse_event: event=mouse press, btn=4, col=56, row=4
+1763884792.861 - mouse_event: event=mouse press, btn=4, col=56, row=4
+1763884792.961 - mouse_event: event=mouse press, btn=5, col=56, row=4
+1763884793.027 - mouse_event: event=mouse press, btn=5, col=56, row=4
+1763884793.631 - mouse_event: event=mouse press, btn=5, col=56, row=4
+1763884794.159 - mouse_event: event=mouse press, btn=5, col=56, row=4
+1763884794.526 - mouse_event: event=mouse press, btn=5, col=56, row=4
+1763884794.891 - mouse_event: event=mouse press, btn=5, col=56, row=4
+1763884795.295 - mouse_event: event=mouse press, btn=5, col=56, row=4
+1763884795.724 - mouse_event: event=mouse press, btn=5, col=56, row=4
+1763884796.855 - mouse_event: event=mouse press, btn=4, col=56, row=4
+1763884797.233 - mouse_event: event=mouse press, btn=5, col=56, row=4
+1763884797.455 - mouse_event: event=mouse press, btn=5, col=56, row=4
+1763884797.962 - mouse_event: event=mouse press, btn=5, col=38, row=5
+1763884798.178 - mouse_event: event=mouse press, btn=5, col=38, row=5
+1763884798.226 - mouse_event: event=mouse press, btn=5, col=38, row=5
+1763884798.629 - mouse_event: event=mouse press, btn=5, col=82, row=5
+1763884798.660 - mouse_event: event=mouse press, btn=5, col=83, row=5
+1763884798.676 - mouse_event: event=mouse press, btn=5, col=83, row=5
+1763884798.693 - mouse_event: event=mouse press, btn=5, col=83, row=5
+1763884798.709 - mouse_event: event=mouse press, btn=5, col=83, row=5
+1763884799.059 - mouse_event: event=mouse press, btn=4, col=84, row=5
+1763884799.128 - mouse_event: event=mouse press, btn=5, col=73, row=6
+1763884799.177 - mouse_event: event=mouse press, btn=5, col=66, row=7
+1763884799.194 - mouse_event: event=mouse press, btn=5, col=65, row=7
+1763884799.210 - mouse_event: event=mouse press, btn=5, col=65, row=7
+1763884799.730 - mouse_event: event=mouse press, btn=5, col=61, row=7
+1763884799.746 - mouse_event: event=mouse press, btn=5, col=61, row=7
+1763884799.762 - mouse_event: event=mouse press, btn=5, col=61, row=7
+1763884799.779 - mouse_event: event=mouse press, btn=5, col=61, row=7
+1763884799.829 - mouse_event: event=mouse press, btn=5, col=61, row=7
+1763884800.753 - mouse_event: event=mouse press, btn=4, col=61, row=7
+1763884800.769 - mouse_event: event=mouse press, btn=4, col=61, row=7
+1763884801.302 - mouse_event: event=mouse press, btn=5, col=61, row=7
+1763884801.471 - mouse_event: event=mouse press, btn=5, col=61, row=7
+1763884801.678 - mouse_event: event=mouse press, btn=5, col=61, row=7
+1763884801.688 - mouse_event: event=mouse press, btn=5, col=61, row=7
+1763884801.704 - mouse_event: event=mouse press, btn=5, col=61, row=7
+1763884801.721 - mouse_event: event=mouse press, btn=5, col=61, row=7
+1763884801.737 - mouse_event: event=mouse press, btn=5, col=61, row=7
+1763884802.266 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884802.266 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884802.271 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884802.289 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884802.339 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884802.463 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884802.474 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884802.506 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884802.523 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884802.557 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884802.589 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884802.644 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884803.073 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884803.108 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884803.141 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884803.158 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884803.175 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884803.224 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884803.909 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884804.644 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884805.662 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884806.146 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884806.931 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884807.164 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884807.280 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884807.380 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884807.703 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884807.730 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884807.764 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884808.563 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884809.082 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884809.323 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884809.498 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884811.031 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884811.049 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884811.098 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884811.647 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884811.664 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884812.349 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884813.346 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884814.515 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884816.045 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884817.442 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884817.859 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884817.924 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884818.057 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884818.628 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884818.688 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884818.721 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884818.773 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884819.074 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884819.103 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884819.120 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884819.136 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884819.153 - mouse_event: event=mouse press, btn=4, col=90, row=6
+1763884819.801 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884819.818 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884819.834 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884819.852 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884819.868 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884819.884 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884820.116 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884820.134 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884820.149 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884820.170 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884820.183 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884820.199 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884820.415 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884820.432 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884820.448 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884820.465 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884820.484 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884820.498 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884820.713 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884820.731 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884820.747 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884820.764 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884820.781 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884820.798 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884820.814 - mouse_event: event=mouse press, btn=5, col=90, row=6
+1763884822.379 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884823.044 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884823.162 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884823.178 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884823.213 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884823.260 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884823.626 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884823.660 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884823.693 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884823.711 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884823.726 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884823.776 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884824.387 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884824.398 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884824.430 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884824.458 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884824.476 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884824.712 - mouse_event: event=mouse press, btn=5, col=93, row=6
+1763884825.474 - mouse_event: event=mouse press, btn=5, col=93, row=6
+1763884826.256 - mouse_event: event=mouse press, btn=5, col=93, row=6
+1763884826.657 - mouse_event: event=mouse press, btn=5, col=93, row=6
+1763884826.722 - mouse_event: event=mouse press, btn=5, col=93, row=6
+1763884826.840 - mouse_event: event=mouse press, btn=5, col=93, row=6
+1763884826.914 - mouse_event: event=mouse press, btn=5, col=93, row=6
+1763884827.321 - mouse_event: event=mouse press, btn=5, col=93, row=6
+1763884827.354 - mouse_event: event=mouse press, btn=5, col=93, row=6
+1763884827.388 - mouse_event: event=mouse press, btn=5, col=93, row=6
+1763884827.443 - mouse_event: event=mouse press, btn=5, col=93, row=6
+1763884828.995 - mouse_event: event=mouse press, btn=5, col=93, row=6
+1763884829.029 - mouse_event: event=mouse press, btn=5, col=93, row=6
+1763884829.045 - mouse_event: event=mouse press, btn=5, col=93, row=6
+1763884829.061 - mouse_event: event=mouse press, btn=5, col=93, row=6
+1763884829.644 - mouse_event: event=mouse press, btn=5, col=93, row=6
+1763884830.109 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884830.143 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884830.176 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884830.208 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884830.242 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884830.292 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884830.500 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884830.509 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884830.530 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884830.558 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884830.575 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884830.624 - mouse_event: event=mouse press, btn=4, col=93, row=6
+1763884842.386 - mouse_event: event=mouse press, btn=5, col=92, row=11
+1763884842.420 - mouse_event: event=mouse press, btn=5, col=92, row=11
+1763884842.454 - mouse_event: event=mouse press, btn=5, col=92, row=11
+1763884843.667 - mouse_event: event=mouse press, btn=4, col=92, row=11
+1763884844.389 - mouse_event: event=mouse press, btn=5, col=92, row=11
+1763884845.316 - mouse_event: event=mouse press, btn=4, col=92, row=11
+1763884845.797 - mouse_event: event=mouse press, btn=4, col=92, row=11
+1763884845.813 - mouse_event: event=mouse press, btn=4, col=92, row=11
+1763884845.864 - mouse_event: event=mouse press, btn=4, col=92, row=11
+1763884846.603 - mouse_event: event=mouse press, btn=4, col=92, row=11
+1763884846.646 - mouse_event: event=mouse press, btn=4, col=92, row=11
+1763884846.679 - mouse_event: event=mouse press, btn=4, col=92, row=11
+1763884847.395 - mouse_event: event=mouse press, btn=5, col=92, row=11
+1763884847.761 - mouse_event: event=mouse press, btn=5, col=92, row=11
+1763884847.794 - mouse_event: event=mouse press, btn=5, col=92, row=11
+1763884847.812 - mouse_event: event=mouse press, btn=5, col=92, row=11
+1763884847.845 - mouse_event: event=mouse press, btn=5, col=92, row=11
+1763884848.346 - mouse_event: event=mouse press, btn=5, col=92, row=11
+1763884848.377 - mouse_event: event=mouse press, btn=5, col=92, row=11
+1763884848.393 - mouse_event: event=mouse press, btn=5, col=92, row=11
+1763884848.410 - mouse_event: event=mouse press, btn=5, col=92, row=11
+1763884848.427 - mouse_event: event=mouse press, btn=5, col=92, row=11
+1763884848.827 - mouse_event: event=mouse press, btn=4, col=92, row=11
+1763884848.877 - mouse_event: event=mouse press, btn=4, col=92, row=11
+1763884848.893 - mouse_event: event=mouse press, btn=4, col=92, row=11
+1763884848.910 - mouse_event: event=mouse press, btn=4, col=92, row=11
+1763884848.926 - mouse_event: event=mouse press, btn=4, col=92, row=11
+1763884849.192 - mouse_event: event=mouse press, btn=4, col=92, row=11
+1763884849.225 - mouse_event: event=mouse press, btn=4, col=92, row=11
+1763884849.262 - mouse_event: event=mouse press, btn=4, col=92, row=11
+1763884849.292 - mouse_event: event=mouse press, btn=4, col=92, row=11
+1763884849.579 - mouse_event: event=mouse press, btn=4, col=92, row=11
+1763884849.592 - mouse_event: event=mouse press, btn=4, col=92, row=11
+1763884849.609 - mouse_event: event=mouse press, btn=4, col=92, row=11
+1763884849.625 - mouse_event: event=mouse press, btn=4, col=92, row=11
+1763884849.642 - mouse_event: event=mouse press, btn=4, col=92, row=11
+1763884849.660 - mouse_event: event=mouse press, btn=4, col=92, row=11
+1763884850.126 - mouse_event: event=mouse press, btn=4, col=91, row=11
+1763884850.142 - mouse_event: event=mouse press, btn=4, col=91, row=11
+1763884850.158 - mouse_event: event=mouse press, btn=4, col=91, row=11
+1763884850.179 - mouse_event: event=mouse press, btn=4, col=91, row=11
+1763884850.192 - mouse_event: event=mouse press, btn=4, col=91, row=11
+1763884851.909 - mouse_event: event=mouse press, btn=5, col=90, row=10
+1763884851.943 - mouse_event: event=mouse press, btn=5, col=89, row=10
+1763884851.960 - mouse_event: event=mouse press, btn=5, col=89, row=10
+1763884851.975 - mouse_event: event=mouse press, btn=5, col=89, row=10
+1763884851.995 - mouse_event: event=mouse press, btn=5, col=89, row=10
+1763884852.010 - mouse_event: event=mouse press, btn=5, col=89, row=10
+1763884852.282 - mouse_event: event=mouse press, btn=5, col=88, row=10
+1763884852.293 - mouse_event: event=mouse press, btn=5, col=87, row=10
+1763884852.308 - mouse_event: event=mouse press, btn=5, col=87, row=10
+1763884852.325 - mouse_event: event=mouse press, btn=5, col=87, row=10
+1763884852.342 - mouse_event: event=mouse press, btn=5, col=87, row=10
+1763884852.571 - mouse_event: event=mouse press, btn=4, col=87, row=10
+1763884852.583 - mouse_event: event=mouse press, btn=4, col=87, row=10
+1763884852.608 - mouse_event: event=mouse press, btn=4, col=87, row=10
+1763884852.626 - mouse_event: event=mouse press, btn=4, col=87, row=10
+1763884852.642 - mouse_event: event=mouse press, btn=4, col=87, row=10
+1763884852.659 - mouse_event: event=mouse press, btn=4, col=87, row=10
+1763884852.865 - mouse_event: event=mouse press, btn=4, col=87, row=10
+1763884852.892 - mouse_event: event=mouse press, btn=4, col=87, row=10
+1763884852.910 - mouse_event: event=mouse press, btn=4, col=86, row=10
+1763884852.925 - mouse_event: event=mouse press, btn=4, col=86, row=10
+1763884852.941 - mouse_event: event=mouse press, btn=4, col=86, row=10

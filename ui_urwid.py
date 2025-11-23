@@ -7,6 +7,7 @@ import math
 
 import urwid
 from urwid.widget.pile import PileWarning  # urwid 레이아웃 경고 제거용
+from ui_scroll import ScrollBar, ScrollableListBox, hook_global_mouse_events
 
 from core import ExchangeManager
 from trading_service import TradingService
@@ -16,6 +17,34 @@ import contextlib
 import re
 import time
 from types import SimpleNamespace
+
+def _attach_ui_file_logger(filename: str = None):
+    """
+    루트 로거에 UI 전용 FileHandler를 추가합니다.
+    - main._setup_logging() 이후에 호출되어야 합니다(handlers.clear() 이후).
+    - filename이 None이면 환경변수 PDEX_UI_LOG_FILE 또는 'debug_sc.log' 사용.
+    """
+    fname = filename or os.getenv("PDEX_UI_LOG_FILE", "debug_sc.log")
+    root = logging.getLogger()
+    fmt = logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s")
+
+    # 이미 동일한 파일 핸들러가 있으면 중복 추가하지 않음
+    for h in root.handlers:
+        if isinstance(h, logging.FileHandler):
+            try:
+                if getattr(h, "baseFilename", "").endswith(fname):
+                    return
+            except Exception:
+                pass
+
+    try:
+        fh = logging.FileHandler(fname, mode="a", encoding="utf-8")  # comment: 항상 새로 시작
+        fh.setFormatter(fmt)
+        root.addHandler(fh)
+        logging.info(f"[UI-LOG] extra file handler attached: {fname}")
+    except Exception as e:
+        # 파일 열기 실패 등은 조용히 넘어감
+        logging.warning(f"[UI-LOG] attach failed for {fname}: {e}")
 
 # [추가] 가격/상태 폴링 간격 설정(환경변수로도 오버라이드 가능)
 RATE = SimpleNamespace(
@@ -68,6 +97,13 @@ class CustomFrame(urwid.Frame):
                     return None
         # 그 외 키는 부모(기본 Frame)에 위임
         return super().keypress(size, key)
+    
+    def mouse_event(self, size, event, button, col, row, focus):
+        # [수정] 로깅 후 반드시 부모 클래스로 전달
+        logging.debug(f"[Frame.mouse] event={event} button={button} col={col} row={row}")
+        
+        # [중요] 부모 클래스의 mouse_event를 호출하여 실제 처리
+        return super().mouse_event(size, event, button, col, row, focus)
 
 class UrwidApp:
     def __init__(self, manager: ExchangeManager):
@@ -85,7 +121,12 @@ class UrwidApp:
         self.loop: urwid.MainLoop | None = None
         self.header = None
         self.body_list: urwid.ListBox = None
+        self.body_scroll: ScrollBar | None = None   # [ADD]
         self.footer = None
+        self.log_scroll: ScrollBar | None = None    # [ADD]
+
+        self._dragging_scrollbar = None     # [추가] 전역 드래그 중인 스크롤바
+        self._pending_logs: list[str] = []  # [추가] 드래그 중 로그 버퍼
 
         # 헤더 위젯
         self.ticker_edit = None
@@ -124,6 +165,8 @@ class UrwidApp:
         # 로그
         self.log_list = urwid.SimpleListWalker([])
         self.log_box: urwid.ListBox | None = None
+
+        self.body_walker = None  # build()에서 생성
 
         # REPEAT/BURN 태스크
         self.repeat_task = None
@@ -444,10 +487,44 @@ class UrwidApp:
                 pass
 
     def _log(self, msg: str):
+        if getattr(self, "_dragging_scrollbar", None) is getattr(self, "log_scroll", None):
+            logging.info(f"[LOG] buffering (dragging) -> {msg}")
+            self._pending_logs.append(msg)
+            return
+
+        # 펜딩 로그 먼저 반영
+        if getattr(self, "_pending_logs", None):
+            for pending in self._pending_logs:
+                self.log_list.append(urwid.Text(pending))
+            self._pending_logs.clear()
+
+        # 이번 로그 추가
         self.log_list.append(urwid.Text(msg))
-        if self.log_box is not None and len(self.log_list) > 0:
-            self.log_box.set_focus(len(self.log_list) - 1)  # 자동 스크롤
+
+        # 사용자가 바닥에 있을 때만 따라 내려감
+        try:
+            at_bottom = self.log_box.is_at_bottom()
+        except Exception:
+            at_bottom = True
+        logging.info(f"[LOG] append: at_bottom={at_bottom}, total={len(self.log_list)}")
+        if at_bottom and self.log_list:
+            try:
+                self.log_box.set_focus(len(self.log_list) - 1, coming_from='below')
+            except Exception:
+                pass
+
         self._request_redraw()
+
+    def _on_scrollbar_drag_end(self, sb):
+        if sb is getattr(self, "log_scroll", None) and getattr(self, "_pending_logs", None):
+            for m in self._pending_logs:
+                self.log_list.append(urwid.Text(m))
+            self._pending_logs.clear()
+            try:
+                self.log_box.set_focus(len(self.log_list) - 1, coming_from='below')
+            except Exception:
+                pass
+            self._request_redraw()
 
     def _collateral_sum(self) -> float:
         return sum(self.collateral.values())
@@ -768,14 +845,33 @@ class UrwidApp:
         self._request_redraw()
 
     def _rebuild_body_rows(self):
+        """카드 리스트 내용 재구성"""
         rows = []
         visible = self.mgr.visible_names()
         for i, n in enumerate(visible):
             rows.append(self._row(n))
             if i != len(visible) - 1:
-                rows.append(urwid.AttrMap(urwid.Divider("─"), "sep"))
-        self.body_list.body = urwid.SimpleListWalker(rows)
-
+                # [수정] 구분선을 Text로 변경 (AttrMap 제거)
+                divider = urwid.Text(("sep", "─" * 88))  # 충분히 긴 구분선
+                rows.append(divider)
+        
+        if self.body_walker is not None:
+            self.body_walker.clear()
+            self.body_walker.extend(rows)
+            # 첫 카드로 포커스
+            try:
+                if len(self.body_walker) > 0:
+                    self.body_list.set_focus(0)
+            except Exception:
+                pass
+        
+        # 스크롤바 강제 업데이트
+        if self.body_scroll and self.body_list:
+            try:
+                total = len(self.body_walker)
+                self.body_scroll.update(total=total, first=0, height=self.body_list._last_h)
+            except Exception:
+                pass
     # --------- 화면 구성 ----------
     def build(self):
         self.header = self._hdr_widgets()
@@ -786,31 +882,85 @@ class UrwidApp:
         for i, n in enumerate(visible):
             rows.append(self._row(n))
             if i != len(visible) - 1:
-                rows.append(urwid.AttrMap(urwid.Divider("─"), "sep"))
-        self.body_list = urwid.ListBox(urwid.SimpleListWalker(rows))
+                # [수정] 구분선을 단순 Text로
+                divider = urwid.Text(("sep", "─" * 80))
+                rows.append(divider)
+        
+        # [수정] walker를 인스턴스 변수로 저장
+        self.body_walker = urwid.SimpleListWalker(rows)
+        self.body_scroll = ScrollBar(width=2)
+        self.body_list = ScrollableListBox(
+            self.body_walker,  # ← walker 전달
+            scrollbar=self.body_scroll,
+            enable_selection=True, 
+            auto_scroll=False,
+            page_overlap=1
+        )
+        self.body_scroll.attach(self.body_list)
+        self.body_list.set_app_ref(self)
 
-        # switcher + logs (여기 수정)
+        body_with_scroll = urwid.Columns(
+            [
+                ('weight', 1, self.body_list),
+                ('fixed', 1, self.body_scroll),
+            ],
+            dividechars=0
+        )
+
+        # logs
         switcher = self._build_switcher()
-        self.log_box = urwid.ListBox(self.log_list)
+        self.log_scroll = ScrollBar(width=2)
+        self.log_box = ScrollableListBox(
+            self.log_list,  # 기존 walker
+            scrollbar=self.log_scroll,
+            enable_selection=False, 
+            auto_scroll=True,
+            page_overlap=1
+        )
+        self.log_scroll.attach(self.log_box)
+        self.log_box.set_app_ref(self)
 
-        # Logs 제목은 pack(1줄), 로그 박스는 fixed(10줄)
+        logs_inner = urwid.Columns(
+            [
+                ('weight', 1, self.log_box),
+                ('fixed', 1, self.log_scroll),
+            ],
+            dividechars=0
+        )
+
         logs_panel = urwid.Pile([
             ('pack',  urwid.AttrMap(urwid.Text("Logs"), 'title')),
-            ('fixed', 6, urwid.LineBox(self.log_box)),
+            ('fixed', 6, urwid.LineBox(logs_inner)),
         ])
 
-        # Footer는 Exchanges 박스(고정 높이 4줄: 콘텐츠 2 + 테두리 2), Logs 패널은 pack
         self.footer = urwid.Pile([
-            ('fixed', 5, switcher),   # 3줄 + 테두리 2줄 = 5
-            ('pack',  logs_panel),    # Logs는 내부에서 고정 높이를 이미 줌
+            ('fixed', 5, switcher),
+            ('pack',  logs_panel),
         ])
 
         frame = CustomFrame(
             header=urwid.LineBox(self.header),
-            body=self.body_list,
+            body=body_with_scroll,
             footer=self.footer,
             app_ref=self  # self 참조 전달
         )
+
+        # [추가] 초기 렌더링 정보 확인 (첫 draw 후 확인하기 위해 alarm 사용)
+        def check_initial_render(loop, user_data):
+            try:
+                logging.info(f"[INIT] Body walker: {len(self.body_walker)} items")
+                logging.info(f"[INIT] Body list height: {self.body_list._last_h}")
+                logging.info(f"[INIT] Body list size: {self.body_list._last_size}")
+                logging.info(f"[INIT] Body scroll attached: {self.body_scroll._target is not None}")
+                logging.info(f"[INIT] Log walker: {len(self.log_list)} items")
+                logging.info(f"[INIT] Log box height: {self.log_box._last_h}")
+            except Exception as e:
+                logging.error(f"[INIT] Check failed: {e}")
+        
+        # run()에서 loop 시작 후 0.5초 뒤 체크하도록 예약
+        if not hasattr(self, '_init_check_scheduled'):
+            self._init_check_scheduled = True
+
         return frame
 
     # --------- 주기 작업 ----------
@@ -866,6 +1016,15 @@ class UrwidApp:
                 await asyncio.sleep(RATE.GAP_FOR_INF)
 
     async def _status_loop(self, name: str):
+        if not hasattr(self, '_debug_logged'):
+            self._debug_logged = True
+            try:
+                h = self.body_list._last_h
+                total = len(self.body_walker)
+                logging.info(f"[DEBUG] Screen height: {h}, Total items: {total}, Needs scroll: {total > h}")
+            except Exception as e:
+                logging.error(f"[DEBUG] Failed to get render info: {e}")
+
         await asyncio.sleep(random.uniform(0.0, 0.7))
 
         lock = self._status_locks.get(name)
@@ -1904,6 +2063,7 @@ class UrwidApp:
 
     # --------- 실행/루프 ----------
     def run(self):
+        _attach_ui_file_logger()  # comment: debug_sc.log에 병행 기록
         if os.name == 'nt':
             try:
                 asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -1949,6 +2109,9 @@ class UrwidApp:
             ("btn_dex_on", "black",       "light green"),
             
             ("quote_color", "light green",      "", "bold"),
+            
+            ("scroll_bar",   "dark gray",   ""),
+            ("scroll_thumb", "light cyan",  ""),
         ]
 
         root = self.build()
@@ -1964,6 +2127,11 @@ class UrwidApp:
             handle_mouse=handle_mouse   # ← 여기서 제어
         )
         
+        hook_global_mouse_events(self.loop, self)
+        
+        # [추가] 초기 렌더링 후 체크
+        self.loop.set_alarm_in(0.5, lambda loop, data: self._check_initial_render())
+    
         async def _bootstrap():
             try:
                 await self.mgr.initialize_all()
@@ -2104,6 +2272,17 @@ class UrwidApp:
 
             loop.stop()
             loop.close()
+
+    def _check_initial_render(self):
+        try:
+            logging.info(f"[INIT] Body walker: {len(self.body_walker)} items")
+            logging.info(f"[INIT] Body list height: {self.body_list._last_h}")
+            logging.info(f"[INIT] Body list selectable: {self.body_list.selectable()}")
+            logging.info(f"[INIT] Body scroll total: {self.body_scroll._total}")
+            logging.info(f"[INIT] Log walker: {len(self.log_list)} items")
+            logging.info(f"[INIT] Log box height: {self.log_box._last_h}")
+        except Exception as e:
+            logging.error(f"[INIT] Check failed: {e}")
 
 '''
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ def _setup_logging():
     root.setLevel(getattr(logging, log_level, logging.INFO))
 
     fmt = logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s")
-    fh = logging.FileHandler("debug.log", mode="w", encoding="utf-8")
+    fh = logging.FileHandler("debug.log", mode="a", encoding="utf-8")
     fh.setFormatter(fmt)
     root.addHandler(fh)
 
