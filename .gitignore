@@ -9,3 +9,6 @@ test*.py
 __pycache__/
 *.pyc
 .idea
+scroll_debug.log
+scroll_direct.txt
+scrollbar_debug.log
