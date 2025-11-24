@@ -5,7 +5,6 @@ import sys, locale, logging
 from typing import Optional, Tuple
 import time
 import os  # [추가]
-import atexit
 import math
 
 def _detect_encoding() -> str:
@@ -14,79 +13,6 @@ def _detect_encoding() -> str:
 _USE_UTF8 = ("utf" in _detect_encoding())
 TRACK_CHAR = "│" if _USE_UTF8 else "|"
 THUMB_CHAR = "█" if _USE_UTF8 else "@"
-
-# =========================[추가] UI 전용 로거 + 안전한 파일쓰기 헬퍼 =========================
-_UI_LOGGER = None
-
-# [추가] xterm 마우스 모드 강제 토글
-def _set_xterm_mouse_tracking(enable: bool):
-    """
-    xterm mouse tracking 모드 강제 전환:
-      - 1006: SGR 좌표 포맷
-      - 1002: 버튼 누른 상태에서 이동 보고
-      - 1003: Any-event(모든 이동 보고)
-    """
-    try:
-        seq = []
-        seq.append("\x1b[?1006h" if enable else "\x1b[?1006l")
-        seq.append("\x1b[?1002h" if enable else "\x1b[?1002l")
-        seq.append("\x1b[?1003h" if enable else "\x1b[?1003l")
-        sys.stdout.write("".join(seq))
-        sys.stdout.flush()
-        UI_INFO(f"[MOUSEMODE] any-event={'ON' if enable else 'OFF'}")
-    except Exception as e:
-        UI_INFO(f"[MOUSEMODE] toggle error: {e}")
-
-# [선택] 앱 시작 시 항상 켜고, 종료 시 끄고 싶다면 노출용 헬퍼
-def enable_global_mouse_mode():
-    _set_xterm_mouse_tracking(True)
-    atexit.register(lambda: _set_xterm_mouse_tracking(False))
-
-def _ui_logger():
-    """
-    루트 로거 설정과 무관하게 debug_sc.log로 INFO를 보장 출력하는 전용 로거(ui.scroll)를 만든다.
-    - propagate=False: 루트로 전파하지 않음 (루트 레벨/핸들러 영향 제거)
-    - FileHandler(debug_sc.log, append)
-    """
-    global _UI_LOGGER
-    if _UI_LOGGER is not None:
-        return _UI_LOGGER
-    logger = logging.getLogger("ui.scroll")
-    logger.setLevel(logging.INFO)
-    logger.propagate = False
-    try:
-        fn = os.getenv("PDEX_UI_LOG_FILE", "debug.log")
-        fh = logging.FileHandler(fn, mode="a", encoding="utf-8")
-        fh.setLevel(logging.INFO)
-        fmt = logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s")
-        fh.setFormatter(fmt)
-        logger.addHandler(fh)
-    except Exception:
-        # 핸들러 장착 실패해도 이후 _ui_write로 보강
-        pass
-    _UI_LOGGER = logger
-    return logger
-
-def _ui_write(msg: str):
-    """
-    최후 보루: 로깅이 막힌 환경에서도 파일에 직접 append.
-    예외는 조용히 무시.
-    """
-    try:
-        fn = os.getenv("PDEX_UI_LOG_FILE", "debug_sc.log")
-        with open(fn, "a", encoding="utf-8") as f:
-            ts = time.strftime("%Y-%m-%d %H:%M:%S")
-            f.write(f"{ts} - {msg}\n")
-    except Exception:
-        pass
-
-def UI_INFO(msg: str):
-    return
-    try:
-        _ui_logger().info(msg)
-    except Exception:
-        pass
-    _ui_write(msg)
 
 class ScrollBar(urwid.WidgetWrap):
     """
@@ -100,7 +26,7 @@ class ScrollBar(urwid.WidgetWrap):
         self._box  = urwid.Filler(self._pile, valign='top')
         super().__init__(self._box)
 
-        self._total: int = 0
+        
         self._first: int = 0
         self._height: int = 1
         self._thumb_top: int = 0
@@ -109,10 +35,7 @@ class ScrollBar(urwid.WidgetWrap):
         self._dragging: bool = False
         self._drag_anchor: int = 0
         self._target: "ScrollableListBox | None " = None
-        self._drag_start_top: int = 0
-        self._widget_top = 0
 
-        self._drag_start_row = None
         self._drag_start_thumb_top = None
 
         self._item_total = 0       # 실제 아이템 개수 (드래그 -> 인덱스 매핑에 사용)
@@ -120,82 +43,20 @@ class ScrollBar(urwid.WidgetWrap):
         self._avg_lines = 1.0        # [ADD] 아이템당 평균 줄 수 (visual_total/item_total)
         self._visual_mode = False    # [ADD] 시각 기준 모드 여부
 
-        # [ADD] 논리 vs 그리기 분리용 상태
-        self._needs_redraw: bool = True
-        self._last_draw_h: int | None = None
-
-        # [DBG] 추적 토글/카운터
-        self._trace_on: bool = True
-        self._paint_seq: int = 0   # update()에서 실제 '그리기'를 수행한 횟수
-        self._inst_id: int = id(self)  # 인스턴스 식별
-
         self._max_first_cards: int = 0   # [ADD] 가상 모드에서의 first 상한을 보관
         self._card_count: int = 0        # [ADD] 가상 모드일 때 카드 개수 캐시
 
-    # [교체] 가독성 바 → 실제 줄수(h) 1:1 바로 교체 (오해 방지)
-    def _mk_thumb_ascii_rows(self, h: int, top: int, size: int) -> str:
-        """
-        화면 높이 h 줄을 그대로 '.'(트랙)/'#'(썸)로 표현한 1:1 바를 반환.
-        예: h=16, top=0, size=9  -> '#########.......'
-        """
-        try:
-            h = max(1, int(h))
-            top = max(0, min(int(top), h - 1))
-            size = max(1, min(int(size), h))
-            rows = []
-            for r in range(h):
-                rows.append('#' if (top <= r < top + size) else '.')
-            return ''.join(rows)
-        except Exception:
-            return ""
-
-    # [ADD] 그리기용 메트릭 계산 (draw_h = 실제 배치 높이)
-    def _compute_draw_metrics(self, draw_h: int):
-        """
-        논리값(논리 높이, 논리 트랙, 논리 썸) → 실제 그리기 높이(draw_h)로 스케일링
-        반환: (draw_thumb_top, draw_thumb_size)
-        """
-        draw_h = max(1, int(draw_h))
-        # 숨김 상태면 전체 공백
-        if (self._visual_total <= self._height) or (self._item_total == 0):
-            return 0, draw_h  # 썸을 전체로 그려 공백 처리하게 함(아래 _draw에서 공백)
-
-        # 논리 메트릭
-        logic_h = max(1, int(self._height))
-        logic_thumb = max(1, min(logic_h - 1, int(self._thumb_size)))
-        logic_track = max(1, logic_h - logic_thumb)
-
-        # 논리 thumb_top의 트랙 내 비율
-        ratio_top = (self._thumb_top / logic_track) if logic_track > 0 else 0.0
-
-        # 그리기용 썸 크기: 논리 비율을 유지
-        # - 간단한 스케일: draw_thumb_size ≈ self._thumb_size * draw_h / logic_h
-        # - 트랙 보존을 위해 1 ≤ draw_thumb ≤ draw_h-1 보장
-        draw_thumb_size = int(round(self._thumb_size * (draw_h / logic_h)))
-        draw_thumb_size = max(1, min(draw_h - 1, draw_thumb_size))
-
-        draw_track = max(1, draw_h - draw_thumb_size)
-        # 트랙 내 비율을 보존하여 thumb_top 스케일링
-        draw_thumb_top = int(round(ratio_top * draw_track))
-        draw_thumb_top = max(0, min(draw_thumb_top, draw_track))
-
-        return draw_thumb_top, draw_thumb_size
-
-    # [ADD] 실제 그리기
     def _draw(self, draw_h: int, src: str = "update"):
         draw_h = max(1, int(draw_h))
         # 숨김이면 공백으로
         if (self._visual_total <= self._height) or (self._item_total == 0):
             lines = [urwid.Text(" " * self.width) for _ in range(draw_h)]
             self._pile.contents = [(t, ('pack', None)) for t in lines]
-            if self._trace_on:
-                UI_INFO(f"[SB.draw#{self._paint_seq} src={src} inst={self._inst_id}] HIDE draw_h={draw_h}")
             return
 
         # (화면 높이 기준으로 바로 그리기: 논리→그리기 스케일 필요 없음. 이미 update가 self._height=h 로 계산)
         draw_top  = self._thumb_top
         draw_size = self._thumb_size
-        track_space = max(1, draw_h - draw_size)
 
         # 실제 그리기
         lines = []
@@ -209,37 +70,9 @@ class ScrollBar(urwid.WidgetWrap):
         self._pile.contents = [(t, ('pack', None)) for t in lines]
         self._invalidate()
 
-        # [로그] 1:1 줄막대 + 페인트 카운터
-        if self._trace_on:
-            self._paint_seq += 1
-            painted_rows = len(self._pile.contents)
-            ascii_rows = self._mk_thumb_ascii_rows(draw_h, draw_top, draw_size)
-            top = draw_top
-            bottom = draw_top + draw_size - 1
-            UI_INFO(
-                f"[SB.draw#{self._paint_seq} src={src} inst={self._inst_id}] "
-                f"h={draw_h} items={self._item_total} vtotal={self._visual_total} "
-                f"thumb_top={top} thumb_bottom={bottom} thumb_size={draw_size} "
-                f"track={track_space} painted_rows={painted_rows} rows={ascii_rows}"
-            )
-            if painted_rows != draw_h:
-                UI_INFO(f"[SB.draw.warn inst={self._inst_id}] painted_rows({painted_rows}) != draw_h({draw_h}) !!!")
-
-    def _real_total(self) -> int:
-        try:
-            if self._target is not None and getattr(self._target, "_virtual_index_mode", False):
-                return int(self._item_total)  # 카드 총개수(가상 총개수)
-            if self._target and hasattr(self._target, "body") and hasattr(self._target.body, "__len__"):
-                return int(len(self._target.body))
-        except Exception:
-            pass
-        return int(self._total)
-
-    # === (B) ScrollBar._handle_drag_to_position 수정: 가상→실제 body 인덱스 매핑 =========
     def _handle_drag_to_position(self, desired_top):
         h = self._height
         track_space = max(1, h - self._thumb_size)
-        before = int(desired_top)
         desired_top = max(0, min(int(desired_top), track_space))
         self._thumb_top = desired_top
         ratio = desired_top / track_space if track_space > 0 else 0.0
@@ -259,7 +92,6 @@ class ScrollBar(urwid.WidgetWrap):
         go_bottom = (ratio >= 0.999 or desired_top >= track_space)
 
         # 기본 목표(가상 → 실제 body)
-        mapped = None
         target_body_idx = virt_idx
         if self._target and getattr(self._target, "_virtual_index_mode", False):
             if hasattr(self._target, "map_virtual_to_body_index"):
@@ -311,21 +143,15 @@ class ScrollBar(urwid.WidgetWrap):
 
     def attach(self, listbox: "ScrollableListBox") -> None:
         self._target = listbox
-        UI_INFO(f"[SB] attach -> target id={id(listbox)}")
 
     def selectable(self) -> bool:
         return False
 
     def update(self, total: int, first: int, height: int, visual_total: int = None) -> None:
-        if self._trace_on:
-            UI_INFO(f"[SB.update.in inst={self._inst_id}] total={total} first={first} h={height} "
-                    f"vtotal={visual_total} virt={getattr(self._target,'_virtual_index_mode',False)}")
-
         self._item_total = max(0, int(total))
         self._height = max(1, int(height))
         vtotal = int(visual_total) if visual_total is not None else self._item_total
         self._visual_total = max(self._item_total, vtotal)
-        self._total = self._item_total
         self._visual_mode = (visual_total is not None and self._visual_total > self._item_total)
         self._avg_lines = (self._visual_total / self._item_total) if self._item_total > 0 else 1.0
         self._card_count = self._item_total  # [ADD] (가상모드일 때 카드 수)
@@ -369,11 +195,7 @@ class ScrollBar(urwid.WidgetWrap):
         # [그리기] 논리 높이(h) 기준으로 바로 그립니다.
         self._draw(h, src="update")
 
-        # [선택] update.out 간단 로그는 유지해도 좋습니다
-        if self._trace_on:
-            UI_INFO(f"[SB.update.out] h={h} vtotal={self._visual_total} items={self._item_total} "
-                    f"thumb={self._thumb_top}/{self._thumb_size}")
-
+        
     # [교체] render: 더 이상 강제 그리기/스케일 변환을 하지 않고 그대로 위임합니다.
     def render(self, size, focus=False):
         return super().render(size, focus)
@@ -401,15 +223,11 @@ class ScrollBar(urwid.WidgetWrap):
                 pass
             return True
 
-        # 썸/트랙 클릭·드래그는 기존 동작 유지
-        is_thumb = (self._thumb_top <= local_row < self._thumb_top + self._thumb_size)
-
         if event == 'mouse press' and button == 1:
             desired_top = local_row - (self._thumb_size // 2)
             self._handle_drag_to_position(desired_top)
             self._dragging = True
             self._drag_anchor = local_row - self._thumb_top
-            self._drag_start_row = int(row)
             self._drag_start_thumb_top = self._thumb_top
             if hasattr(self._target, '_register_global_drag'):
                 self._target._register_global_drag(self)
@@ -429,12 +247,6 @@ class ScrollBar(urwid.WidgetWrap):
 
         return False
     
-    def handle_local_drag(self, local_row):
-        if not self._dragging or not self._target:
-            return
-        desired_top = local_row - self._drag_anchor
-        self._handle_drag_to_position(desired_top)
-
     def handle_global_drag(self, global_row_col):
         if not self._dragging or not self._target:
             return
@@ -442,12 +254,10 @@ class ScrollBar(urwid.WidgetWrap):
         # (col,row) 언팩 (하위호환: 숫자 하나면 row만)
         if isinstance(global_row_col, tuple) and len(global_row_col) >= 2:
             try:
-                gcol = int(global_row_col[0]); grow = int(global_row_col[1])
+                grow = int(global_row_col[1])
             except Exception:
-                gcol = getattr(self, "_last_global_col", 0)
                 grow = getattr(self, "_last_global_row", 0)
         else:
-            gcol = getattr(self, "_last_global_col", 0)
             try:
                 grow = int(global_row_col)
             except Exception:
@@ -456,28 +266,23 @@ class ScrollBar(urwid.WidgetWrap):
         # 최초 콜에서 기준점 기록
         if getattr(self, "_global_drag_start_row", None) is None:
             self._global_drag_start_row = grow
-            self._global_drag_start_col = gcol
             if getattr(self, "_drag_start_thumb_top", None) is None:
                 self._drag_start_thumb_top = self._thumb_top
-            UI_INFO(f"[SB.drag.global.init] start_row={self._global_drag_start_row}, start_col={self._global_drag_start_col}, start_thumb={self._drag_start_thumb_top}")
-
+            
         # 이전 좌표 보관
         self._last_global_row = grow
-        self._last_global_col = gcol
 
         # 기본 delta
         delta_row = grow - self._global_drag_start_row
-        delta_col = gcol - self._global_drag_start_col
 
         new_thumb_top = self._drag_start_thumb_top + delta_row
-        UI_INFO(f"[SB.drag.global] grow={grow} gcol={gcol} delta_row={delta_row} new_thumb_top={new_thumb_top}")
 
         self._handle_drag_to_position(new_thumb_top)
 
 
 class ScrollableListBox(urwid.ListBox):
     def __init__(self, body, scrollbar=None,
-                 enable_selection=True, auto_scroll=False,
+                 enable_selection=True,
                  page_overlap=1,
                  use_visual_total=False,
                  fixed_lines_per_item: int = 0,
@@ -494,7 +299,6 @@ class ScrollableListBox(urwid.ListBox):
         self._sel: int | None = None
         self._enable_selection = enable_selection
         self._stored_first: int | None = None
-        self._auto_scroll = auto_scroll
         self._has_focus = False
         self._app_ref = None
         self._page_overlap = max(0, int(page_overlap))
@@ -518,17 +322,6 @@ class ScrollableListBox(urwid.ListBox):
                     return controls
         except: pass
         return None
-
-    # [ADD] 현재 카드에서 선택 가능한 칼럼들 중, 포커스 칼럼 인덱스 반환
-    def _current_controls_focus_index(self):
-        cols = self._current_card_controls()
-        if not isinstance(cols, urwid.Columns):
-            return None
-        try:
-            return cols.focus_position
-        except Exception:
-            _, idx = cols.get_focus()
-            return idx
 
     # [ADD] 사용자가 클릭/키로 바꾼 칼럼을 sticky 로 기억
     def _update_sticky_from_current(self):
@@ -723,144 +516,6 @@ class ScrollableListBox(urwid.ListBox):
             pass
         return last_card_idx
 
-
-    def _unwrap_base(self, w):
-        """AttrMap/Padding/Filler/LineBox 등을 벗겨 실제 위젯 반환"""
-        base = w
-        try:
-            while True:
-                if isinstance(base, urwid.AttrMap):
-                    base = base.original_widget
-                elif isinstance(base, urwid.Padding):
-                    base = base.original_widget
-                elif isinstance(base, urwid.Filler):
-                    base = base.body
-                elif isinstance(base, urwid.LineBox):
-                    base = base.original_widget
-                elif isinstance(base, urwid.BoxAdapter):
-                    base = base._original_widget
-                else:
-                    break
-        except Exception:
-            pass
-        return base
-
-    def _visual_rows_widget(self, w, maxcol: int) -> int:
-        """
-        [개선] 위젯 w의 가시 줄 수를 '카드 구조'에 맞게 재귀적으로 추정.
-        - Pile: 자식들의 줄 수 합
-        - Columns: 보통 1줄(컨트롤 줄). wrap이 필요한 Text가 있으면 그 중 최댓값
-        - Text/SelectableIcon 등 Flow: rows() 호출
-        - 알 수 없으면 1
-        """
-        base = self._unwrap_base(w)
-
-        # 1) Pile(카드 한 장 등): 자식 전체 줄 수 합산
-        if isinstance(base, urwid.Pile):
-            total = 0
-            try:
-                for child, _opts in base.contents:
-                    total += self._visual_rows_widget(child, maxcol)
-            except Exception:
-                total += 1
-            return max(1, total)
-
-        # 2) Columns(컨트롤 줄): 대개 1줄, 단 wrap 텍스트가 있으면 최댓값
-        if isinstance(base, urwid.Columns):
-            # child 폭을 정확히 알기 어렵지만, 보통 컨트롤 줄은 1줄이므로 1로 가정
-            # 만약 내부에 긴 Text가 있고 wrap 중이면 max(rows)을 취한다
-            max_rows = 1
-            try:
-                for child, _opts in base.contents:
-                    c = self._unwrap_base(child)
-                    if hasattr(c, "rows"):
-                        # 보수적으로 전체 폭에서 줄 수를 본다(대부분 1줄)
-                        r = 0
-                        try:
-                            r = int(c.rows((maxcol,), False))
-                        except Exception:
-                            r = 1
-                        if r > max_rows:
-                            max_rows = r
-            except Exception:
-                pass
-            return max(1, max_rows)
-
-        # 3) Flow(Text/SelectableIcon/Buttons 등): rows()가 정확
-        if hasattr(base, "rows"):
-            try:
-                return max(1, int(base.rows((maxcol,), False)))
-            except Exception:
-                return 1
-
-        # 4) 모르면 1
-        return 1
-
-    # [추가] 행 위젯의 '가시 줄 수'를 현재 너비 기준으로 추정
-    def _row_visual_height(self, w, maxcol: int) -> int:
-        """
-        주어진 행 위젯(w)이 현재 너비(maxcol)에서 차지할 '가시 줄 수'를 추정.
-        실패 시 최소 1을 반환.
-        """
-        try:
-            base = getattr(w, "base_widget", w)
-            # flow 위젯은 rows((maxcol,), focus) 사용
-            return max(1, int(base.rows((maxcol,), False)))
-        except Exception:
-            # rows 호출이 어렵다면 1로 폴백
-            return 1
-
-    # [ADD] 바디 내 카드(Pile) 개수 세기
-    def _count_cards(self) -> int:
-        try:
-            cnt = 0
-            for w in self.body:
-                base = getattr(w, "base_widget", w)
-                if isinstance(base, urwid.Pile):
-                    # 카드: 첫 콘텐츠가 Columns(controls)인지 간단 검증
-                    try:
-                        if isinstance(base.contents[0][0], urwid.Columns):
-                            cnt += 1
-                    except Exception:
-                        pass
-            return cnt
-        except Exception:
-            return 0
-
-    # [ADD] body 인덱스(항목 기준)를 '카드 인덱스'로 근사 환산
-    def _approx_first_card_index(self, first_item_idx: int) -> int:
-        """
-        first_item_idx(리스트 인덱스)를 기준으로, 그 위/포함 범위의 카드(Pile) 개수-1 을 반환.
-        즉, 현재 뷰의 최상단이 몇 번째 카드인지 근사치.
-        """
-        try:
-            card_idx = -1
-            acc = 0
-            for i, w in enumerate(self.body):
-                base = getattr(w, "base_widget", w)
-                if isinstance(base, urwid.Pile):
-                    acc += 1
-                    card_idx = acc - 1  # 0-based
-                if i >= first_item_idx:
-                    break
-            return max(0, card_idx)
-        except Exception:
-            return 0
-
-    # 기존 rows() 기반 추정(남겨둠)
-    def _estimate_total_visual_lines(self, maxcol: int) -> int:
-        total = 0
-        try:
-            for w in self.body:
-                base = getattr(w, "base_widget", w)
-                try:
-                    total += max(1, int(base.rows((maxcol,), False)))
-                except Exception:
-                    total += 1
-        except Exception:
-            pass
-        return max(total, len(self.body))
-
     # App 참조(전역 드래그 state 저장 용도)
     def set_app_ref(self, app):
         self._app_ref = app
@@ -914,15 +569,6 @@ class ScrollableListBox(urwid.ListBox):
         maxcol, maxrow = (size + (1,))[:2]
         body_len = len(self.body) if hasattr(self.body, '__len__') else 0
         first_item_idx = self._get_actual_first() if hasattr(self, "_get_actual_first") else 0
-        try:
-            UI_INFO(
-                f"[LB.render] tag={getattr(self, '_role', 'body')} size={size} "
-                f"maxrow(h)={maxrow} body_len={body_len} first_item={first_item_idx} "
-                f"use_visual={getattr(self, '_use_visual_total', False)} "
-                f"virt_mode={getattr(self, '_virtual_index_mode', False)}"
-            )
-        except Exception:
-            pass
         
         if self._scrollbar:
             if self._use_visual_total and (self._fixed_lines_per_item > 0) and self._count_only_pile_as_item:
@@ -952,14 +598,6 @@ class ScrollableListBox(urwid.ListBox):
                     height=maxrow,
                     visual_total=vtotal          # 썸 크기/비율 = ‘정확한’ 시각 줄 수
                 )
-                try:
-                    UI_INFO(
-                        f"[LB.render.cards] size={size} vtotal={vtotal} avg={avg_per_card:.2f} "
-                        f"cards={card_cnt} cards_per_view={cards_per_view:.2f} "
-                        f"max_first={max_first_cards} virt_first={virt_first}"
-                    )
-                except Exception:
-                    pass
             else:
                 # 일반(Logs 등) 모드
                 self._virtual_index_mode = False
@@ -1041,9 +679,6 @@ class ScrollableListBox(urwid.ListBox):
         top_idx, cur_idx, bot_idx = self.get_view_indices()
         total = len(self.body) if hasattr(self.body, '__len__') else 0
 
-        # [추가] 상세 로깅
-        UI_INFO(f"[_scroll_view] delta={delta}, top={top_idx}, cur={cur_idx}, bot={bot_idx}, total={total}")
-
         if total <= 0:
             logging.warning(f"[_scroll_view] Empty body, skipping")
             return
@@ -1058,8 +693,6 @@ class ScrollableListBox(urwid.ListBox):
                 base = 0
         new_focus = max(0, min(int(base) + delta, total - 1))
         
-        UI_INFO(f"[_scroll_view] base={base} -> new_focus={new_focus}")
-
         if new_focus != base:
             try:
                 coming = 'above' if delta > 0 else 'below'
@@ -1074,7 +707,6 @@ class ScrollableListBox(urwid.ListBox):
         self._invalidate()
 
     def mouse_event(self, size, event, button, col, row, focus):
-        UI_INFO(f"[ScrollableListBox] mouse_event: {event} button={button}")
         if event == 'mouse press' and button == 1:
             ret = super().mouse_event(size, event, button, col, row, focus)
             self._update_sticky_from_current()    # 사용자가 클릭한 칼럼을 sticky 로
@@ -1163,9 +795,8 @@ def hook_global_mouse_events(loop: urwid.MainLoop, app) -> None:
                 if isinstance(key, tuple) and len(key) >= 4 and key[0] == 'mouse press':
                     try:
                         setattr(app, "_last_press_pos", (int(key[2]), int(key[3])))
-                        UI_INFO(f"[HOOK] press seen before process: start_pos={app._last_press_pos}")
                     except Exception as e:
-                        UI_INFO(f"[HOOK] press pre-capture error: {e}")
+                        pass
             res = original_process(keys)
 
             # press 전달 결과로 드래그가 시작되었으면 시작 좌표 주입
@@ -1178,16 +809,15 @@ def hook_global_mouse_events(loop: urwid.MainLoop, app) -> None:
                         dragging._global_drag_start_row = int(start_pos[1])
                         if getattr(dragging, "_drag_start_thumb_top", None) is None:
                             dragging._drag_start_thumb_top = dragging._thumb_top
-                        UI_INFO(f"[HOOK] press captured -> start_pos={start_pos}, start_thumb={dragging._drag_start_thumb_top}")
                     except Exception as e:
-                        UI_INFO(f"[HOOK] press init error: {e}")
+                        pass
+
             return res
 
         # 드래그 활성: drag/release를 선처리, 나머지 키만 원래 루프로
         new_keys = []
         for key in keys:
             if isinstance(key, tuple) and len(key) >= 4:
-                UI_INFO(f"[HOOK] raw mouse key={key}")
                 et = key[0]
                 try:
                     col = int(key[2]); row = int(key[3])
@@ -1199,11 +829,11 @@ def hook_global_mouse_events(loop: urwid.MainLoop, app) -> None:
                         dragging.handle_global_drag((col, row))  # (col,row) 전달
                         loop.draw_screen()
                     except Exception as e:
-                        UI_INFO(f"[HOOK] handle_global_drag error: {e}")
+                        pass
                     continue
 
                 if et == 'mouse release':
-                    UI_INFO("[HOOK] mouse release, finishing drag")
+                    
                     try:
                         dragging._dragging = False
                     except Exception:
@@ -1214,8 +844,7 @@ def hook_global_mouse_events(loop: urwid.MainLoop, app) -> None:
                         try:
                             cb(dragging)
                         except Exception as e:
-                            UI_INFO(f"[HOOK] drag_end callback error: {e}")
-                    #_set_xterm_mouse_tracking(False)
+                            pass
                     continue
 
             new_keys.append(key)

@@ -6,7 +6,6 @@ from typing import Dict, Optional, List
 import math
 
 import urwid
-from urwid import BoxAdapter
 from urwid.widget.pile import PileWarning  # urwid 레이아웃 경고 제거용
 from ui_scroll import ScrollBar, ScrollableListBox, hook_global_mouse_events
 
@@ -20,93 +19,8 @@ import time
 from types import SimpleNamespace
 
 CARD_HEIGHT = 5
-
-class CardViewport(urwid.WidgetWrap):
-    """
-    - body: SimpleListWalker(카드 + divider)
-    - card_row_indices(): 카드(Pile) 행만 모아둔다
-    - offset(virt_first): 현재 첫 보이는 '카드 인덱스'
-    - height(뷰 높이)는 render(size)에서 얻는다
-    """
-    def __init__(self, body_walker: urwid.SimpleListWalker, app_ref=None, card_lines: int = 5):
-        self.body = body_walker
-        self.app_ref = app_ref
-        self.card_lines = max(1, int(card_lines))
-        self.offset = 0      # 첫 보이는 카드 인덱스(virt)
-        self._last_size = (1, 1)
-        self._pile = urwid.Pile([])
-        super().__init__(self._pile)
-
-    def _card_row_indices(self) -> list[int]:
-        rows = []
-        for i, w in enumerate(self.body):
-            base = getattr(w, "base_widget", w)
-            if isinstance(base, urwid.Pile):
-                try:
-                    if isinstance(base.contents[0][0], urwid.Columns):
-                        rows.append(i)
-                except Exception:
-                    pass
-        return rows
-
-    def scroll_to_view_first(self, virt_first: int):
-        # 스크롤바에서 호출: 첫 보이는 카드 인덱스(virt)를 갱신
-        cards = self._card_row_indices()
-        if not cards: return
-        max_first = max(0, len(cards) - self._cards_per_view())
-        self.offset = max(0, min(int(virt_first), max_first))
-        self._rebuild_view()
-        self._invalidate()
-        if self.app_ref:
-            try: self.app_ref._request_redraw()
-            except Exception: pass
-
-    def _cards_per_view(self) -> int:
-        # 마지막 render에서의 높이 기준으로 보이는 카드 수 추정(고정 카드 높이 기반)
-        h = self._last_size[1]
-        return max(1, int(h // self.card_lines))
-
-    def _rebuild_view(self):
-        # 현재 offset 기준으로 보이는 카드만 뽑아서 Pile에 채운다.
-        cards = self._card_row_indices()
-        if not cards:
-            self._pile.contents = [(urwid.Text(""), ('pack', None))]
-            return
-        start = max(0, min(self.offset, len(cards) - 1))
-        per_view = self._cards_per_view()
-        end_card = min(len(cards), start + per_view)
-        # 카드/구분선 원본 행 인덱스를 변환 → 실제 행들을 수집
-        start_row = cards[start]
-        end_row = (cards[end_card - 1] if end_card > 0 else cards[0])
-        # end 행 뒤 divider 한 줄까지 포함(여유), 경계 안전
-        end_row = min(len(self.body) - 1, end_row + 1)
-
-        slice_widgets = [self.body[i] for i in range(start_row, end_row + 1)]
-        self._pile.contents = [(w, ('pack', None)) for w in slice_widgets]
-
-    def render(self, size, focus=False):
-        self._last_size = size
-        # 처음 렌더 때 화면 채워 넣기
-        if not self._pile.contents:
-            self._rebuild_view()
-        return super().render(size, focus)
-
-    # 휠도 카드 단위로 오프셋만 조정(포커스 유지)
-    def mouse_event(self, size, event, button, col, row, focus):
-        if event == 'mouse press' and button in (4, 5):
-            delta = -1 if button == 4 else 1
-            cards = self._card_row_indices()
-            if not cards: return True
-            max_first = max(0, len(cards) - self._cards_per_view())
-            self.offset = max(0, min(self.offset + delta, max_first))
-            self._rebuild_view()
-            self._invalidate()
-            if self.app_ref:
-                try: self.app_ref._request_redraw()
-                except Exception: pass
-            return True
-        return super().mouse_event(size, event, button, col, row, focus)
-
+LOGS_ROWS = 6
+SWITCHER_ROWS = 5
 
 # [ADD] Logs/Body 상호작용으로 '팔로우 모드'를 제어하기 위한 래퍼
 class FollowableListBox(ScrollableListBox):
@@ -221,10 +135,44 @@ class CustomFrame(urwid.Frame):
         return super().keypress(size, key)
     
     def mouse_event(self, size, event, button, col, row, focus):
-        # [수정] 로깅 후 반드시 부모 클래스로 전달
-        logging.debug(f"[Frame.mouse] event={event} button={button} col={col} row={row}")
-        
-        # [중요] 부모 클래스의 mouse_event를 호출하여 실제 처리
+        # size = (maxcol, maxrow)  row는 프레임 최상단 기준
+        try:
+            maxcol, maxrow = (size + (0, 0))[:2]
+        except Exception:
+            maxcol, maxrow = 0, 0
+
+        # [핵심] logs 박스 영역인지 계산
+        is_logs_area = False
+        try:
+            app = self.app_ref
+            logs_rows     = LOGS_ROWS
+            switcher_rows = SWITCHER_ROWS
+            footer_rows   = logs_rows + switcher_rows
+
+            # footer 전체의 시작 row (프레임 하단에서 위로 footer_rows)
+            # row 가 footer 안이고, 그중 'logs' 영역이면 예외
+            if footer_rows > 0 and maxrow > 0:
+                in_footer = (row >= maxrow - footer_rows)
+                if in_footer:
+                    # footer 내부에서 logs 박스의 시작 기준
+                    # footer 구조: [switcher (위)] [logs (아래)]
+                    footer_row = row - (maxrow - footer_rows)
+                    # logs 박스는 footer 내부의 하단 영역
+                    if footer_row >= switcher_rows:
+                        is_logs_area = True
+        except Exception:
+            is_logs_area = False
+
+        # logs 영역이 아니고, 마우스 이벤트(press/drag/release)면 → 최신으로 강제
+        if not is_logs_area and event.startswith("mouse"):
+            try:
+                if self.app_ref and hasattr(self.app_ref, "logs_follow_latest"):
+                    # 즉시 최신으로 (원하시면 redraw=False로 바꿔도 됨)
+                    self.app_ref.logs_follow_latest(redraw=True)
+            except Exception:
+                pass
+
+        # 원래 이벤트 처리
         return super().mouse_event(size, event, button, col, row, focus)
 
 class UrwidApp:
@@ -287,7 +235,6 @@ class UrwidApp:
 
         # 로그
         self.log_list = urwid.SimpleListWalker([])
-        self.log_box: urwid.ListBox | None = None
 
         self.body_walker = None  # build()에서 생성
 
@@ -634,8 +581,6 @@ class UrwidApp:
         # comment: at_bottom 여부와 상관없이 무조건 최신으로 이동
         self._scroll_logs_to_bottom(redraw=redraw)
 
-    
-
     def _log(self, msg: str):
         # 드래그 중이면 버퍼에 쌓기(기존)
         if self._dragging_scrollbar == self.log_scroll:
@@ -649,36 +594,11 @@ class UrwidApp:
 
         self.log_list.append(urwid.Text(msg))
 
-        # [핵심] 바닥이거나 '바닥 근처'면 무조건 최신으로(팔로우 플래그 무시)
-        if self._logs_is_at_or_near_bottom(tolerance=1):
-            self._scroll_logs_to_bottom(redraw=True)
-            return
-
         # 그 외에는 플래그에 따름
         if self._logs_follow:
             self._scroll_logs_to_bottom(redraw=True)
         else:
             self._request_redraw()
-
-    def _on_scrollbar_drag_end(self, sb):
-        # 드래그 중에 누적된 로그 반영
-        if sb is self.log_scroll and self._pending_logs:
-            for m in self._pending_logs:
-                self.log_list.append(urwid.Text(m))
-            self._pending_logs.clear()
-
-        if sb is self.log_scroll:
-            # [핵심] 바닥 또는 '바닥 근처'면 팔로우 자동 복구 + 즉시 최신으로
-            if self._logs_is_at_or_near_bottom(tolerance=1):
-                self._logs_follow = True
-                self._scroll_logs_to_bottom(redraw=True)
-            else:
-                # 근처가 아니면 기존 플래그에 따름
-                if self._logs_follow:
-                    self._scroll_logs_to_bottom(redraw=True)
-                else:
-                    self._request_redraw()
-            return  # logs 외 스크롤바는 기존 동작
 
     def _collateral_sum(self) -> float:
         return sum(self.collateral.values())
@@ -1015,48 +935,11 @@ class UrwidApp:
             except Exception:
                 pass
 
-        # [FIX] 즉시 update 호출 제거 → 다음 렌더에서 use_visual_total 기반으로 자동 보정
-        # if self.body_scroll and self.body_list:
-        #     try:
-        #         total = len(self.body_walker)
-        #         self.body_scroll.update(total=total, first=0, height=self.body_list._last_h)
-        #     except Exception:
-        #         pass
-
         # 대신 가볍게 다시 그리기만 예약
         self._request_redraw()
 
     # --------- 화면 구성 ----------
     def build(self):
-        def _force_logs_latest(redraw=False):
-            try:
-                # 이미 제공하신 함수가 있으면 그대로 재사용
-                if hasattr(self, "logs_follow_latest"):
-                    self.logs_follow_latest(redraw=redraw)
-                    return
-            except Exception:
-                pass
-            # 없을 경우 fallback
-            try:
-                self._logs_follow = True
-                def _do(loop, data):
-                    try:
-                        total = len(self.log_list)
-                        if total > 0:
-                            self.log_listbox.set_focus(total - 1, coming_from='below')
-                    except Exception:
-                        pass
-                    if redraw:
-                        try: self._request_redraw()
-                        except Exception: pass
-                # 다음 틱으로 미뤄서 렌더 충돌 방지
-                if getattr(self, "loop", None):
-                    self.loop.set_alarm_in(0, _do)
-                else:
-                    _do(None, None)
-            except Exception:
-                pass
-            
         self.header = self._hdr_widgets()
 
         # 1) 본문(카드) rows 구성
@@ -1075,7 +958,6 @@ class UrwidApp:
             self.body_walker,
             scrollbar=self.body_scroll,
             enable_selection=True,
-            auto_scroll=False,
             page_overlap=1,
             use_visual_total=True,
             fixed_lines_per_item=CARD_HEIGHT,
@@ -1083,18 +965,6 @@ class UrwidApp:
         )
         self.body_scroll.attach(self.body_list)
         self.body_list.set_app_ref(self)
-
-        # 본문 ListBox: 어떤 마우스 조작이든 → 로그 최신 복귀
-        _orig_body_list_mouse = self.body_list.mouse_event
-        def _body_list_mouse_wrapper(size, event, button, col, row, focus):
-            # Logs가 아닌 곳(본문)을 건드린 모든 경우 최신으로
-            try:
-                _force_logs_latest(redraw=False)
-            except Exception:
-                pass
-            return _orig_body_list_mouse(size, event, button, col, row, focus)
-        
-        self.body_list.mouse_event = _body_list_mouse_wrapper
         self.body_list.set_selection_lock(True)
         setattr(self.body_list, "_role", "cards")  # [DBG] 태그
         
@@ -1106,32 +976,17 @@ class UrwidApp:
             dividechars=0
         )
 
-        
-
         # 2) Logs (아이템 개수 기반 유지)
-        switcher = self._build_switcher()
         self.log_scroll = ScrollBar(width=1)  # 테스트와 동일 폭 1
         self.log_listbox = FollowableListBox(   # ← FollowableListBox 사용
             self.log_list,
             scrollbar=self.log_scroll,
             enable_selection=False,
-            auto_scroll=True,
             page_overlap=1,
             role='logs',
             app_ref=self
         )
         self.log_scroll.attach(self.log_listbox)
-
-        # 본문 ScrollBar: 휠/클릭/드래그/릴리즈 어떤 이벤트든 → 최신 복귀
-        _orig_body_sb_mouse = self.body_scroll.mouse_event
-        def _body_sb_mouse_wrapper(size, event, button, col, row, focus):
-            try:
-                _force_logs_latest(redraw=False)
-            except Exception:
-                pass
-            return _orig_body_sb_mouse(size, event, button, col, row, focus)
-        self.body_scroll.mouse_event = _body_sb_mouse_wrapper
-
         logs_columns = urwid.Columns(
             [
                 ('weight', 1, self.log_listbox),
@@ -1145,8 +1000,8 @@ class UrwidApp:
         # footer 구성은 기존 구조를 따르되 logs_frame만 넣도록 변경
         switcher = self._build_switcher()
         self.footer = urwid.Pile([
-            ('fixed', 5, switcher),
-            ('fixed', 6, logs_frame),  # 내부 표시 4줄(6 - 테두리 2)
+            ('fixed', SWITCHER_ROWS, switcher),
+            ('fixed', LOGS_ROWS, logs_frame),  # 내부 표시 4줄(6 - 테두리 2)
         ])
 
         # 본문은 기존 body_with_scroll 사용
@@ -1776,35 +1631,7 @@ class UrwidApp:
         except Exception:
             return None
 
-    # 2) Columns 내부 포커스 한 칸 이동(선택 가능한 칸만) ---------
-
-    def _columns_focus_step(self, columns: urwid.Columns, forward: bool = True) -> bool:
-        """Columns에서 다음/이전 '선택 가능한' 칸으로 이동. 이동하면 True."""
-        try:
-            try:
-                idx = columns.focus_position
-            except Exception:
-                _, idx = columns.get_focus()
-                if idx is None:
-                    idx = 0
-
-            n = len(columns.contents)
-            if n == 0:
-                return False
-
-            # 현재 위치 기준으로 앞/뒤로 순회하며 selectable()인 칸을 찾는다
-            for step in range(1, n + 1):
-                j = (idx + step) % n if forward else (idx - step) % n
-                w = columns.contents[j][0]
-                if self._is_selectable_widget(w):
-                    columns.focus_position = j
-                    return True
-            return False
-        except Exception:
-            return False
-
     # 3) 헤더 내부 Tab 이동(행은 유지, 입력/버튼만 순회) ------------
-
     def _tab_header_next(self):
         pile = self._get_header_pile()
         if not pile: return
@@ -2039,34 +1866,11 @@ class UrwidApp:
                 if l is not None:
                     prev_row.focus_position = l
 
-    def _logs_is_at_or_near_bottom(self, tolerance: int = 1) -> bool:
-        try:
-            total = len(self.log_list)
-            if total == 0:
-                return True
-            # 1) 안전한 is_at_bottom 우선
-            if self.log_listbox.is_at_bottom():
-                return True
-            # 2) 화면에 보이는 마지막 인덱스(bot)가 전체 마지막에서 tolerance 이내면 '근처'
-            top, cur, bot = self.log_listbox.get_view_indices()
-            if isinstance(bot, int) and total - 1 - bot <= max(0, int(tolerance)):
-                return True
-        except Exception:
-            pass
-        return False
-
     def _on_key(self, key):
         """
         탭/시프트탭 + Ctrl/Alt/Shift+위·아래 + PageUp/Down + F6 + Ctrl+J/K.
         마우스 이벤트(tuple)는 무시.
         """
-        try:
-            # 키를 누르면 Logs를 최신으로 붙인다 (과도한 그리기 방지를 위해 redraw=False)
-            if hasattr(self, "logs_follow_latest"):
-                self.logs_follow_latest(redraw=False)
-        except Exception:
-            pass
-
         # 0) 마우스/비문자 입력(urwid는 mouse press 등을 tuple로 전달) → 무시
         if not isinstance(key, str):
             return
@@ -2506,18 +2310,3 @@ class UrwidApp:
             logging.info(f"[INIT] Log listbox height: {self.log_listbox._last_h}")
         except Exception as e:
             logging.error(f"[INIT] Check failed: {e}")
-
-'''
-if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-        filename="debug.log",
-        filemode="w",
-    )
-    try:
-        app = UrwidApp(ExchangeManager())
-        app.run()
-    except KeyboardInterrupt:
-        pass
-'''    
