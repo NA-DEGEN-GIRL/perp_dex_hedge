@@ -10,18 +10,8 @@ import asyncio
 from decimal import Decimal, ROUND_HALF_UP, ROUND_UP, ROUND_DOWN
 from superstack_payload import get_superstack_payload
 import aiohttp  # comment: superstack 전송에 필요
-from eth_utils import keccak
 from eth_account import Account
-try:
-    from eth_account.messages import encode_structured_data as _eip712_encode
-except Exception:
-    try:
-        from eth_account.messages import encode_typed_data as _eip712_encode  # eth-account >=0.10, 0.13.x 포함
-    except Exception:
-        _eip712_encode = None  # 런타임에서 친절한 오류 안내
-import inspect  # 시그니처 호환 호출에 사용
-
-import msgpack  # MessagePack: ccxt packb 대체
+from hl_sign import sign_l1_action as hl_sign_l1_action
 try:
     from exchange_factory import symbol_create
 except Exception:
@@ -55,128 +45,10 @@ def _strip_decimal_trailing_zeros(s: str) -> str:
         return s.rstrip("0").rstrip(".")  # comment: 정수부는 건드리지 않음
     return s
 
-def _int_to_base16(n: int) -> str:
-    h = format(int(n), "x")
-    return h if (len(h) % 2 == 0) else ("0" + h)
-
-def _strip_0x(h: str) -> str:
-    return h[2:] if isinstance(h, str) and h.startswith("0x") else h
-
-def _hex_to_bytes(h: str) -> bytes:
-    return bytes.fromhex(_strip_0x(h))
-
-def _bytes_to_hex(b: bytes) -> str:
-    return b.hex()
-
-def _packb_action(action: Dict[str, Any]) -> bytes:
-    """
-    ccxt.packb(action) 등가:
-    - MessagePack Packer(use_bin_type=True, autoreset=True, strict_types=False)
-    - dict의 '키 순서'를 그대로 직렬화(정렬 금지)
-    """
-    # msgpack-python의 Packer는 내부 버퍼를 관리하므로 BytesIO에 직접 쓰지 않고 바로 packb 사용
-    # 단, dict 키 순서를 보존하기 위해 action 생성 시점의 삽입 순서가 중요
-    try:
-        return msgpack.packb(action, use_bin_type=True, strict_types=False)
-    except Exception:
-        # 혹시 packb가 실패하면 수동 Packer 사용
-        packer = msgpack.Packer(use_bin_type=True, strict_types=False, autoreset=True)
-        return packer.pack(action)
-
-def _action_hash(action: Dict[str, Any], nonce: int, vault_address: Optional[str]) -> str:
-    """
-    ccxt.hyperliquid.action_hash 구현:
-      dataHex = hex(packb(action))
-      data = dataHex + '00000' + int_to_base16(nonce) + ( '00' if vault=None else ('01'+vault) )
-      hash = keccak( hex_to_bytes(data) )
-    """
-    data_hex = _bytes_to_hex(_packb_action(action))
-    data = data_hex
-    data += "00000" + _int_to_base16(nonce)
-    if vault_address is None:
-        data += "00"
-    else:
-        data += "01" + _strip_0x(vault_address)
-
-    digest = keccak(_hex_to_bytes(data))
-    out = "0x" + digest.hex()
-    if HL_SIG_DEBUG:
-        logger.debug(f"[HL-SIG] dataHex={data_hex[:64]}... len={len(data_hex)} nonce={nonce} vault={vault_address} hash={out}")
-    return out
-
-def _construct_phantom_agent(conn_hash_hex: str, is_testnet: bool) -> Dict[str, Any]:
-    """
-    ccxt.construct_phantom_agent 등가
-      source: 'b'(testnet) / 'a'(mainnet)
-      connectionId: bytes32 (keccak 결과)
-    """
-    source = "b" if is_testnet else "a"
-    cid = _hex_to_bytes(conn_hash_hex)
-    if len(cid) != 32:
-        raise ValueError(f"connectionId must be 32 bytes, got {len(cid)}")
-    agent = {"source": source, "connectionId": cid}
-    if HL_SIG_DEBUG:
-        logger.debug(f"[HL-SIG] phantomAgent.source={source}, conn[:8]={cid[:8].hex()}")
-    return agent
-
-def _encode_eip712(data: dict):
-    """
-    eth-account 버전에 따라 encode_structured_data 또는 encode_typed_data 호출.
-    - 0.13.x: encode_typed_data(data 또는 primitive=data)
-    - 구버전: encode_structured_data(primitive=data)
-    반환: SignableMessage
-    """
-    if _eip712_encode is None:
-        raise RuntimeError(
-            "eth-account에 EIP-712 인코더가 없습니다. "
-            "eth-account>=0.10(권장 0.13.x)로 설치하거나 업데이트하세요."
-        )
-    try:
-        sig = inspect.signature(_eip712_encode)
-        params = sig.parameters
-        if "primitive" in params:     # encode_structured_data 스타일
-            return _eip712_encode(primitive=data)
-        else:                          # encode_typed_data 스타일(일반적으로 위치 인자 또는 키워드 data)
-            try:
-                return _eip712_encode(data)          # 위치 인자
-            except TypeError:
-                return _eip712_encode(primitive=data)
-    except Exception as e:
-        raise RuntimeError(f"EIP-712 인코딩 실패: {e}")
-
-# ---- EIP-712 메시지 생성 함수 수정 ----
-def _eip712_agent_message(phantom_agent: Dict[str, Any], chain_id: int, verifying_contract: str):
-    """
-    ccxt.eth_encode_structured_data 등가:
-      domain/types/message 구성 후 EIP-712 SignableMessage 생성
-    """
-    domain = {
-        "name": "Exchange",
-        "version": "1",
-        "chainId": int(chain_id),
-        "verifyingContract": "0x" + _strip_0x(verifying_contract or "0x" + "0" * 40),
-    }
-    types = {
-        "Agent": [
-            {"name": "source", "type": "string"},
-            {"name": "connectionId", "type": "bytes32"},
-        ],
-        # 주: 일부 eth-account 버전은 EIP712Domain 타입을 명시하지 않아도 됩니다.
-        # 필요한 경우 아래 주석 해제:
-        # "EIP712Domain": [
-        #     {"name": "name", "type": "string"},
-        #     {"name": "version", "type": "string"},
-        #     {"name": "chainId", "type": "uint256"},
-        #     {"name": "verifyingContract", "type": "address"},
-        # ],
-    }
-    data = {
-        "types": types,
-        "domain": domain,
-        "primaryType": "Agent",
-        "message": phantom_agent,
-    }
-    return _encode_eip712(data)  # ← 버전 호환 인코더로 생성
+def _strip_0x(h: str | None) -> str:
+    if not isinstance(h, str):
+        return ""
+    return h[2:] if h.startswith(("0x", "0X")) else h
 
 class TradingService:
     def __init__(self, manager: ExchangeManager):
@@ -209,6 +81,9 @@ class TradingService:
         self._hl_asset_meta_cache: Dict[tuple[str, str], Dict[str, Any]] = {}
         #self._hl_asset_meta_ttl: float = 30.0  # comment: 캐시 TTL(초). 필요 시 조정
 
+
+    
+    
     def get_display_builder_fee(self, exchange_name: str, dex: Optional[str], order_type: str) -> Optional[int]:
         """
         HL 카드 우상단 'FEE:' 표기를 위한 표시용 수수료 선택.
@@ -229,46 +104,21 @@ class TradingService:
         """ex.milliseconds() 대체."""
         return int(time.time() * 1000)
 
-    def _hl_sign_l1_action(self, ex: Any, action: Dict[str, Any], nonce: int, vault_address: Optional[str]) -> str:
+    def _hl_sign_l1_action(self, ex: Any, action: Dict[str, Any], nonce: int, vault_address: Optional[str]) -> dict:
         """
-        ccxt.sign_l1_action 대체:
-          1) ex에 sign_l1_action이 있으면 그대로 사용(완전 호환)
-          2) 없으면: action_hash → phantomAgent → EIP-712(Agent) → 서명
-        ex.options 필요:
-          - privateKey: 0x... (필수)
-          - sandboxMode: bool (testnet 여부)
-          - zeroAddress: 0x000... (optional, 기본 0x00..00)
+        공식 SDK 서명 모듈 사용.
+        반환: {'r':'0x..','s':'0x..','v':27/28}
         """
-        # 1) ccxt 경로 보존(있다면)
-        try:
-            signer = getattr(ex, "sign_l1_action", None)
-            if callable(signer):
-                sig = signer(action, nonce, None)
-                if HL_SIG_DEBUG:
-                    logger.debug(f"[HL-SIG] ccxt signer used, sig[:12]={str(sig)[:12]}")
-                return sig
-        except Exception:
-            pass
-
         opt = getattr(ex, "options", {}) or {}
         priv = opt.get("privateKey") or opt.get("private_key")
         if not priv:
             raise RuntimeError("HL signing requires privateKey in ex.options.")
-        is_testnet = bool(opt.get("sandboxMode", False))
-        zero_address = opt.get("zeroAddress") or ("0x" + "0"*40)
-        chain_id = int(opt.get("chainId", 1337))  # ccxt 샘플과 동일 기본값
-
-        # 2) action_hash → phantomAgent
-        ah = _action_hash(action, nonce, vault_address)
-        agent = _construct_phantom_agent(ah, is_testnet)
-
-        # 3) EIP-712 Agent 메시지 생성 및 서명
-        eip712_msg = _eip712_agent_message(agent, chain_id, zero_address)
-        signed = Account.sign_message(eip712_msg, private_key=_strip_0x(priv))
-        sig = signed.signature.hex()
-        if HL_SIG_DEBUG:
-            logger.debug(f"[HL-SIG] signed v={signed.v} r[:8]={hex(signed.r)[:10]} s[:8]={hex(signed.s)[:10]}")
-        return sig
+        # wallet 객체 생성
+        wallet = Account.from_key(bytes.fromhex(_strip_0x(priv)))
+        is_mainnet = not bool(opt.get("sandboxMode", False))
+        # 공식 SDK sign_l1_action 호출 (expires_after는 사용 안하면 None)
+        signature = hl_sign_l1_action(wallet, action, vault_address, nonce, None, is_mainnet)
+        return signature
 
     async def _send_hl_exchange(self, ex: Any, action: Dict[str, Any], *, platform: str) -> Dict[str, Any]:
         """
@@ -282,9 +132,12 @@ class TradingService:
                 raise RuntimeError("superstack apiKey is missing in options.")
             payload: Union[Dict[str, Any], str] = await get_superstack_payload(api_key=api_key, action=action)
         else:
-            nonce = self._hl_now_ms()
-            signature = self._hl_sign_l1_action(ex, action, nonce, vault_address=None)
-            payload = {"action": action, "nonce": nonce, "signature": signature}
+            try:
+                nonce = self._hl_now_ms()
+                signature = self._hl_sign_l1_action(ex, action, nonce, vault_address=None)
+                payload = {"action": action, "nonce": nonce, "signature": signature}
+            except Exception as e:
+                logger.info(f"{e}")
 
         # 전송 (UA 제거 상태 유지)
         base = "https://api.hyperliquid.xyz"

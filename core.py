@@ -4,8 +4,8 @@ import asyncio
 import configparser
 import logging
 from types import SimpleNamespace
-import ccxt.async_support as ccxt
 from dotenv import load_dotenv
+import re
 try:
     from exchange_factory import create_exchange  # mpdex 팩토리
 except Exception:
@@ -93,17 +93,30 @@ def _parse_fee_pair(raw: str | tuple | list | None) -> tuple[int, int]:
     except Exception:
         return (0, 0)
 
-class Superstack:
-    def __init__(self, options):
-        # comment: ccxt.hyperliquid와 동일하게 '내부 options'를 self.options로 사용
+class Hyperliquid:
+    """
+    trading_service가 기대하는 최소 표면:
+    - .options: dict (walletAddress/privateKey/apiKey 등)
+    - async initialize_client(): no-op
+    - async close(): no-op
+    - (선택) sign_l1_action(): 미구현이어도 trading_service가 fallback 서명 사용
+    """
+    def __init__(self, options: dict):
         inner = dict(options.get("options", {}) or {})
-        
-        for k in ("walletAddress", "apiKey"):
+        for k in ("walletAddress", "apiKey", "privateKey"):
             v = options.get(k)
             if v is not None:
                 inner[k] = v
         self.options = inner
+        # 호환 편의: walletAddress 속성을 바로 노출
+        self.walletAddress = inner.get("walletAddress")
 
+    async def initialize_client(self):  # ccxt 대체 no-op
+        return
+
+    async def close(self):
+        return
+    
 class ExchangeManager:
     """
     - exchanges[name] : ccxt 인스턴스 또는 None
@@ -173,11 +186,8 @@ class ExchangeManager:
                         options["apiKey"] = os.getenv(f"{exchange_name.upper()}_AGENT_API_KEY")
                         options["privateKey"] = os.getenv(f"{exchange_name.upper()}_PRIVATE_KEY")
 
-                    if exchange_platform == 'superstack':
-                        self.exchanges[exchange_name] = Superstack(options)
-                    else:
-                        self.exchanges[exchange_name] = ccxt.hyperliquid(options)
-
+                    self.exchanges[exchange_name] = Hyperliquid(options)
+                    
                     try:
                         self.exchanges[exchange_name].options["walletAddress"] = wallet_address
                     except Exception:
