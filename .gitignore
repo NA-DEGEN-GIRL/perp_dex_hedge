@@ -12,3 +12,5 @@ __pycache__/
 scroll_debug.log
 scroll_direct.txt
 scrollbar_debug.log
+.python-version
+logs/
