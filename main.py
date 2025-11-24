@@ -1,37 +1,85 @@
 import os
 import logging
-import argparse
-
+from logging.handlers import RotatingFileHandler
 from core import ExchangeManager
-from ui_urwid import UrwidApp  # urwid UI도 선택 가능하게 추가
+from ui_urwid import UrwidApp
+from dotenv import load_dotenv
 
 def _setup_logging():
-    # 파일 핸들러만 사용, 기존 핸들러 싹 정리
-    log_level = os.getenv("PDEX_LOG_LEVEL", "INFO").upper()
-    log_to_console = os.getenv("PDEX_LOG_CONSOLE", "0") == "1"  # 필요할 때만 콘솔 출력
+    # 1) 환경 변수 읽기
+    level_name = os.getenv("PDEX_LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
+    log_file = os.path.abspath(os.getenv("PDEX_LOG_FILE", "debug.log"))
+    to_console = os.getenv("PDEX_LOG_CONSOLE", "0") == "1"
 
+    # 2) 강제 재설정(force): 기존 basicConfig/핸들러 덮어쓰기
+    #    (파이썬 3.8+)
+    fmt = "%(asctime)s - %(levelname)s - %(name)s - %(message)s"
+    handlers = [RotatingFileHandler(log_file, maxBytes=10_000_000, backupCount=3, encoding="utf-8")]
+    if to_console:
+        handlers.append(logging.StreamHandler())
+
+    logging.basicConfig(
+        level=level,
+        format=fmt,
+        handlers=handlers,
+        force=True,   # ← 핵심: 기존 설정/핸들러를 모두 무시하고 재설정
+    )
+
+    # 3) 핸들러 레벨은 NOTSET로(루트 레벨만 따르게)
     root = logging.getLogger()
-    root.handlers.clear()
-    root.setLevel(getattr(logging, log_level, logging.INFO))
+    for h in root.handlers:
+        h.setLevel(logging.NOTSET)
 
-    fmt = logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s")
-    fh = logging.FileHandler("debug.log", mode="a", encoding="utf-8")
-    fh.setFormatter(fmt)
-    root.addHandler(fh)
+    # 4) 소음 로거 억제(원하면 환경변수로)
+    for name in [s.strip() for s in os.getenv("PDEX_LOG_SUPPRESS", "asyncio,urllib3").split(",") if s.strip()]:
+        logging.getLogger(name).setLevel(logging.CRITICAL)
 
-    if log_to_console:
-        sh = logging.StreamHandler()
-        sh.setFormatter(fmt)
-        root.addHandler(sh)
+    # 5) 모듈별 레벨(옵션)
+    mapping_env = os.getenv("PDEX_MODULE_LEVELS", "")
+    if mapping_env:
+        for token in mapping_env.split(","):
+            token = token.strip()
+            if "=" not in token:
+                continue
+            mod, lev = token.split("=", 1)
+            try:
+                logging.getLogger(mod.strip()).setLevel(getattr(logging, lev.strip().upper()))
+            except Exception:
+                pass
 
-    # 서드파티/비동기 로거 소음 억제
-    logging.getLogger("asyncio").setLevel(logging.CRITICAL)
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
-    # 필요 시 ccxt 로깅도 낮춰줍니다
-    logging.getLogger("ccxt").setLevel(logging.ERROR)
+    logging.info("Logging initialized: level=%s file=%s console=%s", level_name, log_file, to_console)
+
+def _dump_logging_state():
+    lg = logging.getLogger(__name__)
+    root = logging.getLogger()
+    L = logging.getLevelName
+    lg.info("[LOG] root level=%s handlers=%d", L(root.level), len(root.handlers))
+    for i, h in enumerate(root.handlers, 1):
+        lg.info("[LOG] handler[%d]=%s level=%s target=%s",
+                i, h.__class__.__name__, L(getattr(h, "level", logging.NOTSET)),
+                getattr(h, "baseFilename", None) or "stream")
+    # 관심 모듈들 확인(패키지 경로/짧은 이름 모두 찍어보면 좋습니다)
+    for name in ("trading_service", "perp_dex_hedge.trading_service"):
+        t = logging.getLogger(name)
+        lg.info("[LOG] logger %-32s effective=%s setLevel=%s propagate=%s",
+                name, L(t.getEffectiveLevel()), L(t.level), t.propagate)
+
+# (옵션) 이후 basicConfig를 다른 모듈이 또 호출하는 것을 무력화
+def _guard_basicConfig(enable: bool = True):
+    import logging as _logging
+    if not enable:
+        return
+    _orig = _logging.basicConfig
+    def _noop(*args, **kwargs):
+        return  # 앞으로의 basicConfig 호출을 전부 무시
+    _logging.basicConfig = _noop
 
 def main():
-    _setup_logging()
+    load_dotenv()
+    _setup_logging()     # 강제 재설정
+    _guard_basicConfig(enable=True)  # (옵션) 이후 타 모듈의 basicConfig 무력화
+    _dump_logging_state()            # 상태 확인 1회
     logging.info("Application starting...")
 
     manager = ExchangeManager()

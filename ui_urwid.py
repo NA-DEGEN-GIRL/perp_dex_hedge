@@ -1,6 +1,5 @@
 import asyncio
 import random
-import logging
 import warnings
 from typing import Dict, Optional, List
 import math
@@ -17,6 +16,8 @@ import contextlib
 import re
 import time
 from types import SimpleNamespace
+import logging
+logger = logging.getLogger(__name__)
 
 CARD_HEIGHT = 5
 LOGS_ROWS = 6
@@ -54,35 +55,6 @@ class FollowableListBox(ScrollableListBox):
 
         return super().mouse_event(size, event, button, col, row, focus)
 
-def _attach_ui_file_logger(filename: str = None):
-    """
-    루트 로거에 UI 전용 FileHandler를 추가합니다.
-    - main._setup_logging() 이후에 호출되어야 합니다(handlers.clear() 이후).
-    - filename이 None이면 환경변수 PDEX_UI_LOG_FILE 또는 'debug.log' 사용.
-    """
-    fname = filename or os.getenv("PDEX_UI_LOG_FILE", "debug.log")
-    root = logging.getLogger()
-    fmt = logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s")
-
-    # 이미 동일한 파일 핸들러가 있으면 중복 추가하지 않음
-    for h in root.handlers:
-        if isinstance(h, logging.FileHandler):
-            try:
-                if getattr(h, "baseFilename", "").endswith(fname):
-                    return
-            except Exception:
-                pass
-
-    try:
-        fh = logging.FileHandler(fname, mode="a", encoding="utf-8")  # comment: 항상 새로 시작
-        fh.setFormatter(fmt)
-        root.addHandler(fh)
-        logging.info(f"[UI-LOG] extra file handler attached: {fname}")
-    except Exception as e:
-        # 파일 열기 실패 등은 조용히 넘어감
-        logging.warning(f"[UI-LOG] attach failed for {fname}: {e}")
-
-# [추가] 가격/상태 폴링 간격 설정(환경변수로도 오버라이드 가능)
 RATE = SimpleNamespace(
     GAP_FOR_INF=0.1, # need small gap for infinite loop
     # all for non hl
@@ -705,7 +677,7 @@ class UrwidApp:
                         self.service.ensure_hl_max_leverage_auto(n, sym)
                     )
                 except Exception as e:
-                    logging.info(f"[LEVERAGE] ensure_hl_max_leverage_auto({n},{sym}) failed: {e}")
+                    logger.info(f"[LEVERAGE] ensure_hl_max_leverage_auto({n},{sym}) failed: {e}")
             
             # 0.4초 디바운스
             self._lev_alarm_by_ex[n] = self.loop.set_alarm_in(0.4, _apply_max_lev)
@@ -1062,7 +1034,7 @@ class UrwidApp:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logging.debug(f"price loop: {e}")
+                logger.debug(f"price loop: {e}")
                 await asyncio.sleep(RATE.GAP_FOR_INF)
 
     async def _status_loop(self, name: str):
@@ -1071,9 +1043,9 @@ class UrwidApp:
             try:
                 h = self.body_list._last_h
                 total = len(self.body_walker)
-                logging.info(f"[DEBUG] Screen height: {h}, Total items: {total}, Needs scroll: {total > h}")
+                logger.info(f"[DEBUG] Screen height: {h}, Total items: {total}, Needs scroll: {total > h}")
             except Exception as e:
-                logging.error(f"[DEBUG] Failed to get render info: {e}")
+                logger.error(f"[DEBUG] Failed to get render info: {e}")
 
         await asyncio.sleep(random.uniform(0.0, 0.7))
 
@@ -1126,7 +1098,7 @@ class UrwidApp:
                                 quote_str = ws.get_collateral_quote() or "USDC"
                                 self.card_quote_text[name].set_text(("quote_color", quote_str))
                     except Exception as px_e:
-                        logging.debug(f"[UI] Price update for {name} failed: {px_e}")
+                        logger.debug(f"[UI] Price update for {name} failed: {px_e}")
                         self.card_price_text[name].set_text(("pnl_neg", "Price: Error"))
                 else:
                     if need_price:
@@ -1140,7 +1112,7 @@ class UrwidApp:
                                 pass
                             self._last_card_price_at[name] = now  # [추가] 타임스탬프 갱신
                         except Exception as e:
-                            logging.debug(f"[UI] non-HL price update for {name} failed: {e}")
+                            logger.debug(f"[UI] non-HL price update for {name} failed: {e}")
                             self.card_price_text[name].set_text(("pnl_neg", "Price: Error"))
 
                 if is_hl_like:
@@ -1173,7 +1145,7 @@ class UrwidApp:
                 break
 
             except Exception as e:
-                logging.error(f"[CRITICAL] Unhandled error in status_loop for '{name}'", exc_info=True)
+                logger.error(f"[CRITICAL] Unhandled error in status_loop for '{name}'", exc_info=True)
                 if name in self.info_text:
                     self.info_text[name].set_text([('pnl_neg', "Status Error: Check logs")])
                     self._request_redraw()
@@ -1757,13 +1729,13 @@ class UrwidApp:
                             cols.focus_position = 1
                             self._request_redraw()
                 except Exception as e:
-                    logging.error(f"Tab next finalize error: {e}")
+                    logger.error(f"Tab next finalize error: {e}")
 
             # 0.01초 후 finalize (위젯 렌더 완료 대기)
             self.loop.set_alarm_in(0.05, _finalize_focus_to_q)
 
         except Exception as e:
-            logging.error(f"Tab next exception: {e}", exc_info=True)
+            logger.error(f"Tab next exception: {e}", exc_info=True)
 
     # 3) 본문에서 Shift+Tab → 이전 카드의 EX(마지막 selectable)로 래핑 이동 ----
     def _tab_body_prev(self):
@@ -1788,7 +1760,7 @@ class UrwidApp:
 
             # 이전 카드로 포커스 이동
             self.body_list.set_focus(row_prev)
-            logging.info(f"Tab prev: moving from card {k} to card {k_prev}, row {row_prev}")
+            logger.info(f"Tab prev: moving from card {k} to card {k_prev}, row {row_prev}")
 
             # [핵심] 위젯 렌더링 완료 후 EX(마지막 selectable)로 포커스를 설정하도록 지연 예약
             def _finalize_focus_to_ex(loop, data):
@@ -1806,13 +1778,13 @@ class UrwidApp:
                                 cols.focus_position = last_idx
                                 self._request_redraw()
                 except Exception as e:
-                    logging.error(f"Tab prev finalize error: {e}")
+                    logger.error(f"Tab prev finalize error: {e}")
 
             # 0.01초 후 finalize (위젯 렌더 완료 대기)
             self.loop.set_alarm_in(0.05, _finalize_focus_to_ex)
 
         except Exception as e:
-            logging.error(f"Tab prev exception: {e}", exc_info=True)
+            logger.error(f"Tab prev exception: {e}", exc_info=True)
 
     # ====================== Exchanges(푸터) Tab 이동 ======================
     def _get_switcher_pile(self):
@@ -2089,7 +2061,6 @@ class UrwidApp:
 
     # --------- 실행/루프 ----------
     def run(self):
-        _attach_ui_file_logger()  # comment: debug_sc.log에 병행 기록
         if os.name == 'nt':
             try:
                 asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -2162,7 +2133,7 @@ class UrwidApp:
             try:
                 await self.mgr.initialize_all()
             except Exception as e:
-                logging.warning(f"initialize_all failed: {e}")
+                logger.warning(f"initialize_all failed: {e}")
             
             # DEX 목록 가져와 헤더/카드 UI 동적 구성 (비동기)
             try:
@@ -2239,7 +2210,7 @@ class UrwidApp:
                     try:
                         asyncio.get_event_loop().create_task(_apply_all())
                     except Exception as e:
-                        logging.info(f"[LEVERAGE] ensure_hl_max_leverage_auto(all) failed: {e}")
+                        logger.info(f"[LEVERAGE] ensure_hl_max_leverage_auto(all) failed: {e}")
 
                 # 0.4초 뒤 한 번만 호출(빠른 타이핑 방지)
                 self._ticker_lev_alarm = self.loop.set_alarm_in(0.4, _apply_max_lev_all)
@@ -2258,7 +2229,7 @@ class UrwidApp:
                 if tasks:
                     await asyncio.gather(*tasks, return_exceptions=True)
             except Exception as e:
-                logging.info(f"[LEVERAGE] initial ensure_hl_max_leverage_auto skipped: {e}")
+                logger.info(f"[LEVERAGE] initial ensure_hl_max_leverage_auto skipped: {e}")
 
         loop.run_until_complete(_bootstrap())
         self.loop.set_alarm_in(0, self._set_initial_focus)
@@ -2301,12 +2272,12 @@ class UrwidApp:
 
     def _check_initial_render(self):
         try:
-            logging.info(f"[INIT] Body walker: {len(self.body_walker)} items")
-            logging.info(f"[INIT] Body list height: {self.body_list._last_h}")
-            logging.info(f"[INIT] Body list selectable: {self.body_list.selectable()}")
-            logging.info(f"[INIT] Body scroll total: {self.body_scroll._total}")
-            logging.info(f"[INIT] Log walker: {len(self.log_list)} items")
+            logger.info(f"[INIT] Body walker: {len(self.body_walker)} items")
+            logger.info(f"[INIT] Body list height: {self.body_list._last_h}")
+            logger.info(f"[INIT] Body list selectable: {self.body_list.selectable()}")
+            logger.info(f"[INIT] Body scroll total: {self.body_scroll._total}")
+            logger.info(f"[INIT] Log walker: {len(self.log_list)} items")
             # [FIX] 실제 ListBox의 높이 참조
-            logging.info(f"[INIT] Log listbox height: {self.log_listbox._last_h}")
+            logger.info(f"[INIT] Log listbox height: {self.log_listbox._last_h}")
         except Exception as e:
-            logging.error(f"[INIT] Check failed: {e}")
+            logger.error(f"[INIT] Check failed: {e}")

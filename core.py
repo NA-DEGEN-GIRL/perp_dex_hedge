@@ -2,18 +2,17 @@
 import os
 import asyncio
 import configparser
-import logging
 from types import SimpleNamespace
-from dotenv import load_dotenv
-import re
+import logging
+logger = logging.getLogger(__name__)  # 모듈 전용 로거
+
 try:
     from exchange_factory import create_exchange  # mpdex 팩토리
 except Exception:
     create_exchange = None
-    logging.warning("[mpdex] exchange_factory.create_exchange 를 찾지 못했습니다. 비-HL 거래소는 비활성화됩니다.")
+    logger.warning("[mpdex] exchange_factory.create_exchange 를 찾지 못했습니다. 비-HL 거래소는 비활성화됩니다.")
 
 # --- 설정 로드 ---
-load_dotenv()
 config = configparser.ConfigParser(interpolation=None)
 def load_config_with_encodings(path: str) -> configparser.ConfigParser:
     """
@@ -28,22 +27,22 @@ def load_config_with_encodings(path: str) -> configparser.ConfigParser:
         try:
             with open(path, "r", encoding=enc) as f:
                 cfg.read_file(f)
-            logging.info(f"[config] loaded '{path}' with encoding='{enc}'")
+            logger.info(f"[config] loaded '{path}' with encoding='{enc}'")
             return cfg
         except UnicodeDecodeError as e:
             last_err = e
             continue
         except FileNotFoundError:
-            logging.critical(f"[config] file not found: {path}")
+            logger.critical(f"[config] file not found: {path}")
             raise
         except Exception as e:
             # 예기치 못한 에러는 바로 올립니다(잘못된 INI 문법 등)
-            logging.exception(f"[config] load error with encoding='{enc}': {e}")
+            logger.exception(f"[config] load error with encoding='{enc}': {e}")
             raise
 
     # 모든 인코딩 시도 실패
     if last_err:
-        logging.critical(f"[config] failed to decode '{path}' with tried encodings {encodings}")
+        logger.critical(f"[config] failed to decode '{path}' with tried encodings {encodings}")
         raise last_err
     else:
         # 이론상 도달하지 않지만 안전상
@@ -206,7 +205,7 @@ class ExchangeManager:
 
         non_hl = [n for n in EXCHANGES if not self.meta.get(n, {}).get("hl", False)]
         if create_exchange is None and non_hl:
-            logging.warning("[mpdex] 미설치/경로 오류로 비-HL 생성 스킵: %s", ",".join(non_hl))
+            logger.warning("[mpdex] 미설치/경로 오류로 비-HL 생성 스킵: %s", ",".join(non_hl))
         for name in non_hl:
             if self.exchanges.get(name):
                 continue
@@ -215,20 +214,20 @@ class ExchangeManager:
             try:
                 key = self._build_mpdex_key(name)
                 if key is None:
-                    logging.warning(f"[{name}] .env 키가 누락되어 생성 스킵")
+                    logger.warning(f"[{name}] .env 키가 누락되어 생성 스킵")
                     continue
                 client = await create_exchange(name.lower(), key)
                 self.exchanges[name] = client
-                logging.info(f"[{name}] mpdex client created")
+                logger.info(f"[{name}] mpdex client created")
             except Exception as e:
-                logging.warning(f"[{name}] mpdex client create failed: {e}")
+                logger.warning(f"[{name}] mpdex client create failed: {e}")
                 self.exchanges[name] = None
 
         if tasks:
             try:
                 await asyncio.gather(*tasks, return_exceptions=True)
             except Exception as e:
-                logging.warning(f"initialize_all error: {e}")
+                logger.warning(f"initialize_all error: {e}")
 
     def _build_mpdex_key(self, name: str) -> SimpleNamespace | None:
         """mpdex 각 거래소별 키를 .env에서 읽어 SimpleNamespace로 생성"""
@@ -264,7 +263,7 @@ class ExchangeManager:
                     secret_key=os.getenv("BACKPACK_SECRET_KEY"),
                 )
         except Exception as e:
-            logging.warning(f"[{name}] env key parse failed: {e}")
+            logger.warning(f"[{name}] env key parse failed: {e}")
             return None
         return None
 

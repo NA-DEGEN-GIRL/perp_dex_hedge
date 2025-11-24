@@ -1,8 +1,5 @@
 # trading_service.py
-import logging
 import time
-import os, json, time, struct
-from io import BytesIO
 from typing import Tuple, Optional, Dict, Any, Union
 from hl_ws.hl_ws_client import HLWSClientRaw, http_to_wss
 from core import ExchangeManager
@@ -12,18 +9,14 @@ from superstack_payload import get_superstack_payload
 import aiohttp  # comment: superstack 전송에 필요
 from eth_account import Account
 from hl_sign import sign_l1_action as hl_sign_l1_action
+import logging
+logger = logging.getLogger(__name__)
+
 try:
     from exchange_factory import symbol_create
 except Exception:
     symbol_create = None
-    logging.warning("[mpdex] exchange_factory.symbol_create 를 찾지 못했습니다. 비-HL 거래소는 비활성화됩니다.")
-
-HL_SIG_DEBUG = False
-
-DEBUG_FRONTEND = False
-logger = logging.getLogger("trading_service")
-logger.propagate = True                    # 루트로 전파해 main.py의 FileHandler만 사용
-logger.setLevel(logging.DEBUG if DEBUG_FRONTEND else logging.INFO)
+    logger.warning("[mpdex] exchange_factory.symbol_create 를 찾지 못했습니다. 비-HL 거래소는 비활성화됩니다.")
 
 def _parse_hip3_symbol(sym: str) -> Tuple[Optional[str], str]:
     # 'xyz:XYZ100' → ('xyz', 'xyz:XYZ100') 로 표준화
@@ -80,7 +73,9 @@ class TradingService:
         
         self._hl_asset_meta_cache: Dict[tuple[str, str], Dict[str, Any]] = {}
         #self._hl_asset_meta_ttl: float = 30.0  # comment: 캐시 TTL(초). 필요 시 조정
-
+        logger.info("[TS] init (effective=%s handlers=%d)",
+                    logging.getLevelName(logger.getEffectiveLevel()),
+                    len(logging.getLogger().handlers))
 
     
     
@@ -138,6 +133,8 @@ class TradingService:
                 payload = {"action": action, "nonce": nonce, "signature": signature}
             except Exception as e:
                 logger.info(f"{e}")
+                raise RuntimeError("payload error")
+
 
         # 전송 (UA 제거 상태 유지)
         base = "https://api.hyperliquid.xyz"
@@ -304,13 +301,12 @@ class TradingService:
         payload = {"type": "allPerpMetas"}  # <-- 수정: 'perpDexs' → 'allPerpMetas'
         raw = await self._info_post_http(payload)
         lst = self._normalize_meta_and_asset_ctxs(raw)  # <-- 수정: DEX 리스트 정규화가 아니라 메타 정규화 사용
-        if 1:
-            try:
-                u0 = (lst[0] or {}).get("universe") if lst else None
-                head = [str((a or {}).get("name") or "") for a in (u0 or [])[:10]]
-                logger.info(f"[allPerpMetas] metas={len(lst)} universe0_len={len(u0 or [])} head={head}")
-            except Exception as e:
-                logger.info(f"[allPerpMetas] {e}")
+        try:
+            u0 = (lst[0] or {}).get("universe") if lst else None
+            head = [str((a or {}).get("name") or "") for a in (u0 or [])[:10]]
+            logger.info(f"[allPerpMetas] metas={len(lst)} universe0_len={len(u0 or [])} head={head}")
+        except Exception as e:
+            logger.info(f"[allPerpMetas] {e}")
                 
         return lst
 
@@ -734,7 +730,7 @@ class TradingService:
                     if u_c is not None:
                         usdc = float(u_c)
             except Exception as e:
-                logging.warning(f"_get_hl_total_account_value_and_usdh: {e}")
+                logger.warning(f"_get_hl_total_account_value_and_usdh: {e}")
                 # 개별 스코프 실패는 무시하고 계속 합산
                 continue
 
@@ -867,7 +863,7 @@ class TradingService:
         - 지정가: 입력 가격 사용, tif 기본 Gtc
         - builder/fee, reduceOnly, client_id 모두 raw payload로 반영
         """
-        
+        logger.info("test")
         meta = self.manager.get_meta(exchange_name) or {}
 
         try:
@@ -1246,6 +1242,7 @@ class TradingService:
         reduce_only: bool = False,  # NEW: reduceOnly 플래그
         client_id: Optional[str] = None,
     ) -> dict:
+        logger.info(f"[EXECUTE] start: ex={exchange_name} sym={symbol} side={side} amt={amount} type={order_type}")
         meta = self.manager.get_meta(exchange_name) or {}
         ex = self.manager.get_exchange(exchange_name)
         if not ex:

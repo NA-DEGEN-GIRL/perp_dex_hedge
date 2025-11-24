@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 import urwid
 import sys, locale, logging
-from typing import Optional, Tuple
-import time
-import os  # [추가]
+from typing import Tuple
 import math
+import logging
+logger = logging.getLogger(__name__)
 
 def _detect_encoding() -> str:
     return (sys.stdout.encoding or locale.getpreferredencoding(False) or "ascii").lower()
@@ -618,7 +618,7 @@ class ScrollableListBox(urwid.ListBox):
         try:
             middle, top, bottom = self.calculate_visible(self._last_size, self._has_focus)
         except Exception as e:
-            logging.debug(f"calculate_visible failed: {e}")
+            logger.debug(f"calculate_visible failed: {e}")
             try:
                 return None, int(self.focus_position), None
             except:
@@ -680,7 +680,7 @@ class ScrollableListBox(urwid.ListBox):
         total = len(self.body) if hasattr(self.body, '__len__') else 0
 
         if total <= 0:
-            logging.warning(f"[_scroll_view] Empty body, skipping")
+            logger.warning(f"[_scroll_view] Empty body, skipping")
             return
         
         self._update_sticky_from_current()
@@ -697,11 +697,11 @@ class ScrollableListBox(urwid.ListBox):
             try:
                 coming = 'above' if delta > 0 else 'below'
                 self.set_focus(new_focus, coming_from=coming)
-                logging.debug(f"[_scroll_view] Focus changed successfully")
+                logger.debug(f"[_scroll_view] Focus changed successfully")
             except Exception as e:
-                logging.error(f"[_scroll_view] set_focus failed: {e}")
+                logger.error(f"[_scroll_view] set_focus failed: {e}")
         else:
-            logging.debug(f"[_scroll_view] Focus unchanged (boundary)")
+            logger.debug(f"[_scroll_view] Focus unchanged (boundary)")
         
         self._apply_sticky_inner_focus()
         self._invalidate()
