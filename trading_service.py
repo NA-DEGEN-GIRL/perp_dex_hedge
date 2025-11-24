@@ -152,28 +152,6 @@ class TradingService:
                     await self._raise_if_bad_response(res)
                     return await res.json()
 
-    async def _hl_send_req(self, payload: Union[dict, str, bytes], session: aiohttp.ClientSession):
-        """
-        HL 교환 엔드포인트로 raw payload를 전송한다.
-        payload:
-          - dict  → json=payload
-          - str/bytes → data=payload (이미 직렬화된 JSON 문자열 등)
-        """
-        DEFAULT_HEADERS = {
-            "Accept": "application/json",
-            "Content-Type": "application/json",  # comment: data=로 보낼 때도 JSON 문자열을 보낸다는 전제
-        }
-        url = "https://api.hyperliquid.xyz/exchange"  # comment: 메인넷 강제
-        # [FIX] payload 타입별 분기
-        if isinstance(payload, (str, bytes)):
-            async with session.post(url, headers=DEFAULT_HEADERS, data=payload) as res:
-                await self._raise_if_bad_response(res)
-                return await res.json()
-        else:
-            async with session.post(url, headers=DEFAULT_HEADERS, json=payload) as res:
-                await self._raise_if_bad_response(res)
-                return await res.json()
-        
     async def _raise_if_bad_response(self, resp: aiohttp.ClientResponse) -> None:
         """HTTP 응답 상태 코드가 2xx가 아닐 경우 예외를 발생시킵니다."""
         if 200 <= resp.status < 300:
@@ -1021,31 +999,7 @@ class TradingService:
         resp = await self._send_hl_exchange(ex, action, platform=platform)
         oid = self._extract_order_id(resp) or ""
         return {"id": oid, "info": resp}
-        '''
-        try:
-            platform = str(meta.get("exchange", "")).lower()
-        except Exception:
-            platform = ""
         
-        logger.info("[SEND] ex=%s sym=%s", exchange_name, coin_key)
-        if platform == "superstack":
-            opt = getattr(ex, "options", {}) or {}
-            api_key = opt.get("apiKey")
-            if not api_key:
-                raise RuntimeError("superstack apiKey is missing in options.")
-            # 지갑 서비스에서 서명 포함 payload 생성
-            payload = await get_superstack_payload(api_key=api_key, action=action)
-        else:
-            nonce = ex.milliseconds()
-            signature = ex.sign_l1_action(action, nonce, None)
-            payload = {"action": action, "nonce": nonce, "signature": signature}
-
-        async with aiohttp.ClientSession() as session:
-            resp = await self._hl_send_req(payload, session)
-        oid = self._extract_order_id(resp) or ""
-        return {"id": oid, "info": resp}
-        '''
-
     async def _hl_update_leverage(self, ex, ex_name: str, hip3_coin: str, leverage: int, isolated: bool=True):
         meta = self.manager.get_meta(ex_name) or {}
 
@@ -1064,29 +1018,7 @@ class TradingService:
         logger.info("[HIP3][%s] %s leverage set: %s (isolated=%s) -> %s",
                     platform or "hl-raw", ex_name, leverage, isolated, str(resp)[:200])
         return resp
-        '''
-        platform = str(meta.get("exchange", "")).lower()
-        if platform == "superstack":
-            opt = getattr(ex, "options", {}) or {}
-            api_key = opt.get("apiKey")
-            if not api_key:
-                raise RuntimeError("superstack apiKey is missing in options.")
-            payload = await get_superstack_payload(api_key=api_key, action=action)
-            route = "superstack"
-        else:
-            nonce = ex.milliseconds()
-            signature = ex.sign_l1_action(action, nonce, None)
-            payload = {"action": action, "nonce": nonce, "signature": signature}
-            route = "ccxt"
-
-        async with aiohttp.ClientSession() as session:
-            resp = await self._hl_send_req(payload, session)
-
-        logger.info("[HIP3][%s] %s leverage set: %s (isolated=%s) -> %s",
-                    route, ex_name, leverage, isolated, str(resp)[:200])
-        return resp
-        '''
-
+        
     def _to_native_symbol(self, exchange_name: str, coin: str) -> str:
         meta = self.manager.get_meta(exchange_name) or {}
         # [CHG] is_hl_like 사용: HL(superstack 포함)은 그대로, 비‑HL만 변환

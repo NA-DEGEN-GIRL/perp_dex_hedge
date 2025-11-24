@@ -121,14 +121,33 @@ def user_signed_payload(primary_type: str, payload_types: list[dict], action: Di
         "message": action,
     }
 
+# agent wallet으로 사용 불가능. main wallet으로만 가능함!
+def sign_approve_builder_fee(wallet, action, is_mainnet):
+    return sign_user_signed_action(
+        wallet,
+        action,
+        [
+            {"name": "hyperliquidChain", "type": "string"},
+            {"name": "maxFeeRate", "type": "string"},
+            {"name": "builder", "type": "address"},
+            {"name": "nonce", "type": "uint64"},
+        ],
+        "HyperliquidTransaction:ApproveBuilderFee",
+        is_mainnet,
+    )
+
 def sign_user_signed_action(wallet,
                             action: Dict[str, Any],
                             payload_types: list[dict],
                             primary_type: str,
                             is_mainnet: bool) -> SignatureDict:
-    # signatureChainId는 서명용 체인(임의 가능), hyperliquidChain은 리플레이 방지용
-    action = dict(action)
+    """
+    공식 SDK와 동일하게 원본 action(dict)을 in-place로 수정하여
+    - action["signatureChainId"], action["hyperliquidChain"]을 주입합니다.
+    """
+    # in-place 주입 (중요!)
     action["signatureChainId"] = "0x66eee"
     action["hyperliquidChain"] = "Mainnet" if is_mainnet else "Testnet"
+
     data = user_signed_payload(primary_type, payload_types, action)
     return sign_inner(wallet, data)
