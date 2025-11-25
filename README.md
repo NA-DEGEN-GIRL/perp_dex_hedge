@@ -68,6 +68,12 @@ mpdex @ git+https://github.com/NA-DEGEN-GIRL/multi-perp-dex.git@master
 cp .env.example .env
 ```
 
+#### Sub Account (IS_SUB)
+- HL 계정이 “서브계정(sub account)”인 경우, 해당 카드의 환경변수에 `{NAME}_IS_SUB`를 설정하세요.
+- 효과: 프로그램이 `vaultAddress`를 `.env`의 `{NAME}_WALLET_ADDRESS`와 동일하게 자동 설정하여, 서명/전송 시 sub‑account 경로로 동작합니다.
+- 값: `1 | true | yes | on` → True, 미설정/기타 → False
+- Superstack(자체 지갑 provider 사용)에는 적용하지 않습니다.
+
 아래 키를 거래소별로 채웁니다(섹션명을 대문자 접두사로).
 
 ```env
@@ -75,6 +81,7 @@ cp .env.example .env
 TRADEXYZ_WALLET_ADDRESS=0x...
 TRADEXYZ_AGENT_API_KEY=
 TRADEXYZ_PRIVATE_KEY=0x...
+TRADEXYZ_IS_SUB=1   # ← 서브계정이면 1 or true 로 설정
 
 # Lit (일반 Hyperliquid 경로)
 LIT_WALLET_ADDRESS=0x...
