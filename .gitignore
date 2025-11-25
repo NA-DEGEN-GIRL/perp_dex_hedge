@@ -14,3 +14,4 @@ scroll_direct.txt
 scrollbar_debug.log
 .python-version
 logs/
+.dev/

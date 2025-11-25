@@ -143,7 +143,23 @@ class TradingService:
                     logging.getLevelName(logger.getEffectiveLevel()),
                     len(logging.getLogger().handlers))
 
-    
+    def _hl_vault_address(self, ex) -> Optional[str]:
+        """
+        core.py에서 is_sub=True인 HL 카드에 한해 ex.options에 저장된 vaultAddress를 읽는다.
+        - ex.options['vaultAddress'] (평탄화된 위치, 권장)
+        - (fallback) ex.options['options']['vaultAddress']
+        반환: '0x..'(소문자) 또는 None
+        """
+        try:
+            opts: dict = getattr(ex, "options", {}) or {}
+            v = opts.get("vaultAddress")
+            if not v:
+                inner = opts.get("options")
+                if isinstance(inner, dict):
+                    v = inner.get("vaultAddress")
+            return str(v).lower() if v else None
+        except Exception:
+            return None
     
     def get_display_builder_fee(self, exchange_name: str, dex: Optional[str], order_type: str) -> Optional[int]:
         """
@@ -195,8 +211,11 @@ class TradingService:
         else:
             try:
                 nonce = self._hl_now_ms()
-                signature = self._hl_sign_l1_action(ex, action, nonce, vault_address=None)
+                vault_addr = self._hl_vault_address(ex)   # ← 추가
+                signature = self._hl_sign_l1_action(ex, action, nonce, vault_address=vault_addr)
                 payload = {"action": action, "nonce": nonce, "signature": signature}
+                if vault_addr:
+                    payload["vaultAddress"] = vault_addr
             except Exception as e:
                 logger.info(f"{e}")
                 raise RuntimeError("payload error")
@@ -969,7 +988,7 @@ class TradingService:
                 tif = "FrontendMarket"
             else:
                 tif = "Gtc"
-                if exchange_name.lower() in ['liquid','mass']: # hard coding
+                if exchange_name.lower() in ['liquid','mass','treadfi']: # hard coding
                     tif = "Ioc"
 
             px_eff = px_base * (1.0 + slippage) if is_buy else px_base * (1.0 - slippage)

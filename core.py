@@ -12,8 +12,18 @@ except Exception:
     create_exchange = None
     logger.warning("[mpdex] exchange_factory.create_exchange 를 찾지 못했습니다. 비-HL 거래소는 비활성화됩니다.")
 
+def _get_bool_env(key: str, fallback: bool = False) -> bool:
+    v = os.getenv(key)
+    if v is None:
+        return fallback
+    s = str(v).strip().lower()
+    return s in ("1", "true", "yes", "on")
+
 # --- 설정 로드 ---
-config = configparser.ConfigParser(interpolation=None)
+config = configparser.ConfigParser(
+    interpolation=None,
+    inline_comment_prefixes=('#', ';')  # [ADD] 행 내 주석 자동 제거
+)
 def load_config_with_encodings(path: str) -> configparser.ConfigParser:
     """
     config.ini를 여러 인코딩으로 안전하게 로드합니다.
@@ -21,7 +31,10 @@ def load_config_with_encodings(path: str) -> configparser.ConfigParser:
     """
     encodings = ("utf-8", "utf-8-sig", "cp949", "euc-kr", "mbcs")
     last_err = None
-    cfg = configparser.ConfigParser(interpolation=None)
+    cfg = configparser.ConfigParser(
+        interpolation=None,
+        inline_comment_prefixes=('#', ';')  # [ADD]
+    )
 
     for enc in encodings:
         try:
@@ -142,6 +155,12 @@ class ExchangeManager:
                 builder_code = config.get(exchange_name, "builder_code", fallback=None)
                 wallet_address = os.getenv(f"{exchange_name.upper()}_WALLET_ADDRESS")
                 
+                # [ADD] config.ini의 is_sub를 읽어 sub-account 여부 판정
+                is_sub_env_key = f"{exchange_name.upper()}_IS_SUB"
+                is_sub = _get_bool_env(is_sub_env_key, fallback=False)
+                logger.info("[core] %s: is_sub(%s)=%s", exchange_name, is_sub_env_key, is_sub)
+
+
                 if wallet_address:
                     # [CHG] 수수료: (limit, market) 페어 + DEX별 페어 맵 구성
                     if config.has_option(exchange_name, "fee_rate"):
@@ -177,6 +196,10 @@ class ExchangeManager:
                             **({"builder": builder_code} if builder_code else {}),
                         },
                     }
+                    if is_sub:
+                        options["options"]["vaultAddress"] = wallet_address
+                        logger.info("[core] %s: is_sub=True → vaultAddress set to walletAddress", exchange_name)
+
                     if exchange_platform == 'superstack':
                         # api key of its own wallet provider
                         options["apiKey"] = os.getenv(f"{exchange_name.upper()}_API_KEY")
@@ -189,6 +212,8 @@ class ExchangeManager:
                     
                     try:
                         self.exchanges[exchange_name].options["walletAddress"] = wallet_address
+                        if is_sub:
+                            self.exchanges[exchange_name].options["vaultAddress"] = wallet_address
                     except Exception:
                         pass
             else:
