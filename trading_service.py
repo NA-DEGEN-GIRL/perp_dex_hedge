@@ -1385,8 +1385,6 @@ class TradingService:
         is_hl_like = self.manager.is_hl_like(exchange_name)
         order_backend = self.manager.get_order_backend(exchange_name)
 
-        logger.info(f"order_backend {order_backend} {is_hl_like}")
-
         if not ex:
             raise RuntimeError(f"{exchange_name} not configured")
 

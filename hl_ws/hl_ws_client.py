@@ -1,7 +1,6 @@
 import argparse
 import asyncio
 import json
-import logging
 import os
 import random
 import re
@@ -14,6 +13,57 @@ from urllib.error import URLError, HTTPError
 import json
 import websockets  # type: ignore
 from websockets.exceptions import ConnectionClosed, ConnectionClosedOK  # type: ignore
+import logging
+from logging.handlers import RotatingFileHandler
+
+ws_logger = logging.getLogger("ws")
+def _ensure_ws_logger():
+    """
+    WebSocket 전용 파일 핸들러를 한 번만 부착.
+    - 기본 파일: ./ws.log
+    - 기본 레벨: INFO
+    - 기본 전파: False (루트 로그와 중복 방지)
+    환경변수:
+      PDEX_WS_LOG_FILE=/path/to/ws.log
+      PDEX_WS_LOG_LEVEL=DEBUG|INFO|...
+      PDEX_WS_LOG_CONSOLE=0|1
+      PDEX_WS_PROPAGATE=0|1
+    """
+    if getattr(ws_logger, "_ws_logger_attached", False):
+        return
+
+    lvl_name = os.getenv("PDEX_WS_LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, lvl_name, logging.INFO)
+    log_file = os.path.abspath(os.getenv("PDEX_WS_LOG_FILE", "ws.log"))
+    to_console = os.getenv("PDEX_WS_LOG_CONSOLE", "0") == "1"
+    propagate = os.getenv("PDEX_WS_PROPAGATE", "0") == "1"
+
+    # 포맷 + 중복 핸들러 제거
+    fmt = logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s")
+    for h in list(ws_logger.handlers):
+        ws_logger.removeHandler(h)
+
+    # 파일 핸들러(회전)
+    fh = RotatingFileHandler(log_file, maxBytes=5_000_000, backupCount=2, encoding="utf-8")
+    fh.setFormatter(fmt)
+    fh.setLevel(logging.NOTSET)  # 핸들러는 로거 레벨만 따름
+    ws_logger.addHandler(fh)
+
+    # 콘솔(옵션)
+    if to_console:
+        sh = logging.StreamHandler()
+        sh.setFormatter(fmt)
+        sh.setLevel(logging.NOTSET)
+        ws_logger.addHandler(sh)
+
+    ws_logger.setLevel(level)
+    ws_logger.propagate = propagate
+    ws_logger._ws_logger_attached = True
+    ws_logger.info("[WS-LOG] attached file=%s level=%s console=%s propagate=%s",
+                   log_file, lvl_name, to_console, propagate)
+
+# 모듈 import 시 한 번 설정
+_ensure_ws_logger()
 
 DEFAULT_HTTP_BASE = "https://api.hyperliquid.xyz"  # 메인넷
 DEFAULT_WS_PATH = "/ws"                            # WS 엔드포인트
@@ -353,7 +403,7 @@ class HLWSClientRaw:
                     self.web3_asset_ctxs_by_dex[dex_key] = asset_ctxs
 
         except Exception as e:
-            logging.debug(f"[webData3] update error: {e}", exc_info=True)
+            ws_logger.debug(f"[webData3] update error: {e}", exc_info=True)
 
     def _normalize_position(self, pos: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -494,12 +544,12 @@ class HLWSClientRaw:
     def set_spot_log_level(self, level: int | str) -> None:
         """
         level 예:
-          - 숫자: logging.WARNING, logging.ERROR 등
+          - 숫자: logging.WARNING, ws_logger.ERROR 등
           - 문자열: 'WARNING', 'ERROR', 'INFO', 'DEBUG'
         """
         if isinstance(level, str):
             try:
-                lvl = getattr(logging, level.upper())
+                lvl = getattr(logger, level.upper())
             except Exception:
                 lvl = logging.INFO
         else:
@@ -514,7 +564,7 @@ class HLWSClientRaw:
         c = self._spot_log_hits_idx.get(idx, 0) + 1
         self._spot_log_hits_idx[idx] = c
         if idx in self.debug_spot_indexes or c in (1, 10, 50) or (c % 100 == 0):
-            logging.log(level, f"[spot:@{idx}] {msg}")
+            ws_logger.log(level, f"[spot:@{idx}] {msg}")
 
     def _spot_log_pair(self, pair: str, level: int, msg: str):
         # 최소 레벨 미만이면 즉시 차단
@@ -524,22 +574,22 @@ class HLWSClientRaw:
         self._spot_log_hits_pair[pair] = c
         base = pair.split("/", 1)[0] if "/" in pair else pair
         if base in self.debug_spot_bases or c in (1, 10, 50) or (c % 100 == 0):
-            logging.log(level, f"[spot:{pair}] {msg}")
+            ws_logger.log(level, f"[spot:{pair}] {msg}")
 
     def _log_spot_map_state(self, stage: str):
-        logging.info(
+        ws_logger.info(
             f"[spotMeta/{stage}] tokenMap={len(self.spot_index_to_name)} "
             f"pairMap={len(self.spot_asset_index_to_pair)} "
             f"pending_token_idx={len(self._pending_spot_token_mids)} "
             f"pending_pair_idx={len(self._pending_spot_pair_mids)}"
         )
         if logging.getLogger().isEnabledFor(logging.DEBUG):
-            logging.debug(f"[spotMeta/{stage}] token idx->name sample={_sample_items(self.spot_index_to_name,8)}")
-            logging.debug(f"[spotMeta/{stage}] pair  idx->name sample={_sample_items(self.spot_asset_index_to_pair,8)}")
+            ws_logger.debug(f"[spotMeta/{stage}] token idx->name sample={_sample_items(self.spot_index_to_name,8)}")
+            ws_logger.debug(f"[spotMeta/{stage}] pair  idx->name sample={_sample_items(self.spot_asset_index_to_pair,8)}")
             if self._pending_spot_token_mids:
-                logging.debug(f"[spotMeta/{stage}] pending token mids sample={_sample_items(self._pending_spot_token_mids,8)}")
+                ws_logger.debug(f"[spotMeta/{stage}] pending token mids sample={_sample_items(self._pending_spot_token_mids,8)}")
             if self._pending_spot_pair_mids:
-                logging.debug(f"[spotMeta/{stage}] pending pair mids  sample={_sample_items(self._pending_spot_pair_mids,8)}")
+                ws_logger.debug(f"[spotMeta/{stage}] pending pair mids  sample={_sample_items(self._pending_spot_pair_mids,8)}")
 
     # ---------------------- REST: spotMeta ----------------------
     async def ensure_spot_token_map_http(self) -> None:
@@ -566,10 +616,10 @@ class HLWSClientRaw:
         try:
             resp = await asyncio.to_thread(_post)
         except (HTTPError, URLError) as e:
-            logging.warning(f"[spotMeta] http error: {e}")
+            ws_logger.warning(f"[spotMeta] http error: {e}")
             return
         except Exception as e:
-            logging.warning(f"[spotMeta] error: {e}")
+            ws_logger.warning(f"[spotMeta] error: {e}")
             return
 
         try:
@@ -587,14 +637,14 @@ class HLWSClientRaw:
                         if not name:
                             continue
                         if idx in idx2name and idx2name[idx] != name:
-                            logging.warning(f"[spotMeta] duplicate token index {idx}: {idx2name[idx]} -> {name}")
+                            ws_logger.warning(f"[spotMeta] duplicate token index {idx}: {idx2name[idx]} -> {name}")
                         idx2name[idx] = name
                         name2idx[name] = idx
                     except Exception as ex:
-                        logging.debug(f"[spotMeta] skip token={t} err={ex}")
+                        ws_logger.debug(f"[spotMeta] skip token={t} err={ex}")
             self.spot_index_to_name = idx2name
             self.spot_name_to_index = name2idx
-            logging.info(f"[spotMeta] loaded tokens={len(idx2name)} (e.g. USDC idx={name2idx.get('USDC')})")
+            ws_logger.info(f"[spotMeta] loaded tokens={len(idx2name)} (e.g. USDC idx={name2idx.get('USDC')})")
 
             # 2) 페어 맵(spotInfo.index -> 'BASE/QUOTE' 및 (BASE, QUOTE))
             pair_by_index: Dict[int, str] = {}
@@ -661,22 +711,22 @@ class HLWSClientRaw:
                     ok += 1
                     # 처음 몇 개 샘플 디버깅
                     if logging.getLogger().isEnabledFor(logging.DEBUG) and ok <= 5:
-                        logging.debug(f"[spotMeta] pair idx={s_idx} tokens=({base_idx},{quote_idx}) "
+                        ws_logger.debug(f"[spotMeta] pair idx={s_idx} tokens=({base_idx},{quote_idx}) "
                                     f"names=({base_name},{quote_name}) nameField={name_field!r} -> {pair_name}")
                 else:
                     fail += 1
                     if logging.getLogger().isEnabledFor(logging.DEBUG) and fail <= 5:
-                        logging.debug(f"[spotMeta] FAIL idx={s_idx} raw={si}")
+                        ws_logger.debug(f"[spotMeta] FAIL idx={s_idx} raw={si}")
 
             self.spot_asset_index_to_pair = pair_by_index
             self.spot_asset_index_to_bq = bq_by_index
-            logging.info(f"[spotMeta] loaded spot pairs={ok} (fail={fail})")
+            ws_logger.info(f"[spotMeta] loaded spot pairs={ok} (fail={fail})")
 
             if logging.getLogger().isEnabledFor(logging.DEBUG):
                 sample_pairs = list(pair_by_index.items())[:10]
                 sample_bq = [(k, bq_by_index[k]) for k, _ in sample_pairs if k in bq_by_index]
-                logging.debug(f"[spotMeta] pair idx->name sample={sample_pairs}")
-                logging.debug(f"[spotMeta] pair idx->(base,quote) sample={sample_bq}")
+                ws_logger.debug(f"[spotMeta] pair idx->name sample={sample_pairs}")
+                ws_logger.debug(f"[spotMeta] pair idx->(base,quote) sample={sample_bq}")
 
             # 3) 보류분 소급 적용 — 페어 인덱스(@{pairIdx})
             if self._pending_spot_pair_mids:
@@ -690,11 +740,11 @@ class HLWSClientRaw:
                         if quote == "USDC":
                             self.spot_prices[base] = float(px)
                         if logging.getLogger().isEnabledFor(logging.DEBUG):
-                            logging.debug(f"[spotMeta] apply pending @{s_idx} -> {pair} ({base}/{quote}) px={px}")
+                            ws_logger.debug(f"[spotMeta] apply pending @{s_idx} -> {pair} ({base}/{quote}) px={px}")
                         self._pending_spot_pair_mids.pop(s_idx, None)
                         applied += 1
                 if applied:
-                    logging.info(f"[spotMeta] applied pending pair mids: {applied}")
+                    ws_logger.info(f"[spotMeta] applied pending pair mids: {applied}")
 
             # (참고) 토큰 인덱스 보류분이 있을 경우 보조 적용
             if self._pending_spot_token_mids:
@@ -704,20 +754,20 @@ class HLWSClientRaw:
                     if name:
                         old = self.spot_prices.get(name)
                         self.spot_prices[name] = float(px)
-                        logging.info(f"[spotMeta] apply pending token @{t_idx} -> {name} {old} -> {px}")
+                        ws_logger.info(f"[spotMeta] apply pending token @{t_idx} -> {name} {old} -> {px}")
                         self._pending_spot_token_mids.pop(t_idx, None)
                         applied_t += 1
                 if applied_t:
-                    logging.info(f"[spotMeta] applied pending token mids: {applied_t}")
+                    ws_logger.info(f"[spotMeta] applied pending token mids: {applied_t}")
 
             self._log_spot_map_state("ready")
 
         except Exception as e:
-            logging.warning(f"[spotMeta] parse error: {e}", exc_info=True)
+            ws_logger.warning(f"[spotMeta] parse error: {e}", exc_info=True)
     # ---------------------- 연결/구독 ----------------------
 
     async def connect(self) -> None:
-        logging.info(f"WS connect: {self.ws_url}")
+        ws_logger.info(f"WS connect: {self.ws_url}")
         self.conn = await websockets.connect(self.ws_url, ping_interval=None, open_timeout=WS_CONNECT_TIMEOUT)
         # keepalive task (JSON ping)
         self._tasks.append(asyncio.create_task(self._ping_loop(), name="ping"))
@@ -774,8 +824,7 @@ class HLWSClientRaw:
 
     async def subscribe(self) -> None:
         """
-        단건 구독을 여러 번 전송:
-        {"method":"subscribe","subscription": <sub>}
+        단건 구독 전송(중복 방지): build_subscriptions() 결과를 _send_subscribe로 보냅니다.
         """
         if not self.conn:
             raise RuntimeError("WebSocket is not connected")
@@ -784,19 +833,17 @@ class HLWSClientRaw:
         self._subscriptions = subs  # 재연결 시 재사용
 
         for sub in subs:
-            payload = {"method": "subscribe", "subscription": sub}
-            msg = json_dumps(payload)
-            await self.conn.send(msg)
-            logging.info(f"SUB -> {msg}")
+            await self._send_subscribe(sub)
+            ws_logger.info(f"SUB -> {json_dumps({'method':'subscribe','subscription':sub})}")
 
     async def resubscribe(self) -> None:
         if not self.conn or not self._subscriptions:
             return
+        # 재연결 시 서버는 이전 구독 상태를 잊었으므로 클라이언트 dedup도 비웁니다.
+        self._active_subs.clear()
         for sub in self._subscriptions:
-            payload = {"method": "subscribe", "subscription": sub}
-            msg = json_dumps(payload)
-            await self.conn.send(msg)
-            logging.info(f"RESUB -> {msg}")
+            await self._send_subscribe(sub)
+            ws_logger.info(f"RESUB -> {json_dumps({'method':'subscribe','subscription':sub})}")
 
     # ---------------------- 루프/콜백 ----------------------
 
@@ -811,9 +858,9 @@ class HLWSClientRaw:
                     continue
                 try:
                     await self.conn.send(json_dumps({"method": "ping"}))
-                    logging.debug("ping sent (json)")
+                    ws_logger.debug("ping sent (json)")
                 except Exception as e:
-                    logging.warning(f"ping error: {e}")
+                    ws_logger.warning(f"ping error: {e}")
         except asyncio.CancelledError:
             return
 
@@ -824,33 +871,33 @@ class HLWSClientRaw:
             try:
                 raw = await asyncio.wait_for(ws.recv(), timeout=WS_READ_TIMEOUT)
             except asyncio.TimeoutError:
-                logging.warning("recv timeout; forcing reconnect")
+                ws_logger.warning("recv timeout; forcing reconnect")
                 await self._handle_disconnect()
                 break
             except (ConnectionClosed, ConnectionClosedOK):
-                logging.warning("ws closed; reconnecting")
+                ws_logger.warning("ws closed; reconnecting")
                 await self._handle_disconnect()
                 break
             except Exception as e:
-                logging.error(f"recv error: {e}", exc_info=True)
+                ws_logger.error(f"recv error: {e}", exc_info=True)
                 await self._handle_disconnect()
                 break
 
             # 서버 초기 문자열 핸드셰이크 처리
             if isinstance(raw, str) and raw == "Websocket connection established.":
-                logging.debug(raw)
+                ws_logger.debug(raw)
                 continue
 
             try:
                 msg = json.loads(raw)
             except Exception:
-                logging.debug(f"non-json message: {str(raw)[:200]}")
+                ws_logger.debug(f"non-json message: {str(raw)[:200]}")
                 continue
 
             try:
                 self._dispatch(msg)
             except Exception:
-                logging.exception("dispatch error")
+                ws_logger.exception("dispatch error")
 
     def _dispatch(self, msg: Dict[str, Any]) -> None:
         """
@@ -860,20 +907,24 @@ class HLWSClientRaw:
         """
         ch = str(msg.get("channel") or msg.get("type") or "")
         if not ch:
-            logging.debug(f"no channel key in message: {msg}")
+            ws_logger.debug(f"no channel key in message: {msg}")
             return
 
         if ch == "error":
-            logging.error(f"[WS error] {msg.get('data')}")
+            data_str = str(msg.get("data") or "")
+            if "Already subscribed" in data_str:
+                ws_logger.debug(f"[WS info] {data_str}")
+            else:
+                ws_logger.error(f"[WS error] {data_str}")
             return
         if ch == "pong":
-            logging.debug("received pong")
+            ws_logger.debug("received pong")
             return
 
         if ch == "allMids":
             data = msg.get("data") or {}
             if self.log_raw_allmids and logging.getLogger().isEnabledFor(logging.DEBUG):
-                logging.debug(f"[allMids/raw] keys={len((data.get('mids') or {}).keys())}")
+                ws_logger.debug(f"[allMids/raw] keys={len((data.get('mids') or {}).keys())}")
 
             if isinstance(data, dict) and isinstance(data.get("mids"), dict):
                 mids: Dict[str, Any] = data["mids"]
@@ -940,9 +991,9 @@ class HLWSClientRaw:
                     n_perp += 1
 
                 if logging.getLogger().isEnabledFor(logging.DEBUG):
-                    logging.debug(f"[allMids] counts: pairIdx={n_pair}, spot_text={n_pair_text}, perp={n_perp}")
+                    ws_logger.debug(f"[allMids] counts: pairIdx={n_pair}, spot_text={n_pair_text}, perp={n_perp}")
             else:
-                logging.debug(f"[allMids] unexpected payload shape: {type(data)}")
+                ws_logger.debug(f"[allMids] unexpected payload shape: {type(data)}")
             return
 
         # 포지션(코인별)
@@ -1020,10 +1071,10 @@ class HLWSClientRaw:
                         else f"{dex_key}:N/A pos={pos_str}"
                     )
 
-                logging.info(f"[webData3] totalAV={_fmt_num(total_av, nd=6)} | " + " | ".join(dex_logs))
+                ws_logger.info(f"[webData3] totalAV={_fmt_num(total_av, nd=6)} | " + " | ".join(dex_logs))
 
         else:
-            logging.debug(f"[{ch}] {str(msg)[:300]}")
+            ws_logger.debug(f"[{ch}] {str(msg)[:300]}")
 
     async def _handle_disconnect(self) -> None:
         await self._safe_close_only()
@@ -1046,7 +1097,7 @@ class HLWSClientRaw:
                 await self.resubscribe()
                 return
             except Exception as e:
-                logging.warning(f"reconnect failed: {e}")
+                ws_logger.warning(f"reconnect failed: {e}")
                 delay = min(RECONNECT_MAX, delay * 2.0) + random.uniform(0.0, 0.5)
 
     # ---------------------- 유틸/스냅샷/쿼리 ----------------------
@@ -1065,16 +1116,16 @@ class HLWSClientRaw:
 
     def print_snapshot(self) -> None:
         snap = self.snapshot()
-        logging.info(
+        ws_logger.info(
             f"[snapshot] perp={len(snap['prices'])} "
             f"spot_base={len(snap['spot_prices'])} "
             f"spot_pair={len(snap['spot_pair_prices'])} "
             f"pending_token_idx={len(snap['pending_spot_token_mids'])} "
             f"pending_pair_idx={len(snap['pending_spot_pair_mids'])}"
         )
-        logging.info(f"[snapshot] perp(sample)={_sample_items(snap['prices'])}")
-        logging.info(f"[snapshot] spot_base(sample)={_sample_items(snap['spot_prices'])}")
-        logging.info(f"[snapshot] spot_pair(sample)={_sample_items(snap['spot_pair_prices'])}")
+        ws_logger.info(f"[snapshot] perp(sample)={_sample_items(snap['prices'])}")
+        ws_logger.info(f"[snapshot] spot_base(sample)={_sample_items(snap['spot_prices'])}")
+        ws_logger.info(f"[snapshot] spot_pair(sample)={_sample_items(snap['spot_pair_prices'])}")
 
     def get_price(self, symbol: str) -> Optional[float]:
         """Perp/일반 심볼 가격 조회(캐시)."""
@@ -1151,10 +1202,10 @@ async def _amain(args: argparse.Namespace) -> int:
 
     # 2) 루트 로거 강제 재구성(force=True). (Py>=3.8)
     try:
-        logging.basicConfig(
+        ws_logger.basicConfig(
             level=target_level,
             format="%(asctime)s - %(levelname)s - %(message)s",
-            handlers=[logging.StreamHandler(sys.stdout)],
+            handlers=[ws_logger.StreamHandler(sys.stdout)],
             force=True,  # 기존 핸들러/설정을 모두 무시하고 강제 재설정
         )
     except TypeError:
@@ -1162,15 +1213,15 @@ async def _amain(args: argparse.Namespace) -> int:
         root = logging.getLogger()
         for h in list(root.handlers):
             root.removeHandler(h)
-        logging.basicConfig(
+        ws_logger.basicConfig(
             level=target_level,
             format="%(asctime)s - %(levelname)s - %(message)s",
-            handlers=[logging.StreamHandler(sys.stdout)],
+            handlers=[ws_logger.StreamHandler(sys.stdout)],
         )
 
     # 3) 전역적으로 INFO/DEBUG 비활성화 (WARNING 이상만 출력)
     #    disable는 "이 레벨 이하"를 전부 막습니다. INFO(20) → INFO/DEBUG 차단.
-    #logging.disable(logging.INFO)
+    #ws_logger.disable(logging.INFO)
     
 
     # 4) 서드파티 로거(있다면)도 WARNING 이상으로 격상
@@ -1190,7 +1241,7 @@ async def _amain(args: argparse.Namespace) -> int:
     coins = [c.strip().upper() for c in args.coins.split(",") if c.strip()]
 
     # 아래 INFO 로그는 disable(INFO) 때문에 출력되지 않습니다.
-    logging.info(f"Start WS (url={ws_url}, dex={dex} addr={addr}, coins={coins})")
+    ws_logger.info(f"Start WS (url={ws_url}, dex={dex} addr={addr}, coins={coins})")
 
     client = HLWSClientRaw(ws_url=ws_url, dex=dex, address=addr, coins=coins, http_base=args.base)
 
@@ -1214,7 +1265,7 @@ async def _amain(args: argparse.Namespace) -> int:
 
     def _on_signal():
         # WARNING 이상이므로 출력됨
-        logging.warning("Signal received; shutting down...")
+        ws_logger.warning("Signal received; shutting down...")
         stop_event.set()
 
     loop = asyncio.get_running_loop()
@@ -1235,7 +1286,7 @@ async def _amain(args: argparse.Namespace) -> int:
             client.print_snapshot()
             await asyncio.sleep(5.0)
             if getattr(args, "duration", 0) and (time.time() - t0) >= args.duration:
-                logging.info("Duration reached, exiting.")  # 이 로그도 보이지 않음
+                ws_logger.info("Duration reached, exiting.")  # 이 로그도 보이지 않음
                 break
     finally:
         await client.close()

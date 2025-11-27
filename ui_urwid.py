@@ -2118,9 +2118,6 @@ class UrwidApp:
         
         hook_global_mouse_events(self.loop, self)
         
-        # [추가] 초기 렌더링 후 체크
-        self.loop.set_alarm_in(0.5, lambda loop, data: self._check_initial_render())
-    
         async def _bootstrap():
             try:
                 await self.mgr.initialize_all()
@@ -2262,14 +2259,3 @@ class UrwidApp:
             loop.stop()
             loop.close()
 
-    def _check_initial_render(self):
-        try:
-            logger.info(f"[INIT] Body walker: {len(self.body_walker)} items")
-            logger.info(f"[INIT] Body list height: {self.body_list._last_h}")
-            logger.info(f"[INIT] Body list selectable: {self.body_list.selectable()}")
-            logger.info(f"[INIT] Body scroll total: {self.body_scroll._total}")
-            logger.info(f"[INIT] Log walker: {len(self.log_list)} items")
-            # [FIX] 실제 ListBox의 높이 참조
-            logger.info(f"[INIT] Log listbox height: {self.log_listbox._last_h}")
-        except Exception as e:
-            logger.error(f"[INIT] Check failed: {e}")

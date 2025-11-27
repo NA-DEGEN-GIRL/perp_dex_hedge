@@ -301,19 +301,18 @@ class ExchangeManager:
                     # hl 처럼 position 및 가격 조회를 위해 필요
                     # sub account의 주소에 해당하는게 wallet address
                     client.walletAddress = client.sub_wallet_address
-                    try:
-                        res = await client.login()
-                        print("User Name", res["username"])
-                    except Exception as e:
-                        print(f"Treadfi login problem {e}")
-                        sys.exit(0)
-                    
                     fee_pair, dex_fee_pair_default, dex_fee_pair_map =  self._get_fee_rate(name)
                     client.options = {
                         "feeIntPair": fee_pair,                                 # (limit, market)
                         "dexFeeIntPairDefault": dex_fee_pair_default or None,   # (limit, market) or None
                         "dexFeeIntPairMap": dex_fee_pair_map,                   # {dex: (limit, market)}
                     }
+                    try:
+                        res = await client.login()
+                        print("User Name", res["username"])
+                    except Exception as e:
+                        print(f"Treadfi login problem {e}")
+                        print(f"Treadfi cannot be used")
                     
                 self.exchanges[name] = client
 
