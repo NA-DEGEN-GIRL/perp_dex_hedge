@@ -25,6 +25,8 @@
 
 ## 0. 사전 준비
 
+- **윈도우에서 Lighter 사용할거면 파이썬 3.10 사용**
+- 제발 좀 읽어 시발
 - Python 3.10+ (Windows는 fastecdsa 의존성으로 3.10 권장)
 - Git
 - 지원 OS: Linux, macOS, WSL(Windows)
