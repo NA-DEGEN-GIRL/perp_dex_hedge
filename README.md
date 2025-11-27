@@ -63,27 +63,39 @@ mpdex @ git+https://github.com/NA-DEGEN-GIRL/multi-perp-dex.git@master
 
 ## 2. 설정
 
+중요: `config.ini`의 `[섹션명]`은 “사용자 구분용 이름”입니다. **실제 엔진/백엔드 종류는 섹션 내부의 `exchange=` 값**으로 결정됩니다.  
+또한 `.env`의 키 접두사는 “섹션명 대문자”로 맞춥니다. (예: `[lit]` → `LIT_*`, `[treadfi_hl]` → `TREADFI_HL_*`)
+
 ### A) .env (지갑/키)
 ```bash
 cp .env.example .env
 ```
 
-#### Sub Account (IS_SUB)
-- HL 계정이 “서브계정(sub account)”인 경우, 해당 카드의 환경변수에 `{NAME}_IS_SUB`를 설정하세요.
-- 효과: 프로그램이 `vaultAddress`를 `.env`의 `{NAME}_WALLET_ADDRESS`와 동일하게 자동 설정하여, 서명/전송 시 sub‑account 경로로 동작합니다.
-- 값: `1 | true | yes | on` → True, 미설정/기타 → False
-- Superstack(자체 지갑 provider 사용)에는 적용하지 않습니다.
+- 접두사 규칙: `[섹션명]` → 섹션명을 대문자로 바꿔 **ENV 접두사**로 사용합니다.
+  - 예: `[lit]` → `LIT_WALLET_ADDRESS`, `[dexari]` → `DEXARI_PRIVATE_KEY`
+  - 예: `[treadfi_hl]` → `TREADFI_HL_MAIN_WALLET_ADDRESS` …
 
-아래 키를 거래소별로 채웁니다(섹션명을 대문자 접두사로).
+- Sub Account (IS_SUB)
+  - HL 계정이 “서브계정(sub account)”인 경우 `.env`에 `{NAME}_IS_SUB=1|true`를 설정하세요.
+  - 효과: `vaultAddress`가 자동으로 `{NAME}_WALLET_ADDRESS`와 동일하게 설정되어 sub‑account 경로로 서명/전송됩니다.
+  - Superstack에는 필요 없습니다(지갑 provider 사용).
+
+- Tread.fi (treadfi.hyperliquid, tread.fi에서 hyperliquid 계정사용)
+  - **조회(가격/포지션)**: Hyperliquid WS/Info API 그대로 사용
+  - **주문**: tread.fi(front, mpdex) 백엔드로 전송
+  - 필요한 .env 키(섹션명 `[treadfi_hl]` → 접두사 `TREADFI_HL_*`)
+
+- **사용안할 거래소는 env에서 지워도 됨.**
+- **설정 복잡해 보이면 그냥 있는거에다가 필요한것만 채우고 안쓰는 거래소 부분은 지우면됨**
 
 ```env
-# Trade.xyz (일반 Hyperliquid 경로, 빌더코드 미사용 예시)
-TRADEXYZ_WALLET_ADDRESS=0x...
-TRADEXYZ_AGENT_API_KEY=
-TRADEXYZ_PRIVATE_KEY=0x...
-TRADEXYZ_IS_SUB=1   # ← 서브계정이면 1 or true 로 설정
+# HL (일반 Hyperliquid 경로, 빌더코드 미사용 예시)
+HL_WALLET_ADDRESS=0x...
+HL_AGENT_API_KEY=
+HL_PRIVATE_KEY=0x...
+HL_IS_SUB=1   # ← 서브계정이면 1 or true 로 설정
 
-# Lit (일반 Hyperliquid 경로)
+# Lit (HL)
 LIT_WALLET_ADDRESS=0x...
 LIT_AGENT_API_KEY=
 LIT_PRIVATE_KEY=0x...
@@ -112,6 +124,21 @@ BASEDONE_PRIVATE_KEY=0x...
 # 지갑 주소는 HL 주소를 사용하며, API 키는 superstack 포털에서 발급
 SUPERSTACK_WALLET_ADDRESS=0x...
 SUPERSTACK_API_KEY=sk_...
+
+# Tread.fi: hyperliquid, sub account를 안쓰면 main과 sub 주소를 동일히 사용
+# ** sub account를 쓰면 main address와 sub account의 주소를 구분지음
+# private key는 main address의 private key이며, **생략가능**
+# private key 생략시, 로그인 **혹은** 저장된 세션값 사용
+# session cookies 값을 수동으로 넣을수도 있음
+# session cookies 값을 찾으려면, tread.fi 에서 로그인후 network 탭에서 get_order_table 등의 header에서 찾을수있음
+# 간편히 TREADFI_HL_MAIN_WALLET_ADDRESS 과 TREADFI_HL_SUB_WALLET_ADDRESS 만 입력 후 http://127.0.0.1:6974/ (로컬서버임 안전함) 접속해서 로그인만 하는게 나음
+# 프로그램 실행시 위 주소로 가서 로그인하라고 뜸. 서명하면(텍스트 서명이라 안전함) 로그인 자동으로 실행됨
+TREADFI_HL_MAIN_WALLET_ADDRESS="메인 지갑 주소"     # 로그인/서명 주체
+TREADFI_HL_SUB_WALLET_ADDRESS="서브 계정 주소"      # 실제 주문/포지션 지갑
+TREADFI_HL_PRIVATE_KEY="메인 지갑의 프라이빗키"      # (선택) 자동 로그인용
+TREADFI_HL_ACCOUNT_NAME="tread.fi에서 생성한 계정 이름"  # 필요
+TREADFI_HL_CSRF_TOKEN="세션 쿠키"           # (선택) 있으면 로그인 불필요
+TREADFI_HL_SESSION_ID="세션 쿠키"           # (선택) 있으면 로그인 불필요
 
 # ===== Lighter (mpdex) =====
 # account_id 확인:
@@ -142,20 +169,40 @@ BACKPACK_API_KEY=https://backpack.exchange/portfolio/settings/api-keys에서_발
 BACKPACK_SECRET_KEY=https://backpack.exchange/portfolio/settings/api-keys에서_발급
 ```
 
-- HL은 Agent API Key(또는 Private Key)를 사용합니다(Private Key 직접 사용은 비권장).
-- superstack은 HL이지만, exchange=superstack으로 설정합니다(아래 B) 참고). 주문 서명은 지갑 provider API를 통해 처리합니다.
-- 비‑HL(mpdex) 거래소는 .env만 맞으면 추가 설정 없이 동작합니다(내부에서 심볼 변환 symbol_create 사용).
+요약
+- `[섹션명]`은 “이름 + .env 접두사” 역할만 합니다.
+- **실제 엔진/백엔드는 `exchange=`로 결정**됩니다(아래 B) 참조).
+- HL 일반 카드: `{NAME}_WALLET_ADDRESS / _AGENT_API_KEY / _PRIVATE_KEY / _IS_SUB`
+- superstack 카드: `{NAME}_WALLET_ADDRESS / _API_KEY`
+- 비‑HL(mpdex) 카드: 거래소별 키(위 예시 참고)
 
 ### B) config.ini (표시/엔진/수수료)
+
+중요: `[섹션명]`은 “이름”일 뿐이고, **실제 엔진/백엔드**는 `exchange=` 값으로 결정됩니다.
+
+- 생략(혹은 `exchange=hyperliquid`): 일반 HL(native)
+- `exchange=superstack`: HL이지만 지갑 provider 서명 경로
+- `exchange=treadfi.hyperliquid`: **하이브리드** — 조회=HL, 주문=mpdex
+- 비‑HL(mpdex): `lighter | paradex | edgex | grvt | backpack`
+
+예시:
+
 ```ini
 # - HL: 섹션에 exchange 키가 없음(순수 Hyperliquid 경로)
 # - superstack: exchange=superstack (HL-like, 지갑 provider 서명)
 # - 비‑HL(mpdex): exchange=< lighter | paradex | edgex | grvt | backpack >
 
 # 일반 Hyperliquid 엔진 (빌더코드 없이 호출하는 기본 경로)
-[tradexyz]
+[hl]
 show = False
-# 설명: tradexyz 섹션은 특정 HIP-3 DEX를 지정하지 않는, 일반 HL 접속 예시입니다.
+# 설명: hl 섹션은 빌더코드를 사용하지 않는 일반 예시
+
+# Tread.fi (조회=HL, 주문=mpdex)
+[treadfi_hl]
+show = True
+exchange = treadfi.hyperliquid   ; 하이브리드 모드 트리거
+fee_rate = 20                    ; (표시용) 코드상 주문 수수료 계산에는 직접 사용하지 않음
+# builder_code 불필요
 
 # HL: Lit (일반 HL + 빌더코드 예시)
 [lit]
@@ -222,15 +269,11 @@ show = False
 exchange = backpack
 ```
 
-- show=True: 기본 표시, False: 기본 숨김(OFF 간주)
-  - fee_rate = L / M
-    - 메인 HL(DEX 미선택) 주문에 적용되는 기본 수수료(빌더 단위, 정수).
-  - dex_fee_rate = L / M
-    - HIP‑3 DEX 주문의 “공통 기본값”. 설정이 없으면 HIP‑3 주문도 fee_rate를 사용합니다.
-  - 개별 DEX 우선 적용: xyz_fee_rate, vntl_fee_rate, flx_fee_rate 등의 항목이 있으면 해당 DEX 주문에 최우선으로 적용됩니다.
-  - 정리(우선순위): HIP‑3 주문 시 “개별 DEX” → “dex_fee_rate” → “fee_rate”.
-- builder_code를 설정하지 않으면 빌더/fee는 주문 payload에 포함되지 않습니다(기본 빌더주소 주입 없음).
-  - superstack는 **exchange=superstack**로 지정합니다(주문 서명은 provider API).
+수수료 표기 규칙
+- `fee_rate = L / M`: 메인 HL(DEX 미선택) 주문의 표시용 수수료(정수, 빌더 tier 기준).
+- `dex_fee_rate = L / M`: HIP‑3 DEX 주문의 공통 기본값(설정 없으면 fee_rate 사용).
+- 개별 DEX 우선 적용: `xyz_fee_rate`, `vntl_fee_rate`, `flx_fee_rate` 등이 있으면 해당 DEX에 우선 적용.
+- 우선순위(DEX 주문): **개별 DEX > dex_fee_rate > fee_rate**.
 
 ---
 
@@ -395,6 +438,7 @@ python main.py
 - ✅ 비‑HL(mpdex) 거래소: Lighter/Paradex/Edgex/GRVT/Backpack 연동
 - ✅ XYZ 지원
 - ✅ FLX / VNTL 지원 (USDH 페어)
+- ✅ superstack / tread.fi 지원
 - ✅ spot USDC 잔고 표기
 - 🔜 USDC <-> USDH swap 편의기능
 - 🔜 비‑HL(mpdex) 거래소: Pacifica/Variational 연동

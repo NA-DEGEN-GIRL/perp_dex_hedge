@@ -3,6 +3,7 @@ import os
 import asyncio
 import configparser
 from types import SimpleNamespace
+import sys
 import logging
 logger = logging.getLogger(__name__)  # 모듈 전용 로거
 
@@ -120,8 +121,10 @@ class Hyperliquid:
             if v is not None:
                 inner[k] = v
         self.options = inner
-        # 호환 편의: walletAddress 속성을 바로 노출
+        # 호환 편의 속성 바로 노출
         self.walletAddress = inner.get("walletAddress")
+        self.apiKey = inner.get("apiKey")
+        self.secret = inner.get("privateKey") 
 
     async def initialize_client(self):  # ccxt 대체 no-op
         return
@@ -143,15 +146,30 @@ class ExchangeManager:
             show = config.get(exchange_name, "show", fallback="True").strip().lower() == "true"
             
             exchange_platform = config.get(exchange_name, "exchange", fallback='hyperliquid')
-            hl = (exchange_platform == 'hyperliquid')
+            hl_like = (exchange_platform in ("hyperliquid", "superstack","treadfi.hyperliquid"))
+
+            if hl_like:
+                if exchange_platform == 'treadfi.hyperliquid':
+                    order_backend = "mpdex"
+                else:
+                    order_backend = "hl_native"
+            else:
+                order_backend = "mpdex"
 
             # FrontendMarket 플래그 로딩
             fm_raw = config.get(exchange_name, "FrontendMarket", fallback="False")
             frontend_market = (fm_raw or "").strip().lower() == "true"
-            self.meta[exchange_name] = {"show": show, "hl": hl, "frontend_market": frontend_market, "exchange": exchange_platform}
+
+            self.meta[exchange_name] = {
+                "show": show,
+                "hl": hl_like,
+                "frontend_market": frontend_market,
+                "exchange": exchange_platform,
+                "order_backend": order_backend,  # [NEW] 주문 경로 판단용
+            }
 
             # hl, but superstack needs its own signature method due to intrinsic wallet provider service
-            if hl or exchange_platform == 'superstack':
+            if hl_like and order_backend == "hl_native":
                 builder_code = config.get(exchange_name, "builder_code", fallback=None)
                 wallet_address = os.getenv(f"{exchange_name.upper()}_WALLET_ADDRESS")
                 
@@ -160,9 +178,9 @@ class ExchangeManager:
                 is_sub = _get_bool_env(is_sub_env_key, fallback=False)
                 logger.info("[core] %s: is_sub(%s)=%s", exchange_name, is_sub_env_key, is_sub)
 
-
                 if wallet_address:
                     # [CHG] 수수료: (limit, market) 페어 + DEX별 페어 맵 구성
+                    '''
                     if config.has_option(exchange_name, "fee_rate"):
                         fee_pair = _parse_fee_pair(config.get(exchange_name, "fee_rate"))
                     else:
@@ -185,7 +203,8 @@ class ExchangeManager:
                         if not dex_name:
                             continue
                         dex_fee_pair_map[dex_name] = _parse_fee_pair(v)
-
+                    '''
+                    fee_pair, dex_fee_pair_default, dex_fee_pair_map = self._get_fee_rate(exchange_name)
                     options = {
                         "walletAddress": wallet_address,
                         "options": {
@@ -208,7 +227,7 @@ class ExchangeManager:
                         options["apiKey"] = os.getenv(f"{exchange_name.upper()}_AGENT_API_KEY")
                         options["privateKey"] = os.getenv(f"{exchange_name.upper()}_PRIVATE_KEY")
 
-                    self.exchanges[exchange_name] = Hyperliquid(options)
+                    self.exchanges[exchange_name] = Hyperliquid(options=options)
                     
                     try:
                         self.exchanges[exchange_name].options["walletAddress"] = wallet_address
@@ -219,73 +238,141 @@ class ExchangeManager:
             else:
                 # non-HL(lighter 등)은 initialize_all에서 생성
                 self.exchanges[exchange_name] = None
+    
+    def _get_fee_rate(self, exchange_name):
+        if config.has_option(exchange_name, "fee_rate"):
+            fee_pair = _parse_fee_pair(config.get(exchange_name, "fee_rate"))
+        else:
+            fee_pair = (0,0)
+            
+        if config.has_option(exchange_name, "dex_fee_rate"):
+            dex_fee_pair_default = _parse_fee_pair(config.get(exchange_name, "dex_fee_rate"))
+        else:
+            dex_fee_pair_default = None  # comment: 없을 때는 None → DEX 주문에서 fee_rate로 폴백
+
+        dex_fee_pair_map = {}
+        for k, v in config.items(exchange_name):
+            if not k.endswith("_fee_rate"):
+                continue
+            k_l = k.lower()
+            if k_l == "dex_fee_rate" or k_l == "fee_rate":
+                # 공통 키는 개별 dex 맵에 넣지 않음
+                continue
+            dex_name = k_l[:-len("_fee_rate")].strip()
+            if not dex_name:
+                continue
+            dex_fee_pair_map[dex_name] = _parse_fee_pair(v)
+        return fee_pair, dex_fee_pair_default, dex_fee_pair_map
 
     async def initialize_all(self):
         # 각 거래소의 initialize_client()를 병렬로 1회 호출
         tasks = []
         # 1) HL 쪽 initialize_client
-        for name, ex in self.exchanges.items():
-            if ex and self.meta.get(name, {}).get("hl", False):
-                tasks.append(ex.initialize_client())
+        #for name, ex in self.exchanges.items():
+        #    if ex and self.meta.get(name, {}).get("hl", False):
+        #        tasks.append(ex.initialize_client())
 
-        non_hl = [n for n in EXCHANGES if not self.meta.get(n, {}).get("hl", False)]
-        if create_exchange is None and non_hl:
-            logger.warning("[mpdex] 미설치/경로 오류로 비-HL 생성 스킵: %s", ",".join(non_hl))
-        for name in non_hl:
+        mpdex_ex = [n for n in EXCHANGES if self.meta.get(n, {}).get("order_backend", "") == "mpdex"]
+        if create_exchange is None and mpdex_ex:
+            logger.warning("[mpdex] 미설치/경로 오류로 비-HL 생성 스킵: %s", ",".join(mpdex_ex))
+
+        for name in mpdex_ex:
             if self.exchanges.get(name):
                 continue
             if create_exchange is None:
                 continue
+
+            # we know fn: name -> exchange (platform)
+            # create client by exchange platform not by name
+            # but .env given by exchange name
+            exchange_platform = self.meta.get(name, {}).get("exchange")
+                        
             try:
-                key = self._build_mpdex_key(name)
+                key = self._build_mpdex_key(name, exchange_platform)
+
                 if key is None:
+                    print(f"[{name}] .env 키가 누락되어 생성 스킵")
                     logger.warning(f"[{name}] .env 키가 누락되어 생성 스킵")
                     continue
-                client = await create_exchange(name.lower(), key)
+
+                client = await create_exchange(exchange_platform.lower(), key)
+                
+                if exchange_platform == "treadfi.hyperliquid":
+                    # hl 처럼 position 및 가격 조회를 위해 필요
+                    # sub account의 주소에 해당하는게 wallet address
+                    client.walletAddress = client.sub_wallet_address
+                    try:
+                        res = await client.login()
+                        print("User Name", res["username"])
+                    except Exception as e:
+                        print(f"Treadfi login problem {e}")
+                        sys.exit(0)
+                    
+                    fee_pair, dex_fee_pair_default, dex_fee_pair_map =  self._get_fee_rate(name)
+                    client.options = {
+                        "feeIntPair": fee_pair,                                 # (limit, market)
+                        "dexFeeIntPairDefault": dex_fee_pair_default or None,   # (limit, market) or None
+                        "dexFeeIntPairMap": dex_fee_pair_map,                   # {dex: (limit, market)}
+                    }
+                    
                 self.exchanges[name] = client
+
+                print(f"[{name}] mpdex client created")
                 logger.info(f"[{name}] mpdex client created")
+
             except Exception as e:
+                print(f"[{name}] mpdex client create failed: {e}")
                 logger.warning(f"[{name}] mpdex client create failed: {e}")
                 self.exchanges[name] = None
-
+        '''
         if tasks:
             try:
                 await asyncio.gather(*tasks, return_exceptions=True)
             except Exception as e:
                 logger.warning(f"initialize_all error: {e}")
+        '''
 
-    def _build_mpdex_key(self, name: str) -> SimpleNamespace | None:
+    def _build_mpdex_key(self, name: str, exchange_platform: str) -> SimpleNamespace | None:
         """mpdex 각 거래소별 키를 .env에서 읽어 SimpleNamespace로 생성"""
-        u = name.upper()
+        u_name = name.upper()
         try:
-            if name.lower() == "lighter":
+            if exchange_platform.lower() == "lighter":
                 return SimpleNamespace(
-                    account_id=int(os.getenv("LIGHTER_ACCOUNT_ID")),
-                    private_key=os.getenv("LIGHTER_PRIVATE_KEY"),
-                    api_key_id=int(os.getenv("LIGHTER_API_KEY_ID")),
-                    l1_address=os.getenv("LIGHTER_L1_ADDRESS"),
+                    account_id=int(os.getenv(f"{u_name}_ACCOUNT_ID")),
+                    private_key=os.getenv(f"{u_name}_PRIVATE_KEY"),
+                    api_key_id=int(os.getenv(f"{u_name}_API_KEY_ID")),
+                    l1_address=os.getenv(f"{u_name}_L1_ADDRESS"),
                 )
-            if name.lower() == "paradex":
+            if exchange_platform.lower() == "paradex":
                 return SimpleNamespace(
-                    wallet_address=os.getenv("PARADEX_L1_ADDRESS"),
-                    paradex_address=os.getenv("PARADEX_ADDRESS"),
-                    paradex_private_key=os.getenv("PARADEX_PRIVATE_KEY"),
+                    wallet_address=os.getenv(f"{u_name}_L1_ADDRESS"),
+                    paradex_address=os.getenv(f"{u_name}_ADDRESS"),
+                    paradex_private_key=os.getenv(f"{u_name}_PRIVATE_KEY"),
                 )
-            if name.lower() == "edgex":
+            if exchange_platform.lower() == "edgex":
                 return SimpleNamespace(
-                    account_id=int(os.getenv("EDGEX_ACCOUNT_ID")),
-                    private_key=os.getenv("EDGEX_PRIVATE_KEY"),
+                    account_id=int(os.getenv(f"{u_name}_ACCOUNT_ID")),
+                    private_key=os.getenv(f"{u_name}_PRIVATE_KEY"),
                 )
-            if name.lower() == "grvt":
+            if exchange_platform.lower() == "grvt":
                 return SimpleNamespace(
-                    api_key=os.getenv("GRVT_API_KEY"),
-                    account_id=int(os.getenv("GRVT_ACCOUNT_ID")),
-                    secret_key=os.getenv("GRVT_SECRET_KEY"),
+                    api_key=os.getenv(f"{u_name}_API_KEY"),
+                    account_id=int(os.getenv(f"{u_name}_ACCOUNT_ID")),
+                    secret_key=os.getenv(f"{u_name}_SECRET_KEY"),
                 )
-            if name.lower() == "backpack":
+            if exchange_platform.lower() == "backpack":
                 return SimpleNamespace(
-                    api_key=os.getenv("BACKPACK_API_KEY"),
-                    secret_key=os.getenv("BACKPACK_SECRET_KEY"),
+                    api_key=os.getenv(f"{u_name}_API_KEY"),
+                    secret_key=os.getenv(f"{u_name}_SECRET_KEY"),
+                )
+            if exchange_platform.lower() == "treadfi.hyperliquid":
+                return SimpleNamespace(
+                    session_cookies={"csrftoken":os.getenv(f"{u_name}_CSRF_TOKEN"),
+                                     "sessionid":os.getenv(f"{u_name}_SESSION_ID")},
+                    evm_private_key=os.getenv(f"{u_name}_PRIVATE_KEY"),
+                    main_wallet_address=os.getenv(f"{u_name}_MAIN_WALLET_ADDRESS"),
+                    sub_wallet_address=os.getenv(f"{u_name}_SUB_WALLET_ADDRESS"),
+                    account_name=os.getenv(f"{u_name}_ACCOUNT_NAME"),
                 )
         except Exception as e:
             logger.warning(f"[{name}] env key parse failed: {e}")
@@ -308,7 +395,23 @@ class ExchangeManager:
         return self.exchanges.get(name)
 
     def get_meta(self, name: str):
-        return self.meta.get(name, {"show": False, "hl": False, "frontend_market": False})
+        return self.meta.get(name, 
+                {
+                    "show": False,
+                    "hl": False,
+                    "frontend_market": False,
+                    "order_backend": "",
+                    "exchange": ""
+                })
+
+    def is_hl_like(self, name:str):
+        return self.get_meta(name).get("hl")
+    
+    def get_order_backend(self, name:str):
+        return self.get_meta(name).get("order_backend")
+    
+    def get_exchange_platform(self, name:str):
+        return self.get_meta(name).get("exchange")
 
     def visible_names(self):
         return [n for n in EXCHANGES if self.meta.get(n, {}).get("show", False)]
@@ -317,9 +420,9 @@ class ExchangeManager:
         return list(EXCHANGES)
 
     def first_hl_exchange(self):
-        """hl=True 이고 설정된 첫 ccxt 인스턴스 반환"""
+        """hl=True 이고 order_backend=hl_native"""
         for n in EXCHANGES:
             m = self.meta.get(n, {})
-            if m.get("hl", False) and self.exchanges.get(n):
+            if m.get("hl", False) and m.get("order_backend", "") == "hl_native" and self.exchanges.get(n):
                 return self.exchanges[n]
         return None

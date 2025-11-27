@@ -16,3 +16,4 @@ scrollbar_debug.log
 logs/
 .dev/
 *.log
+.cache/

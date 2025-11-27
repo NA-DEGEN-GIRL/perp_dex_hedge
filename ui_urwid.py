@@ -262,22 +262,14 @@ class UrwidApp:
             # loop 초기화 전이라면 직접 시도 (예외는 조용히 무시)
             _do_scroll(None, None)
 
-    def _is_hl_like(self, name: str) -> bool:
-        try:
-            meta = self.mgr.get_meta(name) or {}
-            if meta.get("hl", False):
-                return True
-            return str(meta.get("exchange", "")).lower() == "superstack"  # <-- 추가
-        except Exception:
-            return False
-
     def _update_card_fee(self, name: str):
         """
         HL-like 카드에서 현재 DEX/주문타입에 맞는 feeInt를 표시.
         비‑HL은 표기하지 않음.
         """
+
         try:
-            if not self._is_hl_like(name):
+            if not self.mgr.is_hl_like(name):
                 # 비‑HL은 FEE 위젯이 없거나 무의미 → 무시
                 return
             dex = self.dex_by_ex.get(name, "HL")
@@ -739,7 +731,7 @@ class UrwidApp:
             ],
             dividechars=1,
         )
-        is_hl_like = self._is_hl_like(name)
+        is_hl_like = self.mgr.is_hl_like(name)
         
         price_line = urwid.Text(("info", "Price: ..."))
         self.card_price_text[name] = price_line
@@ -1076,7 +1068,7 @@ class UrwidApp:
                 sym_coin = _normalize_symbol_input(self.symbol_by_ex.get(name) or self.symbol)
                 dex = self.dex_by_ex.get(name, "HL")
                 sym = _compose_symbol(dex, sym_coin)
-                is_hl_like = self._is_hl_like(name)  # <-- 변경
+                is_hl_like = self.mgr.is_hl_like(name)  # <-- 변경
 
                 # 가격/quote 업데이트 (WS 캐시)
                 if is_hl_like:
@@ -2163,7 +2155,7 @@ class UrwidApp:
             # 4) 가격/상태 주기 작업 시작
             self._price_task = asyncio.get_event_loop().create_task(self._price_loop())
             for n in self.mgr.visible_names():
-                if self._is_hl_like(n):
+                if self.mgr.is_hl_like(n):
                     self._update_card_fee(n)
                 if n not in self._status_tasks or self._status_tasks[n].done():
                     self._status_tasks[n] = asyncio.get_event_loop().create_task(self._status_loop(n))

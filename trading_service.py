@@ -395,15 +395,6 @@ class TradingService:
                 
         return lst
 
-    def _is_hl_like(self, meta: dict) -> bool:
-        try:
-            if meta.get("hl", False):
-                return True
-            # core.py가 meta["exchange"]에 'superstack'을 넣어줌
-            return str(meta.get("exchange", "")).lower() == "superstack"
-        except Exception:
-            return False
-
     def _info_ex(self):
         """
         meta/assetCtx 등 '조회 전용'은 전역 동일하므로 첫 번째 HL(ccxt)을 공용으로 사용.
@@ -876,9 +867,10 @@ class TradingService:
         """
         ex = self.manager.get_exchange(exchange_name)
         meta = self.manager.get_meta(exchange_name) or {}  # [CHG] meta 캐싱
+        is_hl_like = self.manager.is_hl_like(exchange_name)
         
-        # [CHG] is_hl_like 사용: superstack 포함
-        if not ex or not self._is_hl_like(meta):
+        # is_hl_like 사용: superstack 포함
+        if not ex or not is_hl_like:
             return
 
         dex, hip3_coin = _parse_hip3_symbol(symbol)
@@ -948,7 +940,6 @@ class TradingService:
         - 지정가: 입력 가격 사용, tif 기본 Gtc
         - builder/fee, reduceOnly, client_id 모두 raw payload로 반영
         """
-        logger.info("test")
         meta = self.manager.get_meta(exchange_name) or {}
 
         try:
@@ -1102,9 +1093,17 @@ class TradingService:
         
     def _to_native_symbol(self, exchange_name: str, coin: str) -> str:
         meta = self.manager.get_meta(exchange_name) or {}
-        # [CHG] is_hl_like 사용: HL(superstack 포함)은 그대로, 비‑HL만 변환
-        if self._is_hl_like(meta):
-            return coin
+        is_hl_like = self.manager.is_hl_like(exchange_name)
+        order_backend = self.manager.get_order_backend(exchange_name)
+        exchange_platform = self.manager.get_exchange_platform(exchange_name)
+
+        # is_hl_like 사용: HL(superstack 포함)은 그대로, 비‑HL만 변환
+        if is_hl_like:
+            if order_backend == 'mpdex':
+                return symbol_create(exchange_platform, coin)
+            else:
+                return coin
+        
         # 비‑HL: 헤더/카드 DEX 선택의 영향을 제거한다.
         # 'xyz:COIN' → 'COIN' 으로 정규화 (HIP‑3 접두사 제거)
         sym = coin
@@ -1117,7 +1116,7 @@ class TradingService:
         # mpdex 심볼 생성기 필요
         if symbol_create is None:
             raise RuntimeError("[mpdex] symbol_create 가 없어 비‑HL 심볼을 생성할 수 없습니다.")
-        return symbol_create(exchange_name, sym)
+        return symbol_create(exchange_platform, sym)
     
     def _extract_order_id(self, res) -> Optional[str]:
         if isinstance(res, list):
@@ -1172,9 +1171,9 @@ class TradingService:
         if not ex:
             return "N/A"
         meta = self.manager.get_meta(exchange_name) or {}
-
+        is_hl_like = self.manager.is_hl_like(exchange_name)
         try:
-            if not self._is_hl_like(meta):
+            if not is_hl_like:
                 native = self._to_native_symbol(exchange_name, symbol)
                 px = await ex.get_mark_price(native)
                 return self.format_price_simple(float(px))
@@ -1220,6 +1219,7 @@ class TradingService:
         """
         meta = self.manager.get_meta(exchange_name) or {}
         ex = self.manager.get_exchange(exchange_name)
+        is_hl_like = self.manager.is_hl_like(exchange_name)
         if not ex:
             return "📊 Position: N/A", "💰 Account Value: N/A", 0.0
         
@@ -1230,7 +1230,7 @@ class TradingService:
         )
 
         # 1) mpdex (hl=False) 처리
-        if not self._is_hl_like(meta):
+        if not is_hl_like:
             try:
                 col_val = self._last_collateral.get(exchange_name, 0.0)
                 if need_balance:
@@ -1330,11 +1330,13 @@ class TradingService:
         logger.info(f"[EXECUTE] start: ex={exchange_name} sym={symbol} side={side} amt={amount} type={order_type}")
         meta = self.manager.get_meta(exchange_name) or {}
         ex = self.manager.get_exchange(exchange_name)
+        is_hl_like = self.manager.is_hl_like(exchange_name)
+        order_backend = self.manager.get_order_backend(exchange_name)
         if not ex:
             raise RuntimeError(f"{exchange_name} not configured")
         
         # 1) mpdex
-        if not self._is_hl_like(meta):
+        if order_backend == "mpdex":
             native = self._to_native_symbol(exchange_name, symbol)
             if order_type == "limit":
                 if price is None:
@@ -1380,11 +1382,17 @@ class TradingService:
         """
         meta = self.manager.get_meta(exchange_name) or {}
         ex = self.manager.get_exchange(exchange_name)
+        is_hl_like = self.manager.is_hl_like(exchange_name)
+        order_backend = self.manager.get_order_backend(exchange_name)
+
+        logger.info(f"order_backend {order_backend} {is_hl_like}")
+
         if not ex:
             raise RuntimeError(f"{exchange_name} not configured")
 
         # 1) mpdex: 라이브러리 close_position 사용
-        if not self._is_hl_like(meta):
+        # get position 때문에 mpdex를 쓰는 hl의 경우는 hl쪽으로
+        if not is_hl_like:
             try:
                 native = self._to_native_symbol(exchange_name, symbol)
                 pos = await ex.get_position(native)
@@ -1454,6 +1462,17 @@ class TradingService:
             logger.info("[CLOSE] %s HIP3 %s: %s %.10f → %s %.10f @ market",
                         exchange_name, hip3_coin, side_now.upper(), size, close_side.upper(), amount)
 
+            if order_backend == "mpdex":
+                try:
+                    native = self._to_native_symbol(exchange_name, symbol)
+                    pos = {'size':amount, 'side':side_now} # close에서 알아서 반대 사이드로 들어감
+                    res = await ex.close_position(native, pos)
+                    oid = self._extract_order_id(res)
+                    return {"id": oid, "info": res}
+                except Exception as e:
+                    logger.warning(f"{e}")
+                    return
+
             # 통합 raw 호출(시장가 + reduceOnly=True)
             order = await self._hl_create_order_unified(
                 ex=ex,
@@ -1509,6 +1528,17 @@ class TradingService:
         logger.info("[CLOSE] %s: %s %.10f → %s %.10f @ market",
                     exchange_name, side_now.upper(), size, close_side.upper(), amount)
 
+        if order_backend == "mpdex":
+            try:
+                native = self._to_native_symbol(exchange_name, symbol)
+                pos = {'size':amount, 'side':side_now}
+                res = await ex.close_position(native, pos)
+                oid = self._extract_order_id(res)
+                return {"id": oid, "info": res}
+            except Exception as e:
+                logger.warning(f"{e}")
+                return
+        
         order = await self._hl_create_order_unified(
             ex=ex,
             exchange_name=exchange_name,
