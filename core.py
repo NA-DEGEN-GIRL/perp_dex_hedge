@@ -179,31 +179,7 @@ class ExchangeManager:
                 logger.info("[core] %s: is_sub(%s)=%s", exchange_name, is_sub_env_key, is_sub)
 
                 if wallet_address:
-                    # [CHG] 수수료: (limit, market) 페어 + DEX별 페어 맵 구성
-                    '''
-                    if config.has_option(exchange_name, "fee_rate"):
-                        fee_pair = _parse_fee_pair(config.get(exchange_name, "fee_rate"))
-                    else:
-                        fee_pair = "0,0"
-                        
-                    if config.has_option(exchange_name, "dex_fee_rate"):
-                        dex_fee_pair_default = _parse_fee_pair(config.get(exchange_name, "dex_fee_rate"))
-                    else:
-                        dex_fee_pair_default = None  # comment: 없을 때는 None → DEX 주문에서 fee_rate로 폴백
-
-                    dex_fee_pair_map = {}
-                    for k, v in config.items(exchange_name):
-                        if not k.endswith("_fee_rate"):
-                            continue
-                        k_l = k.lower()
-                        if k_l == "dex_fee_rate" or k_l == "fee_rate":
-                            # 공통 키는 개별 dex 맵에 넣지 않음
-                            continue
-                        dex_name = k_l[:-len("_fee_rate")].strip()
-                        if not dex_name:
-                            continue
-                        dex_fee_pair_map[dex_name] = _parse_fee_pair(v)
-                    '''
+                    # 수수료: (limit, market) 페어 + DEX별 페어 맵 구성
                     fee_pair, dex_fee_pair_default, dex_fee_pair_map = self._get_fee_rate(exchange_name)
                     options = {
                         "walletAddress": wallet_address,
@@ -323,13 +299,6 @@ class ExchangeManager:
                 print(f"[{name}] mpdex client create failed: {e}")
                 logger.warning(f"[{name}] mpdex client create failed: {e}")
                 self.exchanges[name] = None
-        '''
-        if tasks:
-            try:
-                await asyncio.gather(*tasks, return_exceptions=True)
-            except Exception as e:
-                logger.warning(f"initialize_all error: {e}")
-        '''
 
     def _build_mpdex_key(self, name: str, exchange_platform: str) -> SimpleNamespace | None:
         """mpdex 각 거래소별 키를 .env에서 읽어 SimpleNamespace로 생성"""
