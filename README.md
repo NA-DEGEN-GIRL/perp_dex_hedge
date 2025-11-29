@@ -11,8 +11,8 @@
 
 ## 지원 거래소
 - hyperliquid 기반: 옵션으로 추가 가능, builder code와 fee만 알면됩니다.
- - 기본제공: mass, lit, dexari, liquid, based, supercexy, bullpen, dreamcash
- - hyperliquid 기반이지만 특수 케이스: superstack, treadfi_hl
+  - 기본제공: mass, lit, dexari, liquid, based, supercexy, bullpen, dreamcash
+  - hyperliquid 기반이지만 특수 케이스: superstack, treadfi_hl
 - 비 hyperliquid 거래소들: lighter, liquid-lighter, edgeX, paradex, grvt, backpack, variational
 
 ---
