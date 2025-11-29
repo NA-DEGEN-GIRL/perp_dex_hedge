@@ -23,7 +23,110 @@ CARD_HEIGHT = 5
 LOGS_ROWS = 6
 SWITCHER_ROWS = 5
 
-# [ADD] Logs/Body 상호작용으로 '팔로우 모드'를 제어하기 위한 래퍼
+class ExchangesGrid(urwid.WidgetWrap):
+    """
+    한 줄에 여러 개(그리드)로 Exchanges 체크박스를 배치하고,
+    줄 수가 넘치면 내부 스크롤로 탐색하는 위젯.
+    - per_row(한 줄 개수)는 렌더 시 size[0]에 따라 동적으로 계산
+    - visible_rows(가시 줄 수)는 항목 수에 맞춰 자동 증가(최대 max_rows)
+    """
+    def __init__(self, items: list[tuple[str, bool]], on_toggle, *,
+                 min_cell_w: int = 14,      # 셀 최소폭(라벨+여백). 너무 긴 이름은 clip.
+                 gap: int = 2,              # 셀 사이 간격(Columns dividechars)
+                 per_row_min: int = 2,
+                 per_row_max: int = 5,
+                 min_rows: int = 2,
+                 max_rows: int = 10):
+        self.items_meta = items[:]          # [(name, show)]
+        self.on_toggle = on_toggle
+        self.min_cell_w = max(10, int(min_cell_w))
+        self.gap = max(0, int(gap))
+        self.per_row_min = max(1, int(per_row_min))
+        self.per_row_max = max(self.per_row_min, int(per_row_max))
+        self.min_rows = max(1, int(min_rows))
+        self.max_rows = max(self.min_rows, int(max_rows))
+
+        # 체크박스 생성(+ 콜백 연결)
+        self._checks: dict[str, urwid.CheckBox] = {}
+        row_items = []
+        for name, show in self.items_meta:
+            cb = urwid.CheckBox(name.upper(), state=bool(show),
+                                on_state_change=lambda c, st, n=name: self.on_toggle(n, st))
+            # 포커스 색상
+            row_items.append(urwid.AttrMap(cb, None, 'btn_focus'))
+            self._checks[name] = cb
+
+        # ListWalker + ScrollBar + ListBox
+        self._walker = urwid.SimpleListWalker([])  # 행(Columns) 위젯들이 들어감
+        self._scroll = ScrollBar(width=1)
+        self._listbox = ScrollableListBox(self._walker, scrollbar=self._scroll, enable_selection=True, page_overlap=1)
+        self._scroll.attach(self._listbox)
+
+        # 상태
+        self._row_items = row_items  # 셀 위젯들
+        self._last_cols = None
+        self.per_row = self.per_row_min
+        self.rows_total = 1
+        self.visible_rows = self.min_rows
+
+        content = urwid.Columns([
+            ('weight', 1, self._listbox),
+            ('fixed', self._scroll.width, self._scroll),
+        ], dividechars=0)
+        super().__init__(urwid.LineBox(content, title="Exchanges"))
+
+        # 최초 그리드 구성(대략적인 per_row 가정)
+        self._rebuild_rows(terminal_cols=120)  # 임시 값, render에서 다시 계산됨
+
+    def _compute_per_row(self, cols: int) -> int:
+        # 안전한 per_row 계산: 셀 최소폭 + gap을 가정해 몇 개 들어가는지 산출
+        # columns = cells*min_cell_w + (cells-1)*gap  → 근사 역산
+        if cols <= 0:
+            return self.per_row_min
+        # 후보 max 개수
+        max_fit = max(1, (cols + self.gap) // (self.min_cell_w + self.gap))
+        return max(self.per_row_min, min(self.per_row_max, max_fit))
+
+    def _rebuild_rows(self, terminal_cols: int):
+        self.per_row = self._compute_per_row(terminal_cols)
+        total = len(self._row_items)
+        self.rows_total = max(1, math.ceil(total / self.per_row))
+        # 표시할 줄 수: 항목 수에 따라 자동 증가(최대 self.max_rows)
+        self.visible_rows = max(self.min_rows, min(self.max_rows, self.rows_total))
+
+        rows = []
+        # per_row 개씩 잘라 Columns로 묶음
+        for r in range(self.rows_total):
+            start = r * self.per_row
+            chunk = self._row_items[start:start + self.per_row]
+            # 개수가 부족하면 빈 칸 채우기(레이아웃 안정)
+            if len(chunk) < self.per_row:
+                chunk = chunk + [urwid.Text("")] * (self.per_row - len(chunk))
+            row = urwid.Columns([('weight', 1, w) for w in chunk], dividechars=self.gap)
+            rows.append(row)
+
+        # Walker 교체
+        self._walker[:] = rows
+
+        # ScrollBar에 총 항목 수/현재 표시 줄 수를 반영(가상 모드 없이 단순 스크롤)
+        # ScrollableListBox가 자체적으로 first/height를 반영해 스크롤 업데이트
+
+    def render(self, size, focus=False):
+        # 렌더 시점 크기 측정
+        if isinstance(size, tuple) and len(size) >= 1:
+            cols = int(size[0])
+        else:
+            cols = self._last_cols or 120
+        if cols != self._last_cols:
+            self._rebuild_rows(cols)
+            self._last_cols = cols
+        return super().render(size, focus)
+
+    # 외부에서 현재 체크 상태를 읽고 싶을 때
+    def get_states(self) -> dict[str, bool]:
+        return {name: bool(cb.get_state()) for name, cb in self._checks.items()}
+
+# Logs/Body 상호작용으로 '팔로우 모드'를 제어하기 위한 래퍼
 class FollowableListBox(ScrollableListBox):
     def __init__(self, *args, role: str = "", app_ref=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -201,6 +304,9 @@ class UrwidApp:
         # “Exchanges” 토글 박스
         self.switcher_list_walker: urwid.SimpleListWalker | None = None
         self.switch_checks: Dict[str, urwid.CheckBox] = {}
+        self.switcher_listbox: ScrollableListBox | None = None
+        self.switcher_scroll: ScrollBar | None = None
+        self._switcher_rows: int = 5  # footer에 넣을 'fixed' 높이(라인박스 테두리 
 
         # trading service
         self.service = TradingService(self.mgr)
@@ -804,43 +910,37 @@ class UrwidApp:
     # --------- Exchanges 토글 박스 (GridFlow로 가로 나열) ----------
     def _build_switcher(self):
         """
-        Exchanges 토글 박스: 세 줄, 균일 폭 셀.
-        - 각 체크박스를 ('given', cell_w, widget)으로 전달해 고정 폭으로 배치
-        - 이름 길이에 따라 cell_w를 동적으로 산정(최소 12)
+        Exchanges 토글 박스(그리드 + 스크롤).
+        - 한 줄에 여러 개(per_row는 렌더 시 동적 계산)
+        - 줄 수는 항목 수에 따라 자동 증가(최대 max_rows)
         """
-        self.switch_checks = {}
-
         names = self.mgr.all_names()
         if not names:
-            return urwid.LineBox(urwid.Text("no exchanges"), title="Exchanges")
+            grid = urwid.LineBox(urwid.Text("no exchanges"), title="Exchanges")
+            self._switcher_rows = 3
+            return grid
 
-        # 라벨 최대 길이에 여유분(브래킷·공백 등) 더해 셀 폭 산정
-        max_label = max(len(n.upper()) for n in names)
-        cell_w = max(12, max_label + 4)  # 최소 12칸
+        items = []
+        for name in names:
+            show = bool(self.mgr.get_meta(name).get("show", False))
+            items.append((name, show))
 
-        # [CHG] 2줄 → 3줄 균등 분배
-        chunk = max(1, math.ceil(len(names) / 3))  # comment: 한 줄당 항목 수
-        rows = [[], [], []]  # row1, row2, row3
+        # 그리드 생성(콜백: 기존 토글 핸들러 재사용)
+        grid = ExchangesGrid(
+            items,
+            on_toggle=lambda n, st: self._on_toggle_show(self.switch_checks.get(n, None) or urwid.CheckBox("", state=st), st),
+            min_cell_w=20, gap=1, per_row_min=2, per_row_max=5, min_rows=2, max_rows=10
+        )
 
-        for idx, name in enumerate(names):
-            show = self.mgr.get_meta(name).get("show", False)
-            chk = urwid.CheckBox(name.upper(), state=show, on_state_change=self._on_toggle_show)
-            self.switch_checks[name] = chk
-            r = min(idx // chunk, 2)  # 0,1,2 중 하나
-            rows[r].append(('given', cell_w, chk))
+        # 체크박스 인스턴스 매핑(토글 콜백에서 상태 반영 필요하면 사용)
+        self.switch_checks = {}
+        for name, _ in items:
+            # ExchangesGrid 내부 체크박스 접근은 private이라 여기선 더미 매핑 유지(필요 시 grid.get_states 사용)
+            self.switch_checks[name] = urwid.CheckBox(name, state=self.mgr.get_meta(name).get("show", False))
 
-        def to_columns(cells):
-            if not cells:
-                # 빈 줄도 유지하여 '3줄' 레이아웃 고정
-                return urwid.Text("")
-            return urwid.Columns(cells, dividechars=2)
-
-        row1 = to_columns(rows[0])
-        row2 = to_columns(rows[1])
-        row3 = to_columns(rows[2])
-
-        # [CHG] 3줄 Pile
-        return urwid.LineBox(urwid.Pile([row1, row2, row3]), title="Exchanges")
+        # footer 고정 높이: visible_rows + LineBox 테두리(2)
+        self._switcher_rows = grid.visible_rows + 2
+        return grid
 
     def _on_toggle_show(self, chk: urwid.CheckBox, state: bool):
         # meta 갱신
