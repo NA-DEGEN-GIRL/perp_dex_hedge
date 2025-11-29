@@ -4,7 +4,24 @@ from logging.handlers import RotatingFileHandler
 from core import ExchangeManager
 from ui_urwid import UrwidApp
 from dotenv import load_dotenv
+from pathlib import Path
+import sys
 
+def _load_env_flexible():
+    """
+    .env를 아래 우선순위로 1회 로드:
+    현재 작업 디렉터리(CWD)/.env
+    """
+    tried = []
+    # CWD
+    p = (Path.cwd() / ".env").resolve()
+    tried.append(str(p))
+    if p.exists():
+        load_dotenv(p, override=False)
+        return str(p)
+    
+    return None  # 못 찾았음
+    
 def _setup_logging():
     # 1) 환경 변수 읽기
     level_name = os.getenv("PDEX_LOG_LEVEL", "INFO").upper()
@@ -76,7 +93,8 @@ def _guard_basicConfig(enable: bool = True):
     _logging.basicConfig = _noop
 
 def main():
-    load_dotenv()
+    _load_env_flexible()
+
     _setup_logging()     # 강제 재설정
     _guard_basicConfig(enable=True)  # (옵션) 이후 타 모듈의 basicConfig 무력화
     _dump_logging_state()            # 상태 확인 1회
