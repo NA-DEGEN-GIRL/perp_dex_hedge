@@ -1,0 +1,1 @@
+pyinstaller --onefile --name PerpDexHedge --clean --collect-data starkware.crypto.signature --collect-binaries lighter --collect-submodules wrappers --collect-submodules exchange_factory main.py
