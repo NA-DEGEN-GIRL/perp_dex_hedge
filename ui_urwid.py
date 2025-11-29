@@ -929,7 +929,7 @@ class UrwidApp:
         grid = ExchangesGrid(
             items,
             on_toggle=lambda n, st: self._on_toggle_show(self.switch_checks.get(n, None) or urwid.CheckBox("", state=st), st),
-            min_cell_w=20, gap=1, per_row_min=2, per_row_max=5, min_rows=2, max_rows=10
+            min_cell_w=15, gap=1, per_row_min=2, per_row_max=5, min_rows=2, max_rows=10
         )
 
         # 체크박스 인스턴스 매핑(토글 콜백에서 상태 반영 필요하면 사용)
