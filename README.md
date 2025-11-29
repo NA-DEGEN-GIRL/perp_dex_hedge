@@ -37,7 +37,7 @@ https://github.com/NA-DEGEN-GIRL/perp_dex_hedge/blob/main/README.beginner.md
 - hyperliquid 기반: 옵션으로 추가 가능, builder code와 fee만 알면됩니다.
   - 기본제공: mass, lit, dexari, liquid, based, supercexy, bullpen, dreamcash
   - hyperliquid 기반이지만 특수 케이스: superstack, treadfi_hl
-- 비 hyperliquid 거래소들: lighter, liquid-lighter, edgeX, paradex, grvt, backpack, variational
+- 비 hyperliquid 거래소들: lighter, liquid-lighter, edgeX, paradex, grvt, backpack, variational, pacifica
 
 ---
 
@@ -181,6 +181,11 @@ TREADFI_HL_SESSION_ID="세션 쿠키"           # (선택) 있으면 로그인 �
 VARIATIONAL_WALLET_ADDRESS="지갑주소" # 반드시 필요
 VARIATIONAL_JWT_TOKEN="session cookies의 vr-token값" # 생략가능, skip시 로그인창으로 로그인 해야함
 VARIATIONAL_PRIVATE_KEY="지갑 프빗키" # 생략가능, 생략시 로그인창으로 로그인 해야함
+
+# Pacifica
+PACIFICA_PUBLIC_KEY="지갑주소"
+PACIFICA_AGENT_PUBLIC_KEY="API지갑주소, API생성시나옴"
+PACIFICA_AGENT_PRIVATE_KEY="API생성시 나옴"
 
 # ===== Lighter (mpdex) =====
 # account_id 확인:
@@ -336,6 +341,10 @@ exchange = grvt
 [backpack]
 show = False
 exchange = backpack
+
+[pacifica]
+show = True
+exchange = pacifica
 ```
 
 수수료 표기 규칙
@@ -504,7 +513,7 @@ python main.py
 - ✅ urwid UI 안정화 / HL 가격 공유 / Exchanges 토글
 - ✅ REPEAT 즉시 중단 / Tab·Shift+Tab 탐색 안정화
 - ✅ CLOSE ALL / BURN 기능
-- ✅ 비‑HL(mpdex) 거래소: Lighter/Paradex/Edgex/GRVT/Backpack/Variational 연동
+- ✅ 비‑HL(mpdex) 거래소: Lighter/Paradex/Edgex/GRVT/Backpack/Variational/Pacifica 연동
 - ✅ XYZ 지원
 - ✅ FLX / VNTL 지원 (USDH 페어)
 - ✅ superstack / tread.fi 지원

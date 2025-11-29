@@ -305,6 +305,7 @@ class ExchangeManager:
                     except Exception as e:
                         print(f"Treadfi login problem {e}")
                         print(f"Treadfi cannot be used")
+                        
                 if exchange_platform == "variational":
                     # 로그인 필요
                     try:
@@ -370,6 +371,12 @@ class ExchangeManager:
                     evm_wallet_address=os.getenv(f"{u_name}_WALLET_ADDRESS"),
                     session_cookies={"vr_token":os.getenv(f"{u_name}_JWT_TOKEN")},
                     evm_private_key=os.getenv(f"{u_name}_PRIVATE_KEY"),
+                )
+            if exchange_platform.lower() == "pacifica":
+                return SimpleNamespace(
+                    public_key=os.getenv(f"{u_name}_PUBLIC_KEY"),
+                    agent_public_key=os.getenv(f"{u_name}_AGENT_PUBLIC_KEY"),
+                    agent_private_key=os.getenv(f"{u_name}_AGENT_PRIVATE_KEY"),
                 )
         except Exception as e:
             logger.warning(f"[{name}] env key parse failed: {e}")
