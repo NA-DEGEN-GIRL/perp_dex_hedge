@@ -4,8 +4,7 @@
 여러 Hyperliquid 엔진 기반 Perp DEX + mpdex 기반 비‑HL DEX(Lighter/Paradex/Edgex/GRVT/Backpack)를 하나의 터미널 UI(urwid)에서 동시에 거래하는 앱입니다.
 
 - GitHub: https://github.com/NA-DEGEN-GIRL/perp_dex_hedge
-- 기본 UI: urwid (경량·빠름·안정) — 앞으로도 urwid 중심으로 개발합니다.
-- Textual: 더 이상 권장하지 않으며 레거시 옵션입니다. (`python main.py --ui textual`)
+- 기본 UI: urwid
 
 ---
 
@@ -447,7 +446,7 @@ python main.py
 
 ## 7. 기술 스택
 
-- UI: urwid(기본), Textual(레거시)
+- UI: urwid(기본)
 - 거래소 API: hyperliquid api, mpdex(Lighter/Paradex/Edgex/GRVT/Backpack)
 - 설정: python‑dotenv, configparser
 
