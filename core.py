@@ -5,6 +5,7 @@ import configparser
 from types import SimpleNamespace
 import sys
 import logging
+from pathlib import Path
 logger = logging.getLogger(__name__)  # 모듈 전용 로거
 
 try:
@@ -12,6 +13,15 @@ try:
 except Exception:
     create_exchange = None
     logger.warning("[mpdex] exchange_factory.create_exchange 를 찾지 못했습니다. 비-HL 거래소는 비활성화됩니다.")
+
+def _resolve_config_path() -> str:
+    """
+    config.ini를 아래 우선순위로 찾습니다.
+    현재 작업 디렉터리(CWD)/config.ini
+    """
+    p = (Path.cwd() / "config.ini").resolve()
+    if p.exists():
+        return str(p)
 
 def _get_bool_env(key: str, fallback: bool = False) -> bool:
     v = os.getenv(key)
@@ -25,6 +35,13 @@ config = configparser.ConfigParser(
     interpolation=None,
     inline_comment_prefixes=('#', ';')  # [ADD] 행 내 주석 자동 제거
 )
+CONFIG_PATH = _resolve_config_path()  # [CHG] 유연 경로 사용
+_cfg_file = Path(CONFIG_PATH)
+if not _cfg_file.exists():
+    logger.critical("[config] file not found: %s", CONFIG_PATH)
+    # 여기서 바로 raise 하면 exe가 즉시 종료되므로, 메시지를 명확히 남기고 예외 발생
+    raise FileNotFoundError(f"config.ini not found. Put config.ini next to the exe or set PDEX_CONFIG. tried: {CONFIG_PATH}")
+
 def load_config_with_encodings(path: str) -> configparser.ConfigParser:
     """
     config.ini를 여러 인코딩으로 안전하게 로드합니다.
@@ -63,7 +80,6 @@ def load_config_with_encodings(path: str) -> configparser.ConfigParser:
         raise RuntimeError(f"[config] unknown error while reading '{path}'")
 
 # config.ini 경로(실행 위치와 무관하게 파일 위치 기준)
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.ini")
 config = load_config_with_encodings(CONFIG_PATH)
 
 EXCHANGES = sorted([section for section in config.sections()])
