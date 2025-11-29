@@ -8,6 +8,9 @@
 
 ---
 
+## 개초보용 매뉴얼 ##
+https://github.com/NA-DEGEN-GIRL/perp_dex_hedge/blob/main/README.beginner.md
+
 ## 다슬기 & 달팽이용 실행 파일 제공
 - 윈도우용 PerpDexHedge.exe 를 그냥 실행시키면 됩니다.
 - **.env / config.ini 설정은 하셔야 합니다.**
