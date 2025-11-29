@@ -218,6 +218,28 @@ BACKPACK_SECRET_KEY=https://backpack.exchange/portfolio/settings/api-keys에서_
 - superstack 카드: `{NAME}_WALLET_ADDRESS / _API_KEY`
 - 비‑HL(mpdex) 카드: 거래소별 키(위 예시 참고)
 
+### Variational token 값 얻기
+![베리나스샷](variational_token.png)
+- 크롬에서 베리나 사이트 로그인후
+- 로그인하고나서 f12를 누름
+- 그다음 Network 클릭
+- indicative 보이면 클릭
+- Cookies 탭 클릭
+- vr-token 보이는곳가서 Value를 더블클릭해서 컨트롤+c 하면 복사됨
+  - VARIATIONAL_JWT_TOKEN=복사한값
+
+### Tread.fi token 값 얻기
+![treadfi스샷](treadfi_token.png)
+- 크롬에서 treadfi 사이트 로그인후
+- 로그인하고나서 trade가서 본인의 계정 선택
+- f12를 누르고
+- 그다음 Network 클릭
+- get_order_table_rows... 보이면 클릭
+- Cookies 탭 클릭
+- csrftoken, sessionid 각각 복사
+  - TREADFI_HL_CSRF_TOKEN=csrftoken값
+  - TREADFI_HL_SESSION_ID=sessionid값
+
 ### B) config.ini (표시/엔진/수수료)
 
 중요: `[섹션명]`은 “이름”일 뿐이고, **실제 엔진/백엔드**는 `exchange=` 값으로 결정됩니다.
