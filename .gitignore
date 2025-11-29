@@ -15,5 +15,5 @@ scrollbar_debug.log
 .python-version
 logs/
 .dev/
-*.log
+*.log*
 .cache/
