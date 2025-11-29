@@ -1,0 +1,109 @@
+# 잘 모르겠으면 쓰고 싶은 거래소의 내용들만 넣고 나머진 지우면됨 
+# = 앞뒤에 공백 있으면 안됨. 예) a=b (o) / a= b (x) / a = b(x) / a =b (x)
+
+# 일반 HL 예시 (빌더코드를 안쓰는 일반적인 예시임)
+HL_WALLET_ADDRESS=0x...
+HL_AGENT_API_KEY=
+HL_PRIVATE_KEY=0x...
+HL_IS_SUB=1   # ← 서브계정이면 1 or true 로 설정
+
+# Tread.fi: hyperliquid, sub account를 안쓰면 main과 sub 주소를 동일히 사용
+# ** sub account를 쓰면 main address와 sub account의 주소를 구분지음
+# private key는 main address의 private key이며, 생략가능
+# private key 생략시, 로그인으로 세션값 등록
+# session cookies 값을 수동으로 넣을수도 있음, 이 경우에도 private key는 필요없고 따로 로그인도 필요없음
+# session cookies 값을 찾으려면, tread.fi 에서 로그인후 network 탭에서 get_order_table 등의 header에서 찾을수있음
+TREADFI_HL_MAIN_WALLET_ADDRESS="메인 지갑 주소" # 로그인 때문에 필요
+TREADFI_HL_SUB_WALLET_ADDRESS="이게 너의 sub account 주소" # 실제 주문이 들어갈 주소
+TREADFI_HL_PRIVATE_KEY="메인 지갑의 프빗키" # 생략 가능, 자동 로그인을 원하면 넣어도댐
+TREADFI_HL_ACCOUNT_NAME="tread.fi 에서 하리 계정 생성시 이름" # 필요
+TREADFI_HL_CSRF_TOKEN="쿠키설정" # 생략가능, 넣을시 로그인 따로 안함
+TREADFI_HL_SESSION_ID="쿠키설정" # 생략가능, 넣을시 로그인 따로 안함
+
+# variational 
+VARIATIONAL_WALLET_ADDRESS="지갑주소" # 반드시 필요
+VARIATIONAL_JWT_TOKEN="session cookies의 vr-token값" # 생략가능, skip시 로그인창으로 로그인 해야함
+VARIATIONAL_PRIVATE_KEY="지갑 프빗키" # 생략가능, 생략시 로그인창으로 로그인 해야함
+
+# MASS
+MASS_WALLET_ADDRESS=0x...
+MASS_AGENT_API_KEY=
+MASS_PRIVATE_KEY=0x...
+
+# Lit
+LIT_WALLET_ADDRESS=0x...
+LIT_AGENT_API_KEY=
+LIT_PRIVATE_KEY=0x...
+
+# Dexari
+DEXARI_WALLET_ADDRESS=0x...
+DEXARI_AGENT_API_KEY=
+DEXARI_PRIVATE_KEY=0x...
+
+# Liquid
+LIQUID_WALLET_ADDRESS=0x...
+LIQUID_AGENT_API_KEY=
+LIQUID_PRIVATE_KEY=0x...
+
+# Liquid Lighter, 아래 lighter 설정법과 동일함
+LIQUID_LT_ACCOUNT_ID=
+LIQUID_LT_PRIVATE_KEY=
+LIQUID_LT_API_KEY_ID=
+LIQUID_LT_ADDRESS=
+
+# Supercexy
+SUPERCEXY_WALLET_ADDRESS=0x...
+SUPERCEXY_AGENT_API_KEY=
+SUPERCEXY_PRIVATE_KEY=0x...
+
+# BasedOne
+BASEDONE_WALLET_ADDRESS=0x...
+BASEDONE_AGENT_API_KEY=
+BASEDONE_PRIVATE_KEY=0x...
+
+# Dreamcash
+DREAMCASH_WALLET_ADDRESS=0x...
+DREAMCASH_AGENT_API_KEY=
+DREAMCASH_PRIVATE_KEY=0x...
+
+# superstack, HL이지만 자체 지갑 서비스를 사용함. api는 superstack 사이트에서 발급 가능
+# 주소는 hl 주소를 의미
+SUPERSTACK_WALLET_ADDRESS=0x...
+SUPERSTACK_API_KEY=sk_...
+
+# LIGHTER
+# acconunt_id는 https://app.lighter.xyz/explorer 가서 본인 주소 치고
+# 거래 내역 까보면 나옴 (원하는 계정 선택후 거래하고 확인)
+#
+# 혹은 https://apidocs.lighter.xyz/reference/account-1 가서
+# Query Params 에서, "by"를 "l1_address"로 택하고
+# "value" 칸에 본인으 evm 주소를 넣음
+# 그리고 오른쪽에 Shell Node 어쩌구 저쩌구들 있는곳가서 "Try it!" 누르면
+# 본인 계정으 "account_index"를 볼수있는데 그게 account_id 임 
+# 처음보이는 "account_index"는 본계정의 account_id이고, 만약에 sub-account를 사용하고 싶다면
+# 쭉 내리면 또 확인이 가능함, 본인이 collateral 얼마 있는지 알테니 해당 account의 index를 사용하면됨
+#
+# api key 생성은 https://app.lighter.xyz/apikeys 에서 하면되고
+# api_key_id는 처음 생성한다면 간단히 2번을 쓰면됨. 0과 1은 이미 배정된거라 못씀.
+LIGHTER_ACCOUNT_ID=transaction_에서_확인
+LIGHTER_PRIVATE_KEY=api_생성시_확인
+LIGHTER_API_KEY_ID=api_생성시_확인
+LIGHTER_L1_ADDRESS=your_evm_address
+
+# ===== Paradex (mpdex, hl=False) =====
+PARADEX_L1_ADDRESS=your_evm_address
+PARADEX_ADDRESS=paradex_접속시_나옴
+PARADEX_PRIVATE_KEY=paradex_접속해서_볼수있음
+
+# ===== Edgex (mpdex, hl=False) =====
+EDGEX_ACCOUNT_ID=your_account_id
+EDGEX_PRIVATE_KEY=https://pro.edgex.exchange/keyManagement에서확인,api신청필요할듯
+
+# ===== GRVT (mpdex, hl=False) =====
+GRVT_API_KEY=https://grvt.io/exchange/account/api-keys가서발급
+GRVT_ACCOUNT_ID=your_account_id
+GRVT_SECRET_KEY=https://grvt.io/exchange/account/api-keys가서발급
+
+# ===== Backpack (mpdex, hl=False) =====
+BACKPACK_API_KEY=https://backpack.exchange/portfolio/settings/api-keys가서발급
+BACKPACK_SECRET_KEY=https://backpack.exchange/portfolio/settings/api-keys가서발급
