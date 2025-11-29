@@ -17,3 +17,5 @@ logs/
 .dev/
 *.log*
 .cache/
+.venv/
+build/
