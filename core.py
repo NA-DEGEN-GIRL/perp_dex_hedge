@@ -289,6 +289,13 @@ class ExchangeManager:
                     except Exception as e:
                         print(f"Treadfi login problem {e}")
                         print(f"Treadfi cannot be used")
+                if exchange_platform == "variational":
+                    # 로그인 필요
+                    try:
+                        res = await client.initialize()
+                        print("로그인 성공:", res.get('ok'))
+                    except Exception as e:
+                        print(f"베리나 로그인 문제 {e}")
                     
                 self.exchanges[name] = client
 
@@ -341,6 +348,12 @@ class ExchangeManager:
                     main_wallet_address=os.getenv(f"{u_name}_MAIN_WALLET_ADDRESS"),
                     sub_wallet_address=os.getenv(f"{u_name}_SUB_WALLET_ADDRESS"),
                     account_name=os.getenv(f"{u_name}_ACCOUNT_NAME"),
+                )
+            if exchange_platform.lower() == "variational":
+                return SimpleNamespace(
+                    evm_wallet_address=os.getenv(f"{u_name}_WALLET_ADDRESS"),
+                    session_cookies={"vr_token":os.getenv(f"{u_name}_JWT_TOKEN")},
+                    evm_private_key=os.getenv(f"{u_name}_PRIVATE_KEY"),
                 )
         except Exception as e:
             logger.warning(f"[{name}] env key parse failed: {e}")

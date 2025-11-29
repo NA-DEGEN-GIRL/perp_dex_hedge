@@ -142,6 +142,14 @@ TREADFI_HL_ACCOUNT_NAME="tread.fi에서 생성한 계정 이름"  # 필요
 TREADFI_HL_CSRF_TOKEN="세션 쿠키"           # (선택) 있으면 로그인 불필요
 TREADFI_HL_SESSION_ID="세션 쿠키"           # (선택) 있으면 로그인 불필요
 
+# Variational 
+# 지갑 주소만 넣어도, http://127.0.0.1:7469/ 로컬서버에서 로그인 가능
+# 깨름칙 한 경우 variational 사이트에서 접속후 cookie의 vr-token값을 입력 하면됨
+# 굳이 private key를 안넣어도 되는데 다 귀찮으면 프빗키만 넣어도 되긴함
+VARIATIONAL_WALLET_ADDRESS="지갑주소" # 반드시 필요
+VARIATIONAL_JWT_TOKEN="session cookies의 vr-token값" # 생략가능, skip시 로그인창으로 로그인 해야함
+VARIATIONAL_PRIVATE_KEY="지갑 프빗키" # 생략가능, 생략시 로그인창으로 로그인 해야함
+
 # ===== Lighter (mpdex) =====
 # account_id 확인:
 # 1) https://app.lighter.xyz/explorer → 본인 주소 → 거래 상세의 account_index
@@ -186,6 +194,7 @@ BACKPACK_SECRET_KEY=https://backpack.exchange/portfolio/settings/api-keys에서_
 - `exchange=superstack`: HL이지만 지갑 provider 서명 경로
 - `exchange=treadfi.hyperliquid`: **하이브리드** — 조회=HL, 주문=mpdex
 - 비‑HL(mpdex): `lighter | paradex | edgex | grvt | backpack`
+- show = True 로 한 카드들을 초기에 보여줌, 필요없을 경우 show = False로 해당 .env 관련 설정을 삭제 혹은 =오른쪽 부분을 지우면됨. 예시, VARIATIONAL_WALLET_ADDRESS=
 
 예시:
 
@@ -198,6 +207,10 @@ BACKPACK_SECRET_KEY=https://backpack.exchange/portfolio/settings/api-keys에서_
 [hl]
 show = False
 # 설명: hl 섹션은 빌더코드를 사용하지 않는 일반 예시
+
+[variational]
+show = True
+exchagne = variational
 
 # Tread.fi (조회=HL, 주문=mpdex)
 [treadfi_hl]
