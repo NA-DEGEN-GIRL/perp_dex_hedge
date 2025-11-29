@@ -8,6 +8,10 @@
 
 ---
 
+## 다슬기 & 달팽이용 실행 파일 제공
+- 윈도우용 PerpDexHedge.exe 를 그냥 실행시키면 됩니다.
+- **.env / config.ini 설정은 하셔야 합니다.**
+
 ## 지원 거래소
 - hyperliquid 기반: 옵션으로 추가 가능, builder code와 fee만 알면됩니다.
   - 기본제공: mass, lit, dexari, liquid, based, supercexy, bullpen, dreamcash
