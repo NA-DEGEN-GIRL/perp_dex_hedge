@@ -9,6 +9,14 @@
 
 ---
 
+## 지원 거래소
+- hyperliquid 기반: 옵션으로 추가 가능, builder code와 fee만 알면됩니다.
+ - 기본제공: mass, lit, dexari, liquid, based, supercexy, bullpen, dreamcash
+ - hyperliquid 기반이지만 특수 케이스: superstack, treadfi_hl
+- 비 hyperliquid 거래소들: lighter, liquid-lighter, edgeX, paradex, grvt, backpack, variational
+
+---
+
 ## 기능 요약
 
 - 다수의 DEX(HL + 비‑HL) 동시 거래
@@ -450,11 +458,11 @@ python main.py
 - ✅ urwid UI 안정화 / HL 가격 공유 / Exchanges 토글
 - ✅ REPEAT 즉시 중단 / Tab·Shift+Tab 탐색 안정화
 - ✅ CLOSE ALL / BURN 기능
-- ✅ 비‑HL(mpdex) 거래소: Lighter/Paradex/Edgex/GRVT/Backpack 연동
+- ✅ 비‑HL(mpdex) 거래소: Lighter/Paradex/Edgex/GRVT/Backpack/Variational 연동
 - ✅ XYZ 지원
 - ✅ FLX / VNTL 지원 (USDH 페어)
 - ✅ superstack / tread.fi 지원
 - ✅ spot USDC 잔고 표기
 - 🔜 USDC <-> USDH swap 편의기능
-- 🔜 비‑HL(mpdex) 거래소: Pacifica/Variational 연동
+- 🔜 비‑HL(mpdex) 거래소: Pacifica 연동
 - 🔜 limit 오더 관리
