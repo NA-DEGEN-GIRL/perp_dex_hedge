@@ -1,7 +1,7 @@
 # Hyperliquid Multi‑DEX Trader (urwid TUI)
 ![스크린샷](screenshot.png)
 
-여러 Hyperliquid 엔진 기반 Perp DEX + mpdex 기반 비‑HL DEX(Lighter/Paradex/Edgex/GRVT/Backpack)를 하나의 터미널 UI(urwid)에서 동시에 거래하는 앱입니다.
+여러 Hyperliquid 엔진 기반 Perp DEX + mpdex 기반 비‑HL DEX(Lighter/Paradex/Edgex/GRVT/Backpack/Variational)를 하나의 터미널 UI(urwid)에서 동시에 거래하는 앱입니다.
 
 - GitHub: https://github.com/NA-DEGEN-GIRL/perp_dex_hedge
 - 기본 UI: urwid
