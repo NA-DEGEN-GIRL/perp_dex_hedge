@@ -1,0 +1,4 @@
+git clone --filter=blob:none --sparse https://github.com/NA-DEGEN-GIRL/multi-perp-dex.git
+git sparse-checkout set 폴더1 폴더2
+git sparse-checkout add 폴더3 폴더4
+set 하면 재설정임

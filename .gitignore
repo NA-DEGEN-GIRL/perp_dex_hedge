@@ -22,3 +22,4 @@ logs/
 .venv/
 build/
 dist/
+multi-perp-dex
