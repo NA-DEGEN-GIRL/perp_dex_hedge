@@ -769,17 +769,6 @@ class UrwidApp:
             except Exception:
                 pass
 
-            def _apply_max_lev(loop_, data):
-                try:
-                    asyncio.get_event_loop().create_task(
-                        self.service.ensure_hl_max_leverage_auto(n, sym)
-                    )
-                except Exception as e:
-                    logger.info(f"[LEVERAGE] ensure_hl_max_leverage_auto({n},{sym}) failed: {e}")
-            
-            # 0.4초 디바운스
-            self._lev_alarm_by_ex[n] = self.loop.set_alarm_in(0.4, _apply_max_lev)
-
         urwid.connect_signal(t_edit.base_widget, "change", on_ticker_changed)
 
         # 타입 토글
@@ -1087,7 +1076,7 @@ class UrwidApp:
 
                 px_str = self.current_price or "..."
                 dex = self.header_dex
-                scope = "hl" if dex == "HL" else dex
+                #scope = "hl" if dex == "HL" else dex
                 
                 # HL 우선 선택(없으면 가시 HL로 폴백)
                 ex = self.mgr.first_hl_exchange()
@@ -1100,21 +1089,12 @@ class UrwidApp:
                     except Exception:
                         ex = None
 
-                ws = await self.service._get_ws_for_scope(scope, ex) if ex else None
-
-                if ws and ex:
+                if ex:
                     # HL: 키 생성
                     sym = _compose_symbol(dex, coin)  # HL → 'BTC', HIP-3 → 'dex:COIN'
-                    px_val = ws.get_price(sym)
-                    if px_val is None and dex == "HL":
-                        px_val = ws.get_spot_px_base(coin)
-
+                    px_val = await ex.get_mark_price(sym)
                     if px_val is not None:
-                        # [FIX] 단순 포맷터 사용
                         px_str = self.service.format_price_simple(float(px_val))
-                else:
-                    # [FIX] 서비스가 단순 포맷으로 반환
-                    px_str = await self.service.fetch_price(next(iter(self.mgr.all_names()), ""), _compose_symbol(dex, coin))
                 
                 self.current_price = px_str
                 self.price_text.set_text(("info", f"Price: {self.current_price}"))
@@ -1147,11 +1127,10 @@ class UrwidApp:
 
         while True:
             try:
-                # [수정] 수동으로 락 획득
                 await lock.acquire()
 
                 now = time.monotonic()
-                exchange_platform = self.mgr.get_meta(name).get("exchange","hyperliquid")
+                exchange_platform = self.mgr.get_meta(name).get("exchange", "hyperliquid")
                 try:
                     STATUS_COLLATERAL_INTERVAL = RATE.STATUS_COLLATERAL_INTERVAL[exchange_platform]
                     STATUS_POS_INTERVAL = RATE.STATUS_POS_INTERVAL[exchange_platform]
@@ -1169,58 +1148,43 @@ class UrwidApp:
                 dex = self.dex_by_ex.get(name, "HL")
                 sym = _compose_symbol(dex, sym_coin)
                 is_hl_like = self.mgr.is_hl_like(name)  # <-- 변경
+                
+                ex = self.mgr.get_exchange(name)
+                is_ws = hasattr(ex,"fetch_by_ws") and getattr(ex, "fetch_by_ws",False)
 
-                # 가격/quote 업데이트 (WS 캐시)
-                if is_hl_like:
+                if need_price or is_ws:
                     try:
-                        scope = "hl" if dex == "HL" else dex
-                        ws = await self.service._get_ws_for_scope(scope, self.mgr.get_exchange(name))
+                        px_str = await self.service.fetch_price(name, sym)
+                        self.card_price_text[name].set_text(("info", f"Price: {px_str}"))
+                        # 주입용 숫자 캐시
+                        try:
+                            self.card_last_price[name] = float(str(px_str).replace(",", ""))
+                        except Exception:
+                            pass
+                        self._last_card_price_at[name] = now  # [추가] 타임스탬프 갱신
+                    except Exception as e:
+                        logger.debug(f"[UI] price update for {name} failed: {e}")
+                        self.card_price_text[name].set_text(("pnl_neg", "Price: Error"))
 
-                        if ws:
-                            px_val = ws.get_price(sym)
-                            if px_val is None:
-                                px_val = ws.get_spot_px_base(sym_coin)
-
-                            if px_val is not None:
-                                px_str = self.service.format_price_simple(float(px_val))
-                                self.card_price_text[name].set_text(("info", f"Price: {px_str}"))
-                                self.card_last_price[name] = float(px_val)
-
-                            if name in self.card_quote_text:
-                                quote_str = ws.get_collateral_quote() or "USDC"
-                                self.card_quote_text[name].set_text(("quote_color", quote_str))
+                if is_hl_like:
+                    # 여길 업데이트 해야함 how?
+                    try:
+                        if name in self.card_quote_text:
+                            pass
+                            #quote_str = ws.get_collateral_quote() or "USDC"
+                            #self.card_quote_text[name].set_text(("quote_color", quote_str))
                     except Exception as px_e:
                         logger.debug(f"[UI] Price update for {name} failed: {px_e}")
                         self.card_price_text[name].set_text(("pnl_neg", "Price: Error"))
-                else:
-                    if need_price:
-                        try:
-                            px_str = await self.service.fetch_price(name, sym)
-                            self.card_price_text[name].set_text(("info", f"Price: {px_str}"))
-                            # 주입용 숫자 캐시
-                            try:
-                                self.card_last_price[name] = float(str(px_str).replace(",", ""))
-                            except Exception:
-                                pass
-                            self._last_card_price_at[name] = now  # [추가] 타임스탬프 갱신
-                        except Exception as e:
-                            logger.debug(f"[UI] non-HL price update for {name} failed: {e}")
-                            self.card_price_text[name].set_text(("pnl_neg", "Price: Error"))
-
-                if is_hl_like:
-                    # websocket so no need to worry
-                    need_collat = True
-                    need_pos = True
 
                 pos_str, col_str, col_val = await self.service.fetch_status(name, sym, need_balance=need_collat, need_position=need_pos)
 
-                if need_collat:
+                if need_collat or is_ws:
                     self.collateral[name] = float(col_val)
-                    if not is_hl_like:
-                        self._last_balance_at[name] = now
-                        self.total_text.set_text(("info", f"Total: {self._collateral_sum():,.1f} USDC"))
+                    self._last_balance_at[name] = now
+                    self.total_text.set_text(("info", f"Total: {self._collateral_sum():,.1f} USDC"))
                 
-                if need_pos and not is_hl_like:
+                if need_pos:
                     self._last_pos_at[name] = now
 
                 pos_str = self._inject_usdc_value_into_pos(name, pos_str)
@@ -1242,6 +1206,7 @@ class UrwidApp:
                     self.info_text[name].set_text([('pnl_neg', "Status Error: Check logs")])
                     self._request_redraw()
                 await asyncio.sleep(1.0) # 에러 시 잠시 대기
+
             finally:
                 # [수정] 무조건 락 해제
                 if lock.locked():
@@ -2226,9 +2191,11 @@ class UrwidApp:
             
             # DEX 목록 가져와 헤더/카드 UI 동적 구성 (비동기)
             try:
-                dexs = await self.service.fetch_perp_dexs()
-                self.dex_names = ["HL"] + dexs
-                # [중요 수정] Frame.header(LineBox)의 original_widget을 교체해야 실제로 헤더가 재그려집니다.
+                #dexs = await self.service.fetch_perp_dexs()
+                first_hl = self.mgr.first_hl_exchange()
+                dexs = [x.upper() for x in first_hl.dex_list]
+                self.dex_names = dexs #["HL"] + dexs
+                # Frame.header(LineBox)의 original_widget을 교체해야 실제로 헤더가 재그려집니다.
                 # 기존 코드는 self.header(original_widget 아님)에 새 Pile을 할당해 효과가 없었습니다.
                 new_header_pile = self._hdr_widgets()  # 새 헤더 Pile 생성
                 frame = self.loop.widget
@@ -2287,38 +2254,10 @@ class UrwidApp:
                 except Exception:
                     pass
 
-                def _apply_max_lev_all(loop_, data):
-                    sym = _compose_symbol(self.header_dex, self.symbol)
-                    async def _apply_all():
-                        tasks = []
-                        for ex_name in self.mgr.all_names():
-                            if self.mgr.get_meta(ex_name).get("hl", False) and self.mgr.get_exchange(ex_name):
-                                tasks.append(self.service.ensure_hl_max_leverage_auto(ex_name, sym))
-                        if tasks:
-                            await asyncio.gather(*tasks, return_exceptions=True)
-                    try:
-                        asyncio.get_event_loop().create_task(_apply_all())
-                    except Exception as e:
-                        logger.info(f"[LEVERAGE] ensure_hl_max_leverage_auto(all) failed: {e}")
-
-                # 0.4초 뒤 한 번만 호출(빠른 타이핑 방지)
-                self._ticker_lev_alarm = self.loop.set_alarm_in(0.4, _apply_max_lev_all)
-
             urwid.connect_signal(self.ticker_edit, "change", ticker_changed)
             urwid.connect_signal(self.allqty_edit, 'change', lambda _, new: self._apply_to_all_qty(new))
 
             self._request_redraw()
-
-            try:
-                sym = _compose_symbol(self.header_dex, self.symbol)
-                tasks = []
-                for ex_name in self.mgr.all_names():
-                    if self.mgr.get_meta(ex_name).get("hl", False) and self.mgr.get_exchange(ex_name):
-                        tasks.append(self.service.ensure_hl_max_leverage_auto(ex_name, sym))
-                if tasks:
-                    await asyncio.gather(*tasks, return_exceptions=True)
-            except Exception as e:
-                logger.info(f"[LEVERAGE] initial ensure_hl_max_leverage_auto skipped: {e}")
 
         loop.run_until_complete(_bootstrap())
         self.loop.set_alarm_in(0, self._set_initial_focus)

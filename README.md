@@ -26,10 +26,7 @@
 
 ---
 
-## 개초보용 매뉴얼 ##
-https://github.com/NA-DEGEN-GIRL/perp_dex_hedge/blob/main/README.beginner.md
-
-## 다슬기 & 달팽이용 실행 파일 제공
+## 다슬기 & 달팽이용 실행 파일 제공 (업데이트시 제공이 안될수도 있음)
 - 윈도우용 PerpDexHedge.exe 를 그냥 실행시키면 됩니다.
 - **.env / config.ini 설정은 하셔야 합니다.**
 
@@ -124,55 +121,48 @@ cp .env.example .env
 
 ```env
 # HL (일반 Hyperliquid 경로, 빌더코드 미사용 예시)
-HL_WALLET_ADDRESS=0x...
-HL_AGENT_API_KEY=
-HL_PRIVATE_KEY=0x...
-HL_IS_SUB=1   # ← 서브계정이면 1 or true 로 설정
+HL_WALLET_ADDRESS="트레이딩하는 지갑 주소, sub-account 사용시 해당 주소 입력"
+HL_AGENT_API_KEY="api 생성시 나오는 주소"
+HL_AGENT_PRIVATE_KEY="api 생성시 빨간색으로 표시되어 나옴"
+HL_IS_SUB=1   # ← 서브계정이면 1 or true 로 설정, 아닌경우 그냥 생략 가능
 
 # Lit (HL)
 LIT_WALLET_ADDRESS=0x...
-LIT_AGENT_API_KEY=
-LIT_PRIVATE_KEY=0x...
+LIT_AGENT_API_KEY=0x...
+LIT_AGENT_PRIVATE_KEY=0x...
 
 # Dexari (HL)
 DEXARI_WALLET_ADDRESS=0x...
-DEXARI_AGENT_API_KEY=
-DEXARI_PRIVATE_KEY=0x...
+DEXARI_AGENT_API_KEY=0x...
+DEXARI_AGENT_PRIVATE_KEY=0x...
 
 # Liquid (HL)
 LIQUID_WALLET_ADDRESS=0x...
-LIQUID_AGENT_API_KEY=
-LIQUID_PRIVATE_KEY=0x...
+LIQUID_AGENT_API_KEY=0x...
+LIQUID_AGENT_PRIVATE_KEY=0x...
 
 # Supercexy (HL)
 SUPERCEXY_WALLET_ADDRESS=0x...
-SUPERCEXY_AGENT_API_KEY=
-SUPERCEXY_PRIVATE_KEY=0x...
+SUPERCEXY_AGENT_API_KEY=0x...
+SUPERCEXY_AGENT_PRIVATE_KEY=0x...
 
 # BasedOne (HL)
 BASEDONE_WALLET_ADDRESS=0x...
-BASEDONE_AGENT_API_KEY=
-BASEDONE_PRIVATE_KEY=0x...
+BASEDONE_AGENT_API_KEY=0x...
+BASEDONE_AGENT_PRIVATE_KEY=0x...
 
 # Superstack (HL, 자체 지갑 provider 사용)
 # 지갑 주소는 HL 주소를 사용하며, API 키는 superstack 포털에서 발급
 SUPERSTACK_WALLET_ADDRESS=0x...
-SUPERSTACK_API_KEY=sk_...
+SUPERSTACK_AGENT_API_KEY=sk_...
 
-# Tread.fi: hyperliquid, sub account를 안쓰면 main과 sub 주소를 동일히 사용
-# ** sub account를 쓰면 main address와 sub account의 주소를 구분지음
-# private key는 main address의 private key이며, **생략가능**
-# private key 생략시, 로그인 **혹은** 저장된 세션값 사용
-# session cookies 값을 수동으로 넣을수도 있음
-# session cookies 값을 찾으려면, tread.fi 에서 로그인후 network 탭에서 get_order_table 등의 header에서 찾을수있음
-# 간편히 TREADFI_HL_MAIN_WALLET_ADDRESS 과 TREADFI_HL_SUB_WALLET_ADDRESS 만 입력 후 http://127.0.0.1:6974/ (로컬서버임 안전함) 접속해서 로그인만 하는게 나음
-# 프로그램 실행시 위 주소로 가서 로그인하라고 뜸. 서명하면(텍스트 서명이라 안전함) 로그인 자동으로 실행됨
-TREADFI_HL_MAIN_WALLET_ADDRESS="메인 지갑 주소"     # 로그인/서명 주체
-TREADFI_HL_SUB_WALLET_ADDRESS="서브 계정 주소"      # 실제 주문/포지션 지갑
-TREADFI_HL_PRIVATE_KEY="메인 지갑의 프라이빗키"      # (선택) 자동 로그인용
-TREADFI_HL_ACCOUNT_NAME="tread.fi에서 생성한 계정 이름"  # 필요
-TREADFI_HL_CSRF_TOKEN="세션 쿠키"           # (선택) 있으면 로그인 불필요
-TREADFI_HL_SESSION_ID="세션 쿠키"           # (선택) 있으면 로그인 불필요
+# tread.fi with hyperliquid
+TREADFI_HL_LOGIN_WALLET_ADDRESS="로그인할때 쓰는 주소" # 로그인 때문에 필요
+TREADFI_HL_LOGIN_WALLET_PRIVATE_KEY="로그인 지갑 프빗키" # 생략 가능, 자동 로그인을 원하면 넣어도댐
+TREADFI_HL_TRADING_WALLET_ADDRESS="거래 계정 주소" # 실제 주문이 들어갈 주소
+TREADFI_HL_ACCOUNT_NAME="tread.fi 에서 하리 계정 생성시 이름" # 필요
+TREADFI_HL_CSRF_TOKEN="쿠키설정" # 생략가능, 넣을시 로그인 따로 안함
+TREADFI_HL_SESSION_ID="쿠키설정" # 생략가능, 넣을시 로그인 따로 안함
 
 # Variational 
 # 지갑 주소만 넣어도, http://127.0.0.1:7469/ 로컬서버에서 로그인 가능
