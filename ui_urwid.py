@@ -8,6 +8,7 @@ import urwid
 from urwid.widget.pile import PileWarning  # urwid 레이아웃 경고 제거용
 from ui_scroll import ScrollBar, ScrollableListBox, hook_global_mouse_events
 
+
 from core import ExchangeManager
 from trading_service import TradingService
 import sys
@@ -17,7 +18,72 @@ import re
 import time
 from types import SimpleNamespace
 import logging
+from logging.handlers import RotatingFileHandler
+
 logger = logging.getLogger(__name__)
+def _ensure_ts_logger():
+    """
+    trading_service.py 전용 파일 핸들러 설정.
+    - 기본 파일: ./ts.log (절대경로로 기록)
+    - 기본 레벨: INFO
+    - 기본 전파: False (루트 핸들러로 중복 기록 방지)
+    환경변수:
+      PDEX_TS_LOG_FILE=/path/to/ts.log
+      PDEX_TS_LOG_LEVEL=DEBUG|INFO|...
+      PDEX_TS_LOG_CONSOLE=0|1
+      PDEX_TS_PROPAGATE=0|1
+    """
+    # 이미 붙어 있으면 중복 추가 금지
+    if getattr(logger, "_ts_logger_attached", False):
+        return
+
+    lvl_name = os.getenv("PDEX_TS_LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, lvl_name, logging.INFO)
+    log_file = "ui.log"
+    to_console = os.getenv("PDEX_TS_LOG_CONSOLE", "0") == "1"
+    propagate = os.getenv("PDEX_TS_PROPAGATE", "0") == "1"
+
+    # 포맷
+    fmt = logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s")
+
+    # 기존에 동일 파일 핸들러가 붙어 있으면 제거(핫리로드 대비)
+    to_remove = []
+    for h in logger.handlers:
+        if isinstance(h, RotatingFileHandler):
+            try:
+                if os.path.abspath(getattr(h, "baseFilename", "")) == log_file:
+                    to_remove.append(h)
+            except Exception:
+                pass
+    for h in to_remove:
+        logger.removeHandler(h)
+
+    # 파일 핸들러
+    fh = RotatingFileHandler(log_file, maxBytes=5_000_000, backupCount=2, encoding="utf-8")
+    fh.setFormatter(fmt)
+    fh.setLevel(logging.NOTSET)  # 핸들러는 모듈 로거 레벨만 따르도록
+    logger.addHandler(fh)
+
+    # 콘솔 핸들러(옵션)
+    if to_console:
+        sh = logging.StreamHandler()
+        sh.setFormatter(fmt)
+        sh.setLevel(logging.NOTSET)
+        logger.addHandler(sh)
+
+    # 모듈 로거 레벨/전파 설정
+    logger.setLevel(level)
+    logger.propagate = propagate
+
+    # 중복 방지 플래그
+    logger._ts_logger_attached = True
+
+    # 1회 안내 로그(최초 설정 확인용)
+    logger.info("[TS-LOG] attached ts logger level=%s file=%s console=%s propagate=%s",
+                lvl_name, log_file, to_console, propagate)
+
+# 모듈 import 시점에 전용 핸들러를 붙인다.
+_ensure_ts_logger()
 
 CARD_HEIGHT = 5
 LOGS_ROWS = 6
@@ -1163,19 +1229,22 @@ class UrwidApp:
                             pass
                         self._last_card_price_at[name] = now  # [추가] 타임스탬프 갱신
                     except Exception as e:
-                        logger.debug(f"[UI] price update for {name} failed: {e}")
+                        logger.info(f"[UI] price update for {name} failed: {e}")
                         self.card_price_text[name].set_text(("pnl_neg", "Price: Error"))
 
                 if is_hl_like:
                     # 여길 업데이트 해야함 how?
                     try:
                         if name in self.card_quote_text:
-                            pass
-                            #quote_str = ws.get_collateral_quote() or "USDC"
-                            #self.card_quote_text[name].set_text(("quote_color", quote_str))
+                            logger.info(f"{name}")
+                            logger.info(f"{sym}")
+                            quote_str = ex.get_perp_quote(sym)
+                            logger.info(f"{quote_str}")
+                            self.card_quote_text[name].set_text(("quote_color", quote_str))
+                            
                     except Exception as px_e:
-                        logger.debug(f"[UI] Price update for {name} failed: {px_e}")
-                        self.card_price_text[name].set_text(("pnl_neg", "Price: Error"))
+                        logger.info(f"[UI] Price update for {name} failed: {px_e}")
+                        self.card_price_text[name].set_text(("pnl_neg", "Price: Error???"))
 
                 pos_str, col_str, col_val = await self.service.fetch_status(name, sym, need_balance=need_collat, need_position=need_pos)
 
