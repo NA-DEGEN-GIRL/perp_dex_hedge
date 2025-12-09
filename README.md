@@ -138,7 +138,7 @@ LIT_WALLET_ADDRESS = 0xabc123...      # 등호 양옆 공백
 HL_AGENT_API_KEY="0xdeadbeef..."      # 따옴표
 A=1234 # 메모                          # 주석
 TREADFI_HL_ACCOUNT_NAME=my account    # 값에 공백
-VARIATIONAL_WALLET_ADDRESS=           # 빈값(미사용 줄은 삭제)
+VARIATIONAL_WALLET_ADDRESS=           # 미사용 줄은 삭제 권장, 사실 빈값은 괜찮음
 ```
 
 - 접두사 규칙: `[섹션명]` → 섹션명을 대문자로 바꿔 **ENV 접두사**로 사용합니다.
