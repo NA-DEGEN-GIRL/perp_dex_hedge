@@ -545,6 +545,7 @@ python main.py
 - ✅ 비‑HL(mpdex) 거래소: Lighter/Paradex/Edgex/GRVT/Backpack/Variational/Pacifica 연동
 - ✅ XYZ 지원
 - ✅ FLX / VNTL 지원 (USDH 페어)
+- ✅ HYNA 지원 (USDE 페어)
 - ✅ superstack / tread.fi 지원
 - ✅ spot USDC 잔고 표기
 - 🔜 다양한 거래소 지속적 확장
