@@ -225,7 +225,7 @@ class FollowableListBox(ScrollableListBox):
         return super().mouse_event(size, event, button, col, row, focus)
 
 RATE = SimpleNamespace(
-    GAP_FOR_INF=0.1, # need small gap for infinite loop
+    GAP_FOR_INF=0.05, # need small gap for infinite loop
     # all for non hl
     STATUS_POS_INTERVAL={"default":0.5, "lighter":2.0},
     STATUS_COLLATERAL_INTERVAL={"default":0.5, "lighter":5.0},
@@ -1192,6 +1192,7 @@ class UrwidApp:
             return
 
         while True:
+            await asyncio.sleep(RATE.GAP_FOR_INF)
             try:
                 await lock.acquire()
 
@@ -1236,10 +1237,10 @@ class UrwidApp:
                     # 여길 업데이트 해야함 how?
                     try:
                         if name in self.card_quote_text:
-                            logger.info(f"{name}")
-                            logger.info(f"{sym}")
+                            #logger.info(f"{name}")
+                            #logger.info(f"{sym}")
                             quote_str = ex.get_perp_quote(sym)
-                            logger.info(f"{quote_str}")
+                            #logger.info(f"{quote_str}")
                             self.card_quote_text[name].set_text(("quote_color", quote_str))
                             
                     except Exception as px_e:

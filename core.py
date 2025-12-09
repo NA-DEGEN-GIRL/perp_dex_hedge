@@ -202,19 +202,24 @@ class ExchangeManager:
             exchange_platform = self.meta.get(name, {}).get("exchange")
             
             try:
-                key = self._build_mpdex_key(name, exchange_platform)
                 print()
+                print(name," is creating...")
+                key = self._build_mpdex_key(name, exchange_platform)
                 if key is None:
                     print(f"[{name}] .env 키가 누락되어 생성 스킵")
                     logger.warning(f"[{name}] .env 키가 누락되어 생성 스킵")
                     continue
-                print(name," is creating...")
+                
                 #print(key)
 
                 client = await create_exchange(exchange_platform.lower(), key)
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.5)
                 try:
                     print("dex_list_check...:",getattr(client,"dex_list"))
+                except:
+                    pass
+                try:
+                    print(client.builder_fee_pair)
                 except:
                     pass
 
@@ -254,6 +259,7 @@ class ExchangeManager:
                 vault_address = wallet_address
                 wallet_address = None
             fee_pair = self._get_fee_rate(name)
+            #print(fee_pair)
 
         try:
             if exchange_platform.lower() == "hyperliquid":

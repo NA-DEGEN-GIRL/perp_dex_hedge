@@ -197,27 +197,28 @@ class TradingService:
 
             idx = 0 if str(order_type).lower() == "limit" else 1
 
+            #logger.info(f"Fee info dex {dex}, idx {idx}, opt {opt}, ")
+            #logger.info(opt.get("base"))
+            #try:
+            #    logger.info(opt.get(dex.lower()) or {})
+            #except:
+            #    pass
+            #logger.info(opt.get("dex") or {})
+
             # 메인 HL: fee_rate만 사용
             if not dex:
                 base_pair = opt.get("base")
                 if isinstance(base_pair, (list, tuple)) and len(base_pair) >= 2:
                     return int(base_pair[idx]), "hl:feeIntPair", (int(base_pair[0]), int(base_pair[1]))
-                # 레거시 단일값 폴백
-                if "feeInt" in opt:
-                    v = int(opt.get("feeInt"))
-                    return v, "hl:legacy:feeInt", (v, v)
                 return None, "hl:none", None
 
-            # HIP-3 DEX: 개별 → 공통 → (폴백) 기본 → 레거시
             # 1) 개별 DEX 페어 (xyz_fee_rate 등)
             pairs_map = opt.get(dex.lower()) or {}
-            if isinstance(pairs_map, dict):
-                p = pairs_map.get(dex.lower())
-                if isinstance(p, (list, tuple)) and len(p) >= 2:
-                    return int(p[idx]), f"dex:{dex.lower()}_fee_rate", (int(p[0]), int(p[1]))
+            if isinstance(pairs_map, (list, tuple)) and len(pairs_map) >= 2:
+                return int(pairs_map[idx]), f"dex:{dex.lower()}_fee_rate", (int(pairs_map[0]), int(pairs_map[1]))
 
             # 2) 공통 DEX 페어 (dex_fee_rate)
-            pair_def = opt.get("dex")
+            pair_def = opt.get("dex") or {}
             if isinstance(pair_def, (list, tuple)) and len(pair_def) >= 2:
                 return int(pair_def[idx]), "dex:dex_fee_rate", (int(pair_def[0]), int(pair_def[1]))
 
