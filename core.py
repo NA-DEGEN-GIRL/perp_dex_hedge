@@ -213,7 +213,7 @@ class ExchangeManager:
                 #print(key)
 
                 client = await create_exchange(exchange_platform.lower(), key)
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.25)
                 try:
                     print("dex_list_check...:",getattr(client,"dex_list"))
                 except:

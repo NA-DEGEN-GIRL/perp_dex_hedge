@@ -13,6 +13,8 @@ from decimal import Decimal, ROUND_HALF_UP #, ROUND_UP, ROUND_DOWN
 #from hl_ws.hl_ws_client import HLWSClientRaw, http_to_wss
 #from superstack_payload import get_superstack_payload
 
+HL_SPOT_STABLES = ["USDC", "USDH", "USDT", "USDE"]
+
 # 모듈 전용 로거
 logger = logging.getLogger(__name__)
 
@@ -329,6 +331,7 @@ class TradingService:
             
             is_ws = hasattr(ex,"fetch_by_ws") and getattr(ex,"fetch_by_ws",False)
             has_spot = False
+            stables = []
 
             if need_balance or is_ws:
                 c = await ex.get_collateral()
@@ -338,15 +341,17 @@ class TradingService:
                 # {'available_collateral': 1816.099087, 'total_collateral': 1816.099087, 'spot': {'USDH': 0.0, 'USDC': 0.0, 'USDT': 0.0}}
                 has_spot = "spot" in c
                 if has_spot:
-                    usdh = c.get("spot",{}).get("USDH",0)
-                    usdc = c.get("spot",{}).get("USDC",0)
-                    usdt = c.get("spot",{}).get("USDT",0)
-
+                    spot_map = c.get("spot", {})
+                    for stable in HL_SPOT_STABLES:
+                        stables.append(float(spot_map.get(stable, 0) or 0.0))
+                    
             if has_spot:
+                spot_parts = [f"{amt:,.1f} {stable}" for stable, amt in zip(HL_SPOT_STABLES, stables)]
+                spot_str = ", ".join(spot_parts) if spot_parts else "—"
                 col_str = (
-                        f"💰 Account Value: [red]PERP[/] {col_val:,.1f} USDC | "
-                        f"[cyan]SPOT[/] {float(usdh):,.1f} USDH, {float(usdc):,.1f} USDC , {float(usdt):,.1f} USDT"
-                    )
+                    f"💰 Account Value: [red]PERP[/] {col_val:,.1f} USDC | "
+                    f"[cyan]SPOT[/] {spot_str}"
+                )
             else:
                 col_str = f"💰 Account Value: {col_val:,.1f} USDC"
 

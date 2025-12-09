@@ -225,7 +225,7 @@ class FollowableListBox(ScrollableListBox):
         return super().mouse_event(size, event, button, col, row, focus)
 
 RATE = SimpleNamespace(
-    GAP_FOR_INF=0.05, # need small gap for infinite loop
+    GAP_FOR_INF=0.1, # need small gap for infinite loop
     # all for non hl
     STATUS_POS_INTERVAL={"default":0.5, "lighter":2.0},
     STATUS_COLLATERAL_INTERVAL={"default":0.5, "lighter":5.0},
