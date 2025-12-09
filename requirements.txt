@@ -144,7 +144,7 @@ jsonalias==0.1.1
     # via solders
 lark==1.3.1
     # via cairo-lang
-lighter-sdk @ git+https://github.com/elliottech/lighter-python.git@c3cecf5153246d17b9fcb83a33f306482ccd88b3
+lighter-sdk @ git+https://github.com/elliottech/lighter-python.git@c9b8de6fd6864ede0fd7fb61d85ffb3614d178c9
     # via mpdex
 marshmallow==3.26.1
     # via
@@ -159,14 +159,16 @@ marshmallow-enum==1.5.1
     # via cairo-lang
 marshmallow-oneofschema==3.2.0
     # via cairo-lang
-mpdex @ git+https://github.com/NA-DEGEN-GIRL/multi-perp-dex.git@b753b33803a8c20cc5c07b876cb6d4bc040b35f4
+mpdex @ git+https://github.com/NA-DEGEN-GIRL/multi-perp-dex.git@3972be032dc47b256e1de262f91deacb87e7b905
     # via -r requirements.in
 mpmath==1.3.0
     # via
     #   cairo-lang
     #   sympy
 msgpack==1.1.2
-    # via -r requirements.in
+    # via
+    #   -r requirements.in
+    #   mpdex
 multidict==6.7.0
     # via
     #   aiohttp
