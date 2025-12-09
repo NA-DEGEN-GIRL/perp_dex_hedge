@@ -102,6 +102,11 @@ mpdex @ git+https://github.com/NA-DEGEN-GIRL/multi-perp-dex.git@master
 cp .env.example .env
 ```
 
+- .env 작성시 주의 사항
+  - = 앞뒤에 공백 있으면 안됨. 예) a=b (o) / a= b (x) / a = b(x) / a =b (x)
+  - "" <- 따옴표도 있으면 안됨 예) a=1234 (O) / a="1234" (x) / a='1234' (x)
+  - comment도 있으면 안됨 예) a=1234 #코멘트 (x), a=1234 (o)
+
 - 접두사 규칙: `[섹션명]` → 섹션명을 대문자로 바꿔 **ENV 접두사**로 사용합니다.
   - 예: `[lit]` → `LIT_WALLET_ADDRESS`, `[dexari]` → `DEXARI_PRIVATE_KEY`
   - 예: `[treadfi_hl]` → `TREADFI_HL_MAIN_WALLET_ADDRESS` …
