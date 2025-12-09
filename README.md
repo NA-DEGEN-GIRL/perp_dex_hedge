@@ -524,7 +524,7 @@ python main.py
 ## 6. 보안 주의
 
 - `.env`는 절대 커밋/공유 금지
-- 가능한 Agent API Key(또는 mpdex API 키) 사용(Private Key 직접 사용 지양)
+- hyperliquid 환경 설정시 **agent api key 와 agent private key 사용**, 지갑의 private key 사용 금지
 - 서버/CI 배포 시 파일 권한/접근 제어 철저
 
 ---
