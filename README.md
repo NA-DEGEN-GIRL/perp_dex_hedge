@@ -102,10 +102,44 @@ mpdex @ git+https://github.com/NA-DEGEN-GIRL/multi-perp-dex.git@master
 cp .env.example .env
 ```
 
-- .env 작성시 주의 사항
-  - = 앞뒤에 공백 있으면 안됨. 예) a=b (o) / a= b (x) / a = b(x) / a =b (x)
-  - "" <- 따옴표도 있으면 안됨 예) a=1234 (O) / a="1234" (x) / a='1234' (x)
-  - comment도 있으면 안됨 예) a=1234 #코멘트 (x), a=1234 (o)
+#### .env 작성 7원칙(초보자용)
+1) 등호(=) 앞뒤에 공백 절대 금지  
+   - 예) `A=B` (O) / `A = B` (X) / `A= B` (X) / `A =B` (X)
+
+2) 값에 따옴표(" ' backtick) 금지  
+   - 예) `KEY=1234` (O) / `KEY="1234"` (X) / `KEY='1234'` (X)
+
+3) 주석(메모) 금지 — 줄 끝에도 쓰지 마세요  
+   - 예) `A=1234` (O) / `A=1234 # 메모` (X)
+
+4) 값에 공백(스페이스) 금지 — 필요하면 밑줄(_) 사용  
+   - 예) `NAME=my_account` (O) / `NAME=my account` (X)
+
+5) 키 이름은 대문자+밑줄 권장, 섹션명과 접두사 맞추기  
+   - `[lit]` → `LIT_*`, `[treadfi_hl]` → `TREADFI_HL_*`
+
+6) 불리언은 `1/0` 또는 `true/false` 사용(소문자 권장)  
+   - 예) `HL_IS_SUB=1` 또는 `HL_IS_SUB=true`
+
+7) 사용하지 않는 거래소 키는 “빈값”으로 두지 말고 줄 자체를 삭제  
+   - 예) `VARIATIONAL_WALLET_ADDRESS=` (X) → 해당 줄 삭제 (O)
+
+#### 올바른/잘못된 예시
+```env
+# 올바른 예 (O)
+LIT_WALLET_ADDRESS=0xabc123...
+HL_AGENT_API_KEY=0xdeadbeef...
+HL_AGENT_PRIVATE_KEY=0xfeedface...
+HL_IS_SUB=1
+TREADFI_HL_ACCOUNT_NAME=my_account
+
+# 잘못된 예 (X)
+LIT_WALLET_ADDRESS = 0xabc123...      # 등호 양옆 공백
+HL_AGENT_API_KEY="0xdeadbeef..."      # 따옴표
+A=1234 # 메모                          # 주석
+TREADFI_HL_ACCOUNT_NAME=my account    # 값에 공백
+VARIATIONAL_WALLET_ADDRESS=           # 빈값(미사용 줄은 삭제)
+```
 
 - 접두사 규칙: `[섹션명]` → 섹션명을 대문자로 바꿔 **ENV 접두사**로 사용합니다.
   - 예: `[lit]` → `LIT_WALLET_ADDRESS`, `[dexari]` → `DEXARI_PRIVATE_KEY`
