@@ -335,11 +335,11 @@ class TradingService:
                 self._last_collateral[exchange_name] = col_val
                 self._last_balance_at[exchange_name] = time.monotonic()
                 # {'available_collateral': 1816.099087, 'total_collateral': 1816.099087, 'spot': {'USDH': 0.0, 'USDC': 0.0, 'USDT': 0.0}}
-                has_spot = hasattr(c, "spot")
+                has_spot = "spot" in c
                 if has_spot:
-                    usdh = c.get("spot").get("USDH",0)
-                    usdc = c.get("spot").get("USDC",0)
-                    usdt = c.get("spot").get("USDT",0)
+                    usdh = c.get("spot",{}).get("USDH",0)
+                    usdc = c.get("spot",{}).get("USDC",0)
+                    usdt = c.get("spot",{}).get("USDT",0)
 
             if has_spot:
                 col_str = (
