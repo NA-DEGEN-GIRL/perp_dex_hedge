@@ -15,14 +15,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import os
 import re
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, Optional, List
-
 from logging.handlers import RotatingFileHandler
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -35,7 +33,103 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# 로깅 설정 (ui_urwid.py 의 _ensure_ts_logger 와 동일 패턴)
+# 전역 UI 설정 (폰트/테마)
+# ---------------------------------------------------------------------------
+
+# 코드/환경에서 쉽게 조절할 수 있도록 상수 + ENV 제공
+UI_FONT_FAMILY = os.getenv("PDEX_UI_FONT_FAMILY", "Noto Sans CJK KR")        # 예: "Noto Sans CJK KR"
+UI_FONT_SIZE = int(os.getenv("PDEX_UI_FONT_SIZE", "18"))     # 전체 기본 폰트 크기(pt)
+UI_THEME = os.getenv("PDEX_UI_THEME", "dark").lower()        # "light" 또는 "dark"
+
+
+def _apply_app_style(app: QtWidgets.QApplication) -> None:
+    """
+    앱 전체에 폰트/테마 적용.
+    - 폰트는 환경 변수 또는 기본 값 사용
+    - 테마는 Fusion 기반 light/dark 두 가지
+    """
+    # 스타일은 Fusion 으로 통일
+    app.setStyle("Fusion")
+
+    # 폰트 설정
+    font = app.font()
+    if UI_FONT_FAMILY:
+        font.setFamily(UI_FONT_FAMILY)
+    if UI_FONT_SIZE > 0:
+        font.setPointSize(UI_FONT_SIZE)
+    app.setFont(font)
+
+    # 색상 테마 (라이트/다크)
+    if UI_THEME == "dark":
+        palette = QtGui.QPalette()
+        palette.setColor(QtGui.QPalette.Window, QtGui.QColor(53, 53, 53))
+        palette.setColor(QtGui.QPalette.WindowText, QtCore.Qt.white)
+        palette.setColor(QtGui.QPalette.Base, QtGui.QColor(35, 35, 35))
+        palette.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor(53, 53, 53))
+        palette.setColor(QtGui.QPalette.ToolTipBase, QtCore.Qt.white)
+        palette.setColor(QtGui.QPalette.ToolTipText, QtCore.Qt.white)
+        palette.setColor(QtGui.QPalette.Text, QtCore.Qt.white)
+        palette.setColor(QtGui.QPalette.Button, QtGui.QColor(53, 53, 53))
+        palette.setColor(QtGui.QPalette.ButtonText, QtCore.Qt.white)
+        palette.setColor(QtGui.QPalette.BrightText, QtCore.Qt.red)
+        palette.setColor(QtGui.QPalette.Link, QtGui.QColor(42, 130, 218))
+        palette.setColor(QtGui.QPalette.Highlight, QtGui.QColor(42, 130, 218))
+        palette.setColor(QtGui.QPalette.HighlightedText, QtCore.Qt.black)
+        # FIX: placeholder 색도 어두운 배경에서 보이도록
+        palette.setColor(QtGui.QPalette.PlaceholderText, QtGui.QColor(160, 160, 160))
+        app.setPalette(palette)
+
+    # 전체 스타일시트
+    base_font_size = UI_FONT_SIZE
+    log_font_size = max(UI_FONT_SIZE - 1, 8)
+
+    # FIX: 한글 + 이모지까지 고려한 폰트 fallback 체인
+    font_families: List[str] = []
+    if UI_FONT_FAMILY:
+        font_families.append(UI_FONT_FAMILY)
+    # 자주 쓰이는 이모지/시스템 폰트들 (있으면 사용, 없으면 무시됨)
+    font_families += [
+        "Noto Color Emoji",
+        "Segoe UI Emoji",
+        "Apple Color Emoji",
+        "Noto Emoji",
+        "EmojiOne Color",
+        "Sans"
+    ]
+    css_font_families = ", ".join(f'"{f}"' for f in font_families)
+
+    style = f"""
+    QWidget {{
+        font-size: {base_font_size}pt;
+        font-family: {css_font_families};
+    }}
+    QGroupBox {{
+        font-weight: bold;
+        border: 1px solid #999;
+        border-radius: 4px;
+        margin-top: 8px;
+    }}
+    QGroupBox::title {{
+        subcontrol-origin: margin;
+        left: 8px;
+        padding: 0px 4px;
+    }}
+    QPushButton {{
+        padding: 4px 10px;
+    }}
+    QPushButton:disabled {{
+        color: #777;
+    }}
+    QPlainTextEdit, QTextEdit {{
+        font-size: {log_font_size}pt;
+        font-family: {css_font_families};
+    }}
+    """
+    app.setStyleSheet(style)
+
+
+# ---------------------------------------------------------------------------
+# 로깅 설정
 # ---------------------------------------------------------------------------
 
 def _ensure_ts_logger() -> None:
@@ -87,12 +181,8 @@ _ensure_ts_logger()
 
 
 # ---------------------------------------------------------------------------
-# 공통 상수/유틸 (ui_urwid.py 에서 가져와 단순화)
+# 공통 상수/유틸
 # ---------------------------------------------------------------------------
-
-CARD_HEIGHT = 5   # urwid 시절 카드 높이 개념 (Qt에선 참고용)
-LOGS_ROWS = 6     # 레이아웃 설계용 참고값
-SWITCHER_ROWS = 5
 
 RATE = {
     "GAP_FOR_INF": 0.1,  # 무한 루프 gap
@@ -113,11 +203,7 @@ RATE = {
 
 
 def _normalize_symbol_input(sym: str) -> str:
-    """
-    사용자 입력 심볼 정규화:
-    - HIP-3 'dex:coin' → 'COIN_UPPER'
-    - 일반 HL        → 'SYMBOL_UPPER'
-    """
+    """사용자 입력 심볼 정규화."""
     if not sym:
         return ""
     s = sym.strip()
@@ -128,9 +214,7 @@ def _normalize_symbol_input(sym: str) -> str:
 
 
 def _compose_symbol(dex: str, coin: str) -> str:
-    """
-    dex가 'HL'이면 coin(upper)만, HIP-3이면 'dex:COIN'으로 합성.
-    """
+    """dex가 'HL'이면 coin(upper)만, HIP-3이면 'dex:COIN'으로 합성."""
     coin_u = (coin or "").upper()
     if dex and dex != "HL":
         return f"{dex.lower()}:{coin_u}"
@@ -138,10 +222,7 @@ def _compose_symbol(dex: str, coin: str) -> str:
 
 
 def _strip_bracket_markup(s: str) -> str:
-    """
-    '[green]LONG[/] 0.1 | PnL: [red]-1.23[/]' 형태에서 색 태그 제거.
-    (Qt 텍스트는 일단 색 없이 plain text 로 표시)
-    """
+    """'[green]LONG[/] ...' 같은 색 태그 제거."""
     return re.sub(r"\[[a-zA-Z_\/]+\]", "", s)
 
 
@@ -149,12 +230,10 @@ def _inject_usdc_value_into_pos(price: Optional[float], pos_str: str) -> str:
     """
     pos_str 예: '📊 [green]LONG[/] 0.12345 | PnL: [red]-1.23[/]'
     → '📊 LONG 0.12345 (3,456.8 USDC) | PnL: -1.23'
-    price 가 없으면 원문 유지.
     """
     if price is None:
         return _strip_bracket_markup(pos_str)
 
-    # 닫는 브래킷 뒤 숫자만 캡처 (ui_urwid.py 의 로직 단순화 버전)
     m = re.search(r"\]\s*([+-]?\d+(?:\.\d+)?)(?=\s*\|\s*PnL:)", pos_str)
     if not m:
         return _strip_bracket_markup(pos_str)
@@ -192,76 +271,221 @@ class ExchangeState:
 
 
 # ---------------------------------------------------------------------------
+# 보조 클래스: DEX 콤보박스
+# ---------------------------------------------------------------------------
+
+class DexComboBox(QtWidgets.QComboBox):
+    """
+    DEX 선택용 콤보박스.
+    기본 QComboBox 동작은 그대로 두고,
+    팝업 열림/닫힘 시그널만 추가로 발행한다.
+    """
+    popupOpened = QtCore.Signal()
+    popupClosed = QtCore.Signal()
+
+    def showPopup(self) -> None:
+        self.popupOpened.emit()
+        super().showPopup()
+
+    def hidePopup(self) -> None:
+        self.popupClosed.emit()
+        super().hidePopup()
+
+
+# ---------------------------------------------------------------------------
+# stdout/stderr → UI 콘솔 리다이렉터
+# ---------------------------------------------------------------------------
+
+class EmittingStream(QtCore.QObject):
+    text_written = QtCore.Signal(str)
+
+    def write(self, text: str) -> int:  # type: ignore[override]
+        if text:
+            self.text_written.emit(str(text))
+        return len(text)
+
+    def flush(self) -> None:  # type: ignore[override]
+        pass
+
+
+# ---------------------------------------------------------------------------
 # Qt 위젯: 거래소 카드 (한 거래소당 한 장)
 # ---------------------------------------------------------------------------
 
 class ExchangeCardWidget(QtWidgets.QGroupBox):
     """
     한 거래소 카드 위젯.
-    - [EXCHANGE]  T/Q/P, MKT/LMT, L/S/OFF, EX
+    - [EXCHANGE]  T/Q/P, Order Type, Long/Short/OFF, Execute
     - Price, Quote, Builder Fee, Position/Collateral 정보 표시
     """
-    execute_clicked = QtCore.Signal(str)        # ex_name
+    execute_clicked = QtCore.Signal(str)           # ex_name
     long_clicked = QtCore.Signal(str)
     short_clicked = QtCore.Signal(str)
     off_clicked = QtCore.Signal(str)
-    order_type_toggled = QtCore.Signal(str)     # ex_name
-    dex_changed = QtCore.Signal(str, str)       # ex_name, dex
-    ticker_changed = QtCore.Signal(str, str)    # ex_name, new_ticker
+    order_type_changed = QtCore.Signal(str, str)   # ex_name, "market"/"limit"
+    dex_changed = QtCore.Signal(str, str)          # ex_name, dex
+    ticker_changed = QtCore.Signal(str, str)       # ex_name, new_ticker
 
-    def __init__(self, ex_name: str, dex_choices: List[str], parent: Optional[QtWidgets.QWidget] = None):
+    def __init__(self, ex_name: str, dex_choices: List[str],
+                 parent: Optional[QtWidgets.QWidget] = None):
         super().__init__(parent)
         self.ex_name = ex_name
-        self.setTitle(f"[{ex_name.upper()}]")
+
+        self.setTitle(f"")
 
         self._dex_choices = dex_choices[:] or ["HL"]
+
+        # NEW: 카드 안쪽 제목 라벨
+        self.title_label = QtWidgets.QLabel(f"[{ex_name.upper()}]")
+        self.title_label.setStyleSheet("""
+            QLabel {
+                color: #ffeb3b;
+                font-weight: bold;
+            }
+        """)
 
         # --- 위젯 생성 ---
         self.ticker_edit = QtWidgets.QLineEdit()
         self.qty_edit = QtWidgets.QLineEdit()
         self.price_edit = QtWidgets.QLineEdit()
+        # FIX: placeholder 는 set_order_type 에서 제어 (여기선 설정하지 않음)
 
-        self.order_type_btn = QtWidgets.QPushButton("MKT")
-        self.order_type_btn.setCheckable(True)
+        # Order Type: Market / Limit
+        self.order_type_combo = QtWidgets.QComboBox()
+        self.order_type_combo.addItems(["Market", "Limit"])
 
-        self.long_btn = QtWidgets.QPushButton("L")
-        self.short_btn = QtWidgets.QPushButton("S")
-        self.off_btn = QtWidgets.QPushButton("OFF")
-        self.exec_btn = QtWidgets.QPushButton("EX")
+        # FIX: Type 콤보도 리스트 뷰 클릭 시 자동 닫힘
+        self.order_type_combo.view().pressed.connect(
+            lambda idx: QtCore.QTimer.singleShot(0, self.order_type_combo.hidePopup)
+        )
+
+        # FIX: 버튼 텍스트/컬러/크기 정리
+        self.long_btn = QtWidgets.QPushButton("Long")
+        self.short_btn = QtWidgets.QPushButton("Short")
+        self.off_btn = QtWidgets.QPushButton("Off")
+        self.exec_btn = QtWidgets.QPushButton("Execute")
+
+        self.exec_btn.setAutoDefault(False)
+        self.exec_btn.setDefault(False)
+
+        # 버튼 색상 스타일 (개별 위젯에 적용)
+        self.long_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2e7d32;
+                color: white;
+                font-weight: bold;
+            }
+            QPushButton:disabled {
+                background-color: #4b4b4b;
+                color: #aaaaaa;
+            }
+        """)
+        self.short_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #c62828;
+                color: white;
+                font-weight: bold;
+            }
+            QPushButton:disabled {
+                background-color: #4b4b4b;
+                color: #aaaaaa;
+            }
+        """)
+        self.off_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #757575;
+                color: white;
+            }
+            QPushButton:disabled {
+                background-color: #4b4b4b;
+                color: #aaaaaa;
+            }
+        """)
+        self.exec_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #1565c0;
+                color: white;
+                font-weight: bold;
+            }
+            QPushButton:disabled {
+                background-color: #4b4b4b;
+                color: #aaaaaa;
+            }
+        """)
+
+        # FIX: 버튼 폭을 일정하게 맞추기
+        for b in (self.long_btn, self.short_btn, self.off_btn, self.exec_btn):
+            b.setMinimumWidth(90)
 
         self.price_label = QtWidgets.QLabel("Price: ...")
-        self.quote_label = QtWidgets.QLabel("")  # HL-like 일 때만 사용
+        self.quote_label = QtWidgets.QLabel("")
         self.fee_label = QtWidgets.QLabel("Builder Fee: -")
         self.info_label = QtWidgets.QLabel("📊 Position: N/A\n💰 Collateral: N/A")
 
-        self.dex_combo = QtWidgets.QComboBox()
+        self.dex_combo = DexComboBox()
         self.dex_combo.addItems(self._dex_choices)
 
         self._build_layout()
         self._connect_signals()
 
-    # comment: 레이아웃 구성
     def _build_layout(self) -> None:
-        form_layout = QtWidgets.QGridLayout()
+        """
+        레이아웃을 2개의 행(HBox)로 나누어
+        1행(T/Q/P)과 2행(Type/Long/Short/Off/Execute)이 서로 간섭하지 않도록 한다.
+        """
+        vbox = QtWidgets.QVBoxLayout(self)
 
-        # 1행: T/Q/P
-        form_layout.addWidget(QtWidgets.QLabel("T:"), 0, 0)
-        form_layout.addWidget(self.ticker_edit,        0, 1)
+        # NEW: 헤더 줄 (카드 제목)
+        header_row = QtWidgets.QHBoxLayout()
+        header_row.addWidget(self.title_label)
+        header_row.addStretch(1)
+        vbox.addLayout(header_row)
 
-        form_layout.addWidget(QtWidgets.QLabel("Q:"),  0, 2)
-        form_layout.addWidget(self.qty_edit,           0, 3)
+        # --- 1행: T / Q / P -------------------------------------------
+        row1 = QtWidgets.QHBoxLayout()
+        row1.setSpacing(8)
 
-        form_layout.addWidget(QtWidgets.QLabel("P:"),  0, 4)
-        form_layout.addWidget(self.price_edit,         0, 5)
+        # T: [ticker]
+        row1.addWidget(QtWidgets.QLabel("T:"))
+        row1.addWidget(self.ticker_edit, stretch=4)
 
-        # 2행: MKT/LMT + L/S/OFF/EX
-        form_layout.addWidget(self.order_type_btn, 1, 0)
-        form_layout.addWidget(self.long_btn,       1, 2)
-        form_layout.addWidget(self.short_btn,      1, 3)
-        form_layout.addWidget(self.off_btn,        1, 4)
-        form_layout.addWidget(self.exec_btn,       1, 5)
+        row1.addSpacing(8)
 
-        # 3행: Price / Quote / DEX / Fee
+        # Q: [qty]
+        row1.addWidget(QtWidgets.QLabel("Q:"))
+        row1.addWidget(self.qty_edit, stretch=2)
+
+        row1.addSpacing(8)
+
+        # Type: [Market/Limit]
+        row1.addWidget(QtWidgets.QLabel("Type:"))
+        row1.addWidget(self.order_type_combo, stretch=3)
+
+        row1.addSpacing(8)
+
+        # P: [price]
+        row1.addWidget(QtWidgets.QLabel("P:"))
+        row1.addWidget(self.price_edit, stretch=3)
+
+        vbox.addLayout(row1)
+
+        # --- 2행: Long / Short / Off / Execute ------------------------
+        row2 = QtWidgets.QHBoxLayout()
+        row2.setSpacing(8)
+
+        row2.addStretch(1)
+
+        # 버튼들은 전부 Expanding 으로, 동일한 비율로 늘어나도록 설정
+        for b in (self.long_btn, self.short_btn, self.off_btn, self.exec_btn):
+            b.setSizePolicy(QtWidgets.QSizePolicy.Expanding,
+                            QtWidgets.QSizePolicy.Preferred)
+            row2.addWidget(b)
+
+        row2.addStretch(1)
+
+        vbox.addLayout(row2)
+
+        # --- 3행: Price / Quote / DEX / Fee ----------------------------
         hbox_price = QtWidgets.QHBoxLayout()
         hbox_price.addWidget(self.price_label)
         hbox_price.addWidget(self.quote_label)
@@ -270,24 +494,38 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         hbox_price.addWidget(self.dex_combo)
         hbox_price.addWidget(self.fee_label)
 
-        # 메인 레이아웃
-        vbox = QtWidgets.QVBoxLayout(self)
-        vbox.addLayout(form_layout)
         vbox.addLayout(hbox_price)
         vbox.addWidget(self.info_label)
 
     def _connect_signals(self) -> None:
-        self.exec_btn.clicked.connect(lambda: self.execute_clicked.emit(self.ex_name))
-        self.long_btn.clicked.connect(lambda: self.long_clicked.emit(self.ex_name))
-        self.short_btn.clicked.connect(lambda: self.short_clicked.emit(self.ex_name))
-        self.off_btn.clicked.connect(lambda: self.off_clicked.emit(self.ex_name))
-        self.order_type_btn.clicked.connect(lambda: self.order_type_toggled.emit(self.ex_name))
+        self.exec_btn.clicked.connect(
+            lambda: self.execute_clicked.emit(self.ex_name)
+        )
+        self.long_btn.clicked.connect(
+            lambda: self.long_clicked.emit(self.ex_name)
+        )
+        self.short_btn.clicked.connect(
+            lambda: self.short_clicked.emit(self.ex_name)
+        )
+        self.off_btn.clicked.connect(
+            lambda: self.off_clicked.emit(self.ex_name)
+        )
+
+        # FIX: order_type_changed 신호 (market/limit)
+        self.order_type_combo.currentTextChanged.connect(
+            lambda text: self.order_type_changed.emit(self.ex_name, text.lower())
+        )
+        
         self.dex_combo.currentTextChanged.connect(
             lambda text: self.dex_changed.emit(self.ex_name, text)
         )
         self.ticker_edit.textChanged.connect(
             lambda text: self.ticker_changed.emit(self.ex_name, text)
         )
+
+        # 팝업 열리는 동안 EX 버튼 비활성화 → 클릭 스루 방지
+        self.dex_combo.popupOpened.connect(lambda: self.exec_btn.setEnabled(False))
+        self.dex_combo.popupClosed.connect(lambda: self.exec_btn.setEnabled(True))
 
     # --- 상태/뷰 업데이트 메서드 ---
 
@@ -318,15 +556,25 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         self.info_label.setText(f"{pos_text}\n{col_text}")
 
     def set_order_type(self, order_type: str) -> None:
+        """
+        order_type: "market" | "limit"
+        - Market 이면 P 입력칸 비활성화 + placeholder "auto"
+        - Limit 이면 P 활성화 + placeholder 제거
+        """
         order_type = (order_type or "market").lower()
+        idx = 0 if order_type == "market" else 1
+        if self.order_type_combo.currentIndex() != idx:
+            self.order_type_combo.setCurrentIndex(idx)
+
         is_limit = (order_type == "limit")
-        self.order_type_btn.setChecked(is_limit)
-        self.order_type_btn.setText("LMT" if is_limit else "MKT")
+        self.price_edit.setEnabled(is_limit)
+
+        if is_limit:
+            self.price_edit.setPlaceholderText("")      # FIX
+        else:
+            self.price_edit.setPlaceholderText("auto")  # FIX
 
     def set_side_enabled(self, enabled: bool, side: Optional[str]) -> None:
-        """
-        버튼의 on/off 스타일은 Qt 기본 스타일로, 체크 여부만 표현.
-        """
         self.long_btn.setCheckable(True)
         self.short_btn.setCheckable(True)
         self.off_btn.setCheckable(True)
@@ -351,7 +599,7 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
 
 
 # ---------------------------------------------------------------------------
-# Qt 위젯: 헤더 (심볼/가격/All Qty/Repeat/Burn 등)
+# Qt 위젯: 헤더
 # ---------------------------------------------------------------------------
 
 class HeaderWidget(QtWidgets.QWidget):
@@ -368,7 +616,6 @@ class HeaderWidget(QtWidgets.QWidget):
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None):
         super().__init__(parent)
 
-        # comment: 위젯들
         self.ticker_edit = QtWidgets.QLineEdit("BTC")
         self.price_label = QtWidgets.QLabel("Price: ...")
         self.total_label = QtWidgets.QLabel("Total: 0.0 USDC")
@@ -392,7 +639,7 @@ class HeaderWidget(QtWidgets.QWidget):
         self.burn_btn = QtWidgets.QPushButton("BURN")
 
         # DEX
-        self.dex_combo = QtWidgets.QComboBox()
+        self.dex_combo = DexComboBox()
 
         self._build_layout()
         self._connect_signals()
@@ -400,14 +647,14 @@ class HeaderWidget(QtWidgets.QWidget):
     def _build_layout(self) -> None:
         grid = QtWidgets.QGridLayout(self)
 
-        # 1행
+        # 1행: Ticker / Price / Total / Quit
         grid.addWidget(QtWidgets.QLabel("Ticker:"), 0, 0)
         grid.addWidget(self.ticker_edit,           0, 1)
         grid.addWidget(self.price_label,           0, 2)
         grid.addWidget(self.total_label,           0, 3)
         grid.addWidget(self.quit_btn,              0, 4)
 
-        # 2행
+        # 2행: All Qty / EXECUTE ALL / REVERSE / CLOSE ALL
         grid.addWidget(QtWidgets.QLabel("All Qty:"), 1, 0)
         grid.addWidget(self.allqty_edit,             1, 1)
         grid.addWidget(self.exec_all_btn,            1, 2)
@@ -450,8 +697,6 @@ class HeaderWidget(QtWidgets.QWidget):
         self.burn_btn.clicked.connect(self.burn_clicked)
         self.quit_btn.clicked.connect(self.quit_clicked)
         self.dex_combo.currentTextChanged.connect(self.dex_changed)
-
-    # --- 외부에서 쓰기 쉬운 헬퍼 ---
 
     def set_price(self, price_str: str) -> None:
         self.price_label.setText(f"Price: {price_str}")
@@ -516,8 +761,13 @@ class UiQtApp(QtWidgets.QMainWindow):
 
         # UI 구성 요소
         self.header = HeaderWidget()
+
         self.log_edit = QtWidgets.QPlainTextEdit()
         self.log_edit.setReadOnly(True)
+
+        # 시스템 stdout/stderr 를 보여줄 콘솔 영역
+        self.console_edit = QtWidgets.QPlainTextEdit()
+        self.console_edit.setReadOnly(True)
 
         self.exchange_switch_container = QtWidgets.QWidget()
         self.exchange_switch_layout = QtWidgets.QGridLayout(self.exchange_switch_container)
@@ -528,26 +778,53 @@ class UiQtApp(QtWidgets.QMainWindow):
         self.cards_layout.addStretch(1)
         self.cards: Dict[str, ExchangeCardWidget] = {}
 
+        # FIX: stdout/stderr 리다이렉트는 나중에 install_console_redirect()에서 함
+        self._stdout_orig = None
+        self._stderr_orig = None
+        self._stdout_stream: Optional[EmittingStream] = None
+        self._stderr_stream: Optional[EmittingStream] = None
+        self._console_redirect_installed: bool = False
+
         self._build_main_layout()
         self._connect_header_signals()
 
-    # ------------------------------------------------------------------
-    # UI 레이아웃 구성
-    # ------------------------------------------------------------------
+    def install_console_redirect(self) -> None:
+        """
+        UI가 뜬 뒤에만 stdout/stderr 를 콘솔로 리다이렉트.
+        (UI 뜨기 전 print 는 터미널에 그대로 출력되도록)
+        """
+        if self._console_redirect_installed:
+            return
+        self._stdout_orig = sys.stdout
+        self._stderr_orig = sys.stderr
 
+        self._stdout_stream = EmittingStream()
+        self._stderr_stream = EmittingStream()
+        self._stdout_stream.text_written.connect(self._append_console_text)
+        self._stderr_stream.text_written.connect(self._append_console_text)
+
+        sys.stdout = self._stdout_stream
+        sys.stderr = self._stderr_stream
+        self._console_redirect_installed = True
+
+    # UI 레이아웃 구성
     def _build_main_layout(self) -> None:
         """
         메인 레이아웃:
             [Header]
             [Cards (ScrollArea)]
-            [Exchanges Switch Grid]  [Logs]
+            [Exchanges Switch Grid]  [Logs + Console]
         """
         central = QtWidgets.QWidget()
         main_vbox = QtWidgets.QVBoxLayout(central)
 
         # Header
-        header_box = QtWidgets.QGroupBox("Header")
+        header_box = QtWidgets.QGroupBox()   # 기존: QtWidgets.QGroupBox("Header")
         header_layout = QtWidgets.QVBoxLayout(header_box)
+
+        header_title = QtWidgets.QLabel("Header")
+        header_title.setStyleSheet("color: #ffeb3b; font-weight: bold;")
+        header_layout.addWidget(header_title)
         header_layout.addWidget(self.header)
 
         # Cards (ScrollArea)
@@ -556,14 +833,26 @@ class UiQtApp(QtWidgets.QMainWindow):
         cards_scroll.setWidget(self.cards_container)
 
         # Exchanges Switch
-        switch_box = QtWidgets.QGroupBox("Exchanges")
+        switch_box = QtWidgets.QGroupBox()
         switch_layout = QtWidgets.QVBoxLayout(switch_box)
+        ex_title = QtWidgets.QLabel("Exchanges")
+        ex_title.setStyleSheet("color: #ffeb3b; font-weight: bold;")
+        switch_layout.addWidget(ex_title)
         switch_layout.addWidget(self.exchange_switch_container)
 
-        # Logs
-        logs_box = QtWidgets.QGroupBox("Logs")
+        # Logs + Console
+        logs_box = QtWidgets.QGroupBox()
         logs_layout = QtWidgets.QVBoxLayout(logs_box)
-        logs_layout.addWidget(self.log_edit)
+
+        logs_title = QtWidgets.QLabel("Logs")
+        logs_title.setStyleSheet("color: #ffeb3b; font-weight: bold;")
+        logs_layout.addWidget(logs_title)
+
+        logs_layout.addWidget(QtWidgets.QLabel("Trading / App Log:"))
+        logs_layout.addWidget(self.log_edit, stretch=3)
+
+        logs_layout.addWidget(QtWidgets.QLabel("System stdout / stderr:"))
+        logs_layout.addWidget(self.console_edit, stretch=2)
 
         bottom_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         bottom_splitter.addWidget(switch_box)
@@ -578,6 +867,10 @@ class UiQtApp(QtWidgets.QMainWindow):
         self.setCentralWidget(central)
         self.resize(1200, 800)
 
+        # 창 우하단 크기 조절 핸들
+        self.setStatusBar(QtWidgets.QStatusBar())
+        self.statusBar().setSizeGripEnabled(True)
+
     def _connect_header_signals(self) -> None:
         self.header.ticker_changed.connect(self._on_header_ticker_changed)
         self.header.allqty_changed.connect(self._on_allqty_changed)
@@ -585,7 +878,6 @@ class UiQtApp(QtWidgets.QMainWindow):
         self.header.reverse_clicked.connect(self._on_reverse)
         self.header.close_all_clicked.connect(self._on_close_all_clicked)
 
-        # TODO: Qt 버전 repeat/burn 은 단순 로그만 남깁니다.
         self.header.repeat_clicked.connect(
             lambda: self._log("[REPEAT] Qt UI에서는 아직 미구현입니다.")
         )
@@ -595,14 +887,20 @@ class UiQtApp(QtWidgets.QMainWindow):
         self.header.quit_clicked.connect(self.close)
         self.header.dex_changed.connect(self._on_header_dex_changed)
 
+    @QtCore.Slot(str)
+    def _append_console_text(self, text: str) -> None:
+        """print() 등에서 넘어온 텍스트를 콘솔 창에 표시."""
+        text = text.replace("\r\n", "\n")
+        if text.strip():
+            self.console_edit.appendPlainText(text.rstrip("\n"))
+            sb = self.console_edit.verticalScrollBar()
+            sb.setValue(sb.maximum())
+
     # ------------------------------------------------------------------
     # 초기 비동기 설정
     # ------------------------------------------------------------------
 
     async def async_init(self) -> None:
-        """
-        ExchangeManager 초기화, DEX 리스트/카드/스위치 구성, 가격/상태 루프 시작.
-        """
         try:
             await self.mgr.initialize_all()
         except Exception as e:
@@ -623,11 +921,9 @@ class UiQtApp(QtWidgets.QMainWindow):
         self.header_dex = "HL"
         self.header.set_dex_choices(self.dex_names, self.header_dex)
 
-        # 스위치/카드 구성
         self._build_exchange_switches()
         self._rebuild_cards()
 
-        # 가격/상태 루프 시작
         loop = asyncio.get_running_loop()
         self._price_task = loop.create_task(self._price_loop())
         self._status_task = loop.create_task(self._status_loop())
@@ -637,10 +933,6 @@ class UiQtApp(QtWidgets.QMainWindow):
     # ------------------------------------------------------------------
 
     def _build_exchange_switches(self) -> None:
-        """
-        footer 의 Exchanges Grid 에 해당하는 Qt 체크박스 생성.
-        """
-        # 기존 위젯 제거
         while self.exchange_switch_layout.count():
             item = self.exchange_switch_layout.takeAt(0)
             w = item.widget()
@@ -674,10 +966,6 @@ class UiQtApp(QtWidgets.QMainWindow):
                 row += 1
 
     def _rebuild_cards(self) -> None:
-        """
-        visible_names 기준으로 카드 생성/삭제.
-        """
-        # 기존 카드 제거
         for name, card in list(self.cards.items()):
             card.setParent(None)
             card.deleteLater()
@@ -695,7 +983,6 @@ class UiQtApp(QtWidgets.QMainWindow):
             card = ExchangeCardWidget(name, dex_choices=self.dex_names)
             self.cards[name] = card
 
-            # 초기 상태 반영
             ex_state = self.exchange_state[name]
             card.set_ticker(ex_state.symbol)
             card.set_order_type(ex_state.order_type)
@@ -703,24 +990,21 @@ class UiQtApp(QtWidgets.QMainWindow):
             card.set_dex(ex_state.dex)
             card.set_fee_label("Builder Fee: -")
 
-            # 시그널 연결
             card.execute_clicked.connect(self._on_exec_one_clicked)
             card.long_clicked.connect(self._on_long_clicked)
             card.short_clicked.connect(self._on_short_clicked)
             card.off_clicked.connect(self._on_off_clicked)
-            card.order_type_toggled.connect(self._on_order_type_toggled)
+            card.order_type_changed.connect(self._on_order_type_changed)
             card.dex_changed.connect(self._on_card_dex_changed)
             card.ticker_changed.connect(self._on_card_ticker_changed)
 
             self.cards_layout.insertWidget(self.cards_layout.count() - 1, card)
 
-        # All Qty 가 이미 입력돼 있으면 카드에도 반영
         all_qty = self.header.allqty_edit.text()
         if all_qty:
             for c in self.cards.values():
                 c.set_qty(all_qty)
 
-        # DEX / Fee 초기 갱신
         for name in visible:
             self._update_card_fee(name)
 
@@ -734,13 +1018,11 @@ class UiQtApp(QtWidgets.QMainWindow):
 
         self._bulk_updating_tickers = True
         try:
-            # 내부 상태
             for ex_name in self.mgr.all_names():
                 self.symbol_by_ex[ex_name] = coin
                 st = self.exchange_state[ex_name]
                 st.symbol = coin
 
-            # 화면 카드
             for card in self.cards.values():
                 card.set_ticker(coin)
         finally:
@@ -752,7 +1034,6 @@ class UiQtApp(QtWidgets.QMainWindow):
 
     def _on_header_dex_changed(self, dex: str) -> None:
         self.header_dex = dex
-        # 전체 카드에 일괄 적용
         for n in self.mgr.all_names():
             self.dex_by_ex[n] = dex
             self.exchange_state[n].dex = dex
@@ -769,7 +1050,6 @@ class UiQtApp(QtWidgets.QMainWindow):
         coin = _normalize_symbol_input(text or self.symbol)
         self.symbol_by_ex[ex_name] = coin
         self.exchange_state[ex_name].symbol = coin
-        # urwid 버전처럼 레버리지 예약은 생략 (Qt 버전 단순화)
 
     def _on_card_dex_changed(self, ex_name: str, dex: str) -> None:
         self.dex_by_ex[ex_name] = dex
@@ -797,15 +1077,14 @@ class UiQtApp(QtWidgets.QMainWindow):
         self.exchange_state[ex_name].side = None
         self._refresh_side(ex_name)
 
-    def _on_order_type_toggled(self, ex_name: str) -> None:
-        cur = (self.order_type.get(ex_name) or "market").lower()
-        new_type = "limit" if cur == "market" else "market"
-        self.order_type[ex_name] = new_type
-        self.exchange_state[ex_name].order_type = new_type
+    def _on_order_type_changed(self, ex_name: str, order_type: str) -> None:
+        order_type = (order_type or "market").lower()
+        self.order_type[ex_name] = order_type
+        self.exchange_state[ex_name].order_type = order_type
 
         card = self.cards.get(ex_name)
         if card:
-            card.set_order_type(new_type)
+            card.set_order_type(order_type)
         self._update_card_fee(ex_name)
 
     def _on_exec_one_clicked(self, ex_name: str) -> None:
@@ -820,7 +1099,6 @@ class UiQtApp(QtWidgets.QMainWindow):
         meta = self.mgr.get_meta(ex_name)
         meta["show"] = bool(state)
         if not state:
-            # OFF 로 내려가면 enabled/side 초기화
             self.enabled[ex_name] = False
             self.side[ex_name] = None
             self.exchange_state[ex_name].enabled = False
@@ -834,7 +1112,6 @@ class UiQtApp(QtWidgets.QMainWindow):
     def _log(self, msg: str) -> None:
         logger.info(msg)
         self.log_edit.appendPlainText(msg)
-        # 항상 맨 아래로 스크롤
         scrollbar = self.log_edit.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
 
@@ -845,9 +1122,6 @@ class UiQtApp(QtWidgets.QMainWindow):
         self.header.set_total(self._collateral_sum())
 
     def _update_card_fee(self, ex_name: str) -> None:
-        """
-        HL-like 거래소에서만 Builder Fee 표시.
-        """
         try:
             if not self.mgr.is_hl_like(ex_name):
                 return
@@ -863,7 +1137,6 @@ class UiQtApp(QtWidgets.QMainWindow):
             else:
                 card.set_fee_label("Builder Fee: -")
         except Exception:
-            # 조용히 무시
             pass
 
     def _refresh_side(self, ex_name: str) -> None:
@@ -879,9 +1152,6 @@ class UiQtApp(QtWidgets.QMainWindow):
     # ------------------------------------------------------------------
 
     async def _price_loop(self) -> None:
-        """
-        헤더에 공통 심볼 가격 / 총 콜래터럴 표시.
-        """
         while not self._stopping:
             try:
                 raw = self.header.ticker_edit.text() or "BTC"
@@ -890,7 +1160,6 @@ class UiQtApp(QtWidgets.QMainWindow):
 
                 px_str = self.current_price or "..."
 
-                # HL 우선
                 ex = self.mgr.first_hl_exchange()
                 if not ex:
                     for nm in self.mgr.visible_names():
@@ -920,9 +1189,6 @@ class UiQtApp(QtWidgets.QMainWindow):
                 await asyncio.sleep(RATE["GAP_FOR_INF"])
 
     async def _status_loop(self) -> None:
-        """
-        거래소별 상태/가격/콜래터럴 업데이트 (단일 루프에서 순회).
-        """
         await asyncio.sleep(0.3)
 
         while not self._stopping:
@@ -959,7 +1225,6 @@ class UiQtApp(QtWidgets.QMainWindow):
                     sym = _compose_symbol(dex, sym_coin)
                     is_hl_like = self.mgr.is_hl_like(name)
 
-                    # 가격
                     if need_price:
                         try:
                             px_str = await self.service.fetch_price(name, sym)
@@ -973,7 +1238,6 @@ class UiQtApp(QtWidgets.QMainWindow):
                             logger.info(f"[UI] price update for {name} failed: {e}")
                             card.set_price_label("Error")
 
-                    # Quote (HL-like)
                     if is_hl_like:
                         try:
                             quote_str = ex.get_perp_quote(sym)
@@ -982,7 +1246,6 @@ class UiQtApp(QtWidgets.QMainWindow):
                             logger.info(f"[UI] quote update for {name} failed: {e}")
                             card.set_quote_label("")
 
-                    # 포지션/콜래터럴
                     try:
                         pos_str, col_str, col_val = await self.service.fetch_status(
                             name, sym, need_balance=need_collat, need_position=need_pos
@@ -991,7 +1254,6 @@ class UiQtApp(QtWidgets.QMainWindow):
                         logger.error(f"[UI] status update for {name} failed: {e}")
                         continue
 
-                    # collateral
                     if need_collat:
                         try:
                             self.collateral[name] = float(col_val)
@@ -1003,7 +1265,6 @@ class UiQtApp(QtWidgets.QMainWindow):
                     if need_pos:
                         self._last_pos_at[name] = now
 
-                    # 문자열 가공 (USDC 값 주입 + 색 태그 제거)
                     last_px = self.exchange_state[name].last_price
                     pos_pretty = _inject_usdc_value_into_pos(last_px, pos_str)
                     col_pretty = _strip_bracket_markup(col_str)
@@ -1012,8 +1273,8 @@ class UiQtApp(QtWidgets.QMainWindow):
                 await asyncio.sleep(RATE["GAP_FOR_INF"])
             except asyncio.CancelledError:
                 break
-            except Exception as e:
-                logger.error(f"[CRITICAL] Unhandled error in status_loop", exc_info=True)
+            except Exception:
+                logger.error("[CRITICAL] Unhandled error in status_loop", exc_info=True)
                 await asyncio.sleep(1.0)
 
     # ------------------------------------------------------------------
@@ -1150,7 +1411,6 @@ class UiQtApp(QtWidgets.QMainWindow):
         max_retry = 3
         for attempt in range(1, max_retry + 1):
             try:
-                # 가격 힌트는 현재 헤더가 들고 있는 가격 사용(필요 시 None 허용)
                 try:
                     hint = float(str(self.current_price).replace(",", ""))
                 except Exception:
@@ -1165,7 +1425,6 @@ class UiQtApp(QtWidgets.QMainWindow):
                     price_hint=hint,
                 )
                 if order is None:
-                    # 포지션 없음
                     return
                 self._log(f"[{name.upper()}] CLOSE 성공: #{order.get('id', '?')}")
                 return
@@ -1182,10 +1441,6 @@ class UiQtApp(QtWidgets.QMainWindow):
     # ------------------------------------------------------------------
 
     async def _kill_ccxt_throttlers(self) -> None:
-        """
-        ui_urwid.py 의 _kill_ccxt_throttlers 를 거의 그대로 사용.
-        Throttler.looper 태스크 강제 정리.
-        """
         try:
             current = asyncio.current_task()
         except Exception:
@@ -1218,12 +1473,13 @@ class UiQtApp(QtWidgets.QMainWindow):
         await asyncio.sleep(0)
 
     async def shutdown(self) -> None:
-        """
-        Qt 종료 시 비동기 리소스 정리.
-        """
         self._stopping = True
 
-        # 가격/상태 루프 취소
+        # stdout/stderr 원복
+        if self._console_redirect_installed:
+            sys.stdout = self._stdout_orig or sys.__stdout__
+            sys.stderr = self._stderr_orig or sys.__stderr__
+
         tasks: List[asyncio.Task] = []
         if self._price_task and not self._price_task.done():
             self._price_task.cancel()
@@ -1238,19 +1494,16 @@ class UiQtApp(QtWidgets.QMainWindow):
             except Exception:
                 pass
 
-        # Manager 정리
         try:
             await self.mgr.close_all()
         except Exception:
             pass
 
-        # ccxt Throttler 정리
         try:
             await self._kill_ccxt_throttlers()
         except Exception:
             pass
 
-        # 남은 태스크도 전수 cancel (가능한 깔끔한 종료)
         try:
             current = asyncio.current_task()
         except Exception:
@@ -1269,9 +1522,6 @@ class UiQtApp(QtWidgets.QMainWindow):
                 pass
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
-        """
-        창 닫기 → 비동기 정리 → 이벤트 루프 중단.
-        """
         loop = asyncio.get_event_loop()
 
         async def _shutdown_and_stop() -> None:
@@ -1291,30 +1541,28 @@ class UiQtApp(QtWidgets.QMainWindow):
 def run_qt_app(manager: ExchangeManager) -> None:
     """
     기존 `UrwidApp(manager).run()` 대신 쓸 수 있는 Qt 진입 함수.
-
-    예:
-        from core import ExchangeManager
-        from ui_qt import run_qt_app
-
-        mgr = ExchangeManager(...)
-        run_qt_app(mgr)
     """
     app = QtWidgets.QApplication(sys.argv)
+    _apply_app_style(app)
+
     loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)
 
     window = UiQtApp(manager)
 
     async def _startup():
+        # FIX: 초기화(로그인 등) 동안의 print 는 터미널에 출력되도록
         await window.async_init()
         window.show()
+        # UI 가 뜬 이후부터는 stdout/stderr 를 UI 콘솔로 리다이렉트
+        window.install_console_redirect()
 
     loop.create_task(_startup())
 
     with loop:
         loop.run_forever()
 
+
 if __name__ == "__main__":
-    # comment: 직접 실행 시 Manager 초기화는 프로젝트 구조에 맞게 수정 필요
     print("This module is intended to be imported and used with an ExchangeManager.")
     print("예: run_qt_app(ExchangeManager(...))")
