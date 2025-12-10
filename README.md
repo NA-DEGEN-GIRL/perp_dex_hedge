@@ -90,7 +90,7 @@ msgpack
 mpdex @ git+https://github.com/NA-DEGEN-GIRL/multi-perp-dex.git@master
 ```
 
-## Windows: 스크립트만 실행해서 설치/업데이트/실행하기
+## **초보용**: Windows 스크립트만 실행해서 설치/업데이트/실행하기
 
 파이썬만 설치되어 있다고 가정합니다. 아래 3개 스크립트만 기억하세요.
 
