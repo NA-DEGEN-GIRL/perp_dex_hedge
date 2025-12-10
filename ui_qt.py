@@ -33,10 +33,12 @@ logger = logging.getLogger(__name__)
 # 환경변수 PDEX_UI_USE_EMOJI=1 로도 켤 수 있음.
 USE_EMOJI = os.getenv("PDEX_UI_USE_EMOJI", "0") == "1"
 
-UI_FONT_FAMILY = os.getenv("PDEX_UI_FONT_FAMILY", "")        
-UI_FONT_SIZE = int(os.getenv("PDEX_UI_FONT_SIZE", "16"))     
-UI_THEME = os.getenv("PDEX_UI_THEME", "dark").lower()       
+UI_FONT_FAMILY = os.getenv("PDEX_UI_FONT_FAMILY", "")
+UI_FONT_SIZE = int(os.getenv("PDEX_UI_FONT_SIZE", "16"))
+UI_THEME = os.getenv("PDEX_UI_THEME", "dark").lower()
 
+UI_WINDOW_WIDTH = int(os.getenv("PDEX_UI_WIDTH", "1400"))
+UI_WINDOW_HEIGHT = int(os.getenv("PDEX_UI_HEIGHT", "1600"))
 
 def _apply_app_style(app: QtWidgets.QApplication) -> None:
     app.setStyle("Fusion")
@@ -346,24 +348,97 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         # 버튼 스타일
         btn_style_base = "border: none; border-radius: 4px; font-weight: bold; padding: 6px;"
         
-        self.long_btn.setStyleSheet(f"""
-            QPushButton {{ background-color: #388e3c; color: white; {btn_style_base} }}
-            QPushButton:disabled {{ background-color: #333; color: #777; }}
-            QPushButton:checked {{ border: 2px solid white; }}
+        self.long_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #388e3c;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-weight: bold;
+                padding: 6px;
+            }
+            QPushButton:hover {
+                background-color: #4caf50;
+            }
+            QPushButton:pressed {
+                background-color: #2e7d32;
+            }
+            QPushButton:disabled {
+                background-color: #333;
+                color: #777;
+            }
+            QPushButton:checked {
+                border: 2px solid white;
+            }
         """)
-        self.short_btn.setStyleSheet(f"""
-            QPushButton {{ background-color: #d32f2f; color: white; {btn_style_base} }}
-            QPushButton:disabled {{ background-color: #333; color: #777; }}
-            QPushButton:checked {{ border: 2px solid white; }}
+
+        self.short_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #d32f2f;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-weight: bold;
+                padding: 6px;
+            }
+            QPushButton:hover {
+                background-color: #ef5350;
+            }
+            QPushButton:pressed {
+                background-color: #b71c1c;
+            }
+            QPushButton:disabled {
+                background-color: #333;
+                color: #777;
+            }
+            QPushButton:checked {
+                border: 2px solid white;
+            }
         """)
-        self.off_btn.setStyleSheet(f"""
-            QPushButton {{ background-color: #616161; color: white; {btn_style_base} }}
-            QPushButton:disabled {{ background-color: #333; color: #777; }}
-            QPushButton:checked {{ border: 2px solid white; }}
+
+        self.off_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #616161;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-weight: bold;
+                padding: 6px;
+            }
+            QPushButton:hover {
+                background-color: #757575;
+            }
+            QPushButton:pressed {
+                background-color: #424242;
+            }
+            QPushButton:disabled {
+                background-color: #333;
+                color: #777;
+            }
+            QPushButton:checked {
+                border: 2px solid white;
+            }
         """)
-        self.exec_btn.setStyleSheet(f"""
-            QPushButton {{ background-color: #1976d2; color: white; {btn_style_base} }}
-            QPushButton:disabled {{ background-color: #333; color: #777; }}
+
+        self.exec_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #1976d2;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-weight: bold;
+                padding: 6px;
+            }
+            QPushButton:hover {
+                background-color: #2196f3;
+            }
+            QPushButton:pressed {
+                background-color: #0d47a1;
+            }
+            QPushButton:disabled {
+                background-color: #333;
+                color: #777;
+            }
         """)
 
         # 정보 라벨
@@ -562,10 +637,54 @@ class HeaderWidget(QtWidgets.QWidget):
         # 스타일
         self.price_label.setStyleSheet("color: #81d4fa; font-weight: bold;")
         self.total_label.setStyleSheet("color: #a5d6a7; font-weight: bold;")
-        self.quit_btn.setStyleSheet("background-color: #d32f2f; color: white; font-weight: bold;")
-        
-        self.exec_all_btn.setStyleSheet("background-color: #1565c0; color: white;")
-        self.close_all_btn.setStyleSheet("background-color: #c62828; color: white;")
+        self.quit_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #d32f2f;
+                color: white;
+                font-weight: bold;
+                border: none;
+                border-radius: 4px;
+                padding: 5px;
+            }
+            QPushButton:hover {
+                background-color: #ef5350;
+            }
+            QPushButton:pressed {
+                background-color: #b71c1c;
+            }
+        """)
+                
+        self.exec_all_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #1565c0;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 5px;
+            }
+            QPushButton:hover {
+                background-color: #1976d2;
+            }
+            QPushButton:pressed {
+                background-color: #0d47a1;
+            }
+        """)
+
+        self.close_all_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #c62828;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 5px;
+            }
+            QPushButton:hover {
+                background-color: #e53935;
+            }
+            QPushButton:pressed {
+                background-color: #b71c1c;
+            }
+        """)
 
         # 레이아웃
         grid = QtWidgets.QGridLayout(self)
@@ -763,7 +882,9 @@ class UiQtApp(QtWidgets.QMainWindow):
         main_vbox.addWidget(bottom_splitter, stretch=1)
 
         self.setCentralWidget(central)
-        self.resize(1200, 850)
+        
+        self.resize(UI_WINDOW_WIDTH, UI_WINDOW_HEIGHT)
+        
         self.setStatusBar(QtWidgets.QStatusBar())
         self.statusBar().setSizeGripEnabled(True)
 
@@ -1022,6 +1143,8 @@ class UiQtApp(QtWidgets.QMainWindow):
                          ex = self.mgr.get_exchange(n)
                          if ex: c.set_quote_label(ex.get_perp_quote(sym))
 
+                         self._update_fee(n)
+
                     # Pos / Col
                     try:
                         pos, col, col_val = await self.service.fetch_status(n, sym, True, True)
@@ -1041,15 +1164,36 @@ class UiQtApp(QtWidgets.QMainWindow):
             await asyncio.sleep(1.0) # Reduce load
 
     def _update_fee(self, n):
+        """
+        HL-like 거래소의 Builder Fee를 업데이트.
+        - DEX가 'HL'이면 dex_key=None
+        - DEX가 HIP3(예: 'BULLPEN')이면 dex_key='bullpen'
+        - order_type에 따라 market/limit fee 표시
+        """
         try:
-            if not self.mgr.is_hl_like(n): return
-            d = self.dex_by_ex.get(n, "HL")
-            dk = None if d=="HL" else d.lower()
-            key = f"{n}_{dk}"
-            # Service 호출 (Fee 가져오기) - 실제 구현에 맞게 조정 필요
-            # fee = self.service.get_display_builder_fee(...)
-            # self.cards[n].set_fee_label(...)
-        except: pass
+            # HL-like 거래소만 표시
+            if not self.mgr.is_hl_like(n):
+                return
+            
+            card = self.cards.get(n)
+            if not card:
+                return
+            
+            dex = self.dex_by_ex.get(n, "HL")
+            dex_key = None if dex == "HL" else dex.lower()
+            order_type = (self.order_type.get(n) or "market").lower()
+            
+            # TradingService에서 fee 가져오기
+            fee = self.service.get_display_builder_fee(n, dex_key, order_type)
+            
+            if isinstance(fee, int):
+                card.set_fee_label(f"Builder Fee: {fee}")
+            else:
+                card.set_fee_label("Builder Fee: -")
+                
+        except Exception as e:
+            # 에러 시 조용히 무시 (로그만 남김)
+            logger.debug(f"[UI] Fee update for {n} failed: {e}")
 
     def _log(self, m):
         logger.info(m)
@@ -1070,17 +1214,52 @@ class UiQtApp(QtWidgets.QMainWindow):
         e.accept()
 
 def run_qt_app(mgr):
+    # WSL/X11 환경 감지 및 플랫폼 설정
+    try:
+        release = os.uname().release
+        if "WSL" in release or "microsoft" in release.lower():
+            os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
+    except:
+        pass
+
     app = QtWidgets.QApplication(sys.argv)
     _apply_app_style(app)
     loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)
     win = UiQtApp(mgr)
+    def position_window_on_cursor_screen():
+        cursor_pos = QtGui.QCursor.pos()
+        
+        # 커서가 있는 스크린 찾기
+        target_screen = None
+        for screen in app.screens():
+            if screen.geometry().contains(cursor_pos):
+                target_screen = screen
+                break
+        
+        # 못 찾으면 기본 스크린 사용
+        if target_screen is None:
+            target_screen = app.primaryScreen()
+        
+        if target_screen:
+            screen_geo = target_screen.availableGeometry()
+            
+            # 창을 해당 스크린 중앙에 배치
+            x = screen_geo.x() + (screen_geo.width() - win.width()) // 2
+            y = screen_geo.y() + (screen_geo.height() - win.height()) // 2
+            
+            win.move(x, y)
+    
     async def starter():
         await win.async_init()
+        position_window_on_cursor_screen()  # 위치 설정
         win.show()
         win.install_console_redirect()
+    
     loop.create_task(starter())
-    with loop: loop.run_forever()
+    
+    with loop:
+        loop.run_forever()
 
 if __name__ == "__main__":
     print("Import this module")
