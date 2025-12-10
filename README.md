@@ -126,7 +126,6 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force
 
 자주 묻는 질문
 - “py를 찾을 수 없습니다” → 파이썬 설치 시 PATH 옵션을 켜세요. 임시로는 스크립트가 `python`으로 자동 폴백합니다.
-- .env에 #/공백이 들어가요 → 따옴표로 감싸세요. 예: `TOKEN="abc#123"`, `NAME="kim lee"`.
 - 실행이 차단됩니다 → 위 실행 정책 설정을 먼저 해주세요.
 
 ---
