@@ -8,6 +8,16 @@ from pathlib import Path
 import sys
 import argparse
 
+def _detect_wsl_and_set_qt_platform():
+    try:
+        release = os.uname().release
+        if "WSL" in release or "microsoft" in release.lower():
+            os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
+    except:
+        pass
+
+_detect_wsl_and_set_qt_platform()
+
 def _load_env_flexible():
     """
     .env를 아래 우선순위로 1회 로드:
