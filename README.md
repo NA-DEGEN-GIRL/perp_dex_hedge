@@ -60,21 +60,43 @@
 - Git
 - 지원 OS: Linux, macOS, WSL(Windows)
 
-확인:
-```bash
+## 0‑1. Windows: Git / Python 3.10 설치(초보용)
+
+가장 쉬운 방법(권장): PowerShell에서 winget으로 설치합니다.  
+PowerShell을 “관리자 권한”으로 실행한 뒤, 아래를 그대로 복사/붙여넣기 하세요.
+
+```powershell
+# 1) Git 설치
+winget install -e --id Git.Git
+
+# 2) Python 3.10 설치(권장: 3.10.x)
+winget install -e --id Python.Python.3.10
+
+# 3) 설치 확인(아래처럼 버전이 보이면 성공)
 python --version   # 또는 python3 --version
 git --version
 ```
 
+설치 시 체크 포인트
+- Python 설치 마법사에서 “Add python.exe to PATH(경로 추가)” 옵션을 체크하면 편합니다.
+- “Disable path length limit(경로 길이 제한 해제)”가 보이면 체크해 주세요(빌드 오류 예방).
+
+winget이 안 될 때(대안)
+- Git: https://git-scm.com/download/win 에서 설치 파일 다운로드 → 기본값으로 설치 → `git --version` 확인
+- Python 3.10: https://www.python.org/downloads/ 에서 3.10.x 다운로드 → 설치 시 PATH 옵션 체크 → `py -V` 확인
+  - 이 프로젝트는 일부 의존성(fastecdsa 등) 때문에 Windows에서는 “3.10”을 권장합니다.
+
+설치가 끝나면, 아래 “**초보용**: Windows 스크립트만 실행해서 설치/업데이트/실행하기” 섹션으로 바로 이동하세요.
+
 ---
 
-## 1. 설치
+## 1. 최저 지능이 있는 사람의 경우 설치방법
 
 ```bash
 git clone https://github.com/NA-DEGEN-GIRL/perp_dex_hedge
 cd perp_dex_hedge
 
-# 가상환경
+# 가상환경 (모르면 gpt 검색 제발)
 python3 -m venv .venv
 source .venv/bin/activate    # Windows PowerShell: .\.venv\Scripts\Activate.ps1
 
@@ -90,7 +112,7 @@ msgpack
 mpdex @ git+https://github.com/NA-DEGEN-GIRL/multi-perp-dex.git@master
 ```
 
-## **초보용**: Windows 스크립트만 실행해서 설치/업데이트/실행하기
+## 1.1 **지능이 없는 다슬기용**: Windows 스크립트만 실행해서 설치/업데이트/실행하기
 
 파이썬만 설치되어 있다고 가정합니다. 아래 3개 스크립트만 기억하세요.
 
