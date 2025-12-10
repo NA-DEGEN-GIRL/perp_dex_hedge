@@ -90,6 +90,45 @@ msgpack
 mpdex @ git+https://github.com/NA-DEGEN-GIRL/multi-perp-dex.git@master
 ```
 
+## Windows: 스크립트만 실행해서 설치/업데이트/실행하기
+
+파이썬만 설치되어 있다고 가정합니다. 아래 3개 스크립트만 기억하세요.
+
+- 최초 설치: `.\scripts\win\setup.ps1`
+- 강제 업데이트(충돌 무시): `.\scripts\win\update-force.ps1`
+- 평소 실행: `.\scripts\win\run.ps1`
+
+사전 1회 설정(실행 정책 오류 방지)
+```powershell
+# PowerShell을 “관리자 권한”으로 열고 1번만 실행
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force
+```
+
+### 1) 최초 설치(처음 한 번만)
+```powershell
+# 저장소 루트에서 실행
+.\scripts\win\setup.ps1
+```
+- 하는 일: 가상환경(.venv) 생성 → pip 업그레이드 → 의존성 설치 → .env/.ini 기본 파일 준비 → 실행
+
+### 2) 새 버전 업데이트(충돌 나도 그냥 되게)
+```powershell
+.\scripts\win\update-force.ps1
+```
+- 하는 일: .env, config.ini 등 “내 설정”을 백업 → 원격 기본 브랜치로 강제 동기화 → 내 설정 복원 → 새 .venv로 재설치 → 실행
+- 백업 위치: `backup\YYYYMMDD_HHMMSS\` (문제 생기면 여기서 비교/복구)
+
+### 3) 평소 실행
+```powershell
+.\scripts\win\run.ps1
+```
+- 하는 일: .venv이 없으면 자동 생성/설치 후 실행, 있으면 바로 실행
+
+자주 묻는 질문
+- “py를 찾을 수 없습니다” → 파이썬 설치 시 PATH 옵션을 켜세요. 임시로는 스크립트가 `python`으로 자동 폴백합니다.
+- .env에 #/공백이 들어가요 → 따옴표로 감싸세요. 예: `TOKEN="abc#123"`, `NAME="kim lee"`.
+- 실행이 차단됩니다 → 위 실행 정책 설정을 먼저 해주세요.
+
 ---
 
 ## 2. 설정
