@@ -2,3 +2,5 @@ python-dotenv
 urwid
 msgpack
 mpdex @ git+https://github.com/NA-DEGEN-GIRL/multi-perp-dex.git@master
+PySide6
+qasync

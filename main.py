@@ -2,10 +2,11 @@ import os
 import logging
 from logging.handlers import RotatingFileHandler
 from core import ExchangeManager
-from ui_urwid import UrwidApp
+#from ui_urwid import UrwidApp
 from dotenv import load_dotenv
 from pathlib import Path
 import sys
+import argparse
 
 def _load_env_flexible():
     """
@@ -92,7 +93,18 @@ def _guard_basicConfig(enable: bool = True):
         return  # 앞으로의 basicConfig 호출을 전부 무시
     _logging.basicConfig = _noop
 
+def _parse_args():  # [ADD]
+    parser = argparse.ArgumentParser(description="Perp DEX Hedge")
+    parser.add_argument(
+        "--ui", "-u",
+        choices=["urwid", "qt"],
+        default=os.getenv("PDEX_UI", "urwid"),
+        help="UI 선택: urwid(기본) 또는 qt(PySide6)"
+    )
+    return parser.parse_args()
+
 def main():
+    args = _parse_args()
     _load_env_flexible()
 
     _setup_logging()     # 강제 재설정
@@ -103,8 +115,20 @@ def main():
     manager = ExchangeManager()
 
     try:
-        app = UrwidApp(manager)
-        app.run()
+        if args.ui == "urwid":
+            # [ADD] 지연 임포트
+            from ui_urwid import UrwidApp
+            app = UrwidApp(manager)
+            app.run()
+        else:
+            # [ADD] PySide6 GUI 실행
+            try:
+                from ui_qt import run_qt_app
+            except ImportError as e:
+                logging.critical("PySide6(UI=qt) 미설치 또는 ui_qt 모듈 누락: %s", e)
+                print("PySide6가 설치되어 있지 않습니다. 아래를 실행해 설치하세요:\n  pip install PySide6")
+                sys.exit(2)
+            run_qt_app(manager)
 
     except KeyboardInterrupt:
         pass
