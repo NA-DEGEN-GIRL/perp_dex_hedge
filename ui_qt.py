@@ -22,6 +22,13 @@ import qasync
 from core import ExchangeManager
 from trading_service import TradingService
 
+# 색상 정의 (미니멀: 3가지만)
+CLR_TEXT = "#e0e0e0"       # 기본 텍스트
+CLR_MUTED = "#888888"      # 보조 텍스트 (라벨)
+CLR_ACCENT = "#4fc3f7"     # 포인트 (가격/중요 값)
+CLR_COLLATERAL = "rgba(139, 125, 77, 1)" # collaterals
+        
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,6 +46,34 @@ UI_THEME = os.getenv("PDEX_UI_THEME", "dark").lower()
 
 UI_WINDOW_WIDTH = int(os.getenv("PDEX_UI_WIDTH", "1400"))
 UI_WINDOW_HEIGHT = int(os.getenv("PDEX_UI_HEIGHT", "1600"))
+
+def _format_size(value: float) -> str:
+    """
+    사이즈 포맷팅 - 값 크기에 따라 적절한 소수점 자릿수 사용
+    """
+    abs_val = abs(value)
+    if abs_val == 0:
+        return "0"
+    elif abs_val >= 10:
+        result = f"{value:,.2f}"
+    elif abs_val >= 1:
+        result = f"{value:,.3f}"
+    elif abs_val >= 0.1:
+        result = f"{value:,.4f}"
+    elif abs_val >= 0.01:
+        result = f"{value:,.5f}"
+    else:
+        result = f"{value:,.6f}"
+    
+    # 뒤의 불필요한 0 제거 (소수점 있을 때만)
+    if '.' in result:
+        result = result.rstrip('0').rstrip('.')
+    return result
+    
+    
+def _format_collateral(value: float) -> str:
+    """잔고 포맷팅 - 소수점 1자리"""
+    return f"{value:,.1f}"
 
 def _apply_app_style(app: QtWidgets.QApplication) -> None:
     app.setStyle("Fusion")
@@ -328,8 +363,19 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
 
         # 카드 제목
         self.title_label = QtWidgets.QLabel(f"[{ex_name.upper()}]")
-        self.title_label.setStyleSheet(f"color: #ffca28; font-weight: bold; font-size: {UI_FONT_SIZE}pt;")
+        self.title_label.setStyleSheet(f"color: rgba(186, 160, 85, 1); font-size: {UI_FONT_SIZE}pt;")
+        
+        self._current_price: Optional[float] = None
 
+        # 포지션 행
+        self.pos_side_label = QtWidgets.QLabel("")
+        self.pos_size_label = QtWidgets.QLabel("")
+        self.pos_pnl_label = QtWidgets.QLabel("")
+        
+        # 잔고 행 (Perp | Spot)
+        self.collat_perp_label = QtWidgets.QLabel("")
+        self.collat_spot_label = QtWidgets.QLabel("")
+        
         # 입력 위젯
         self.ticker_edit = QtWidgets.QLineEdit()
         self.qty_edit = QtWidgets.QLineEdit()
@@ -477,10 +523,13 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         self.exec_btn.setStyleSheet(BTN_EXEC)
 
         # 정보 라벨
-        self.price_label = QtWidgets.QLabel("가격: ...")
-        self.price_label.setStyleSheet("color: #81d4fa; font-weight: bold;")
+        self.price_title = QtWidgets.QLabel("가격: ")
+        self.price_title.setStyleSheet(f"color: {CLR_MUTED};")
+        self.price_label = QtWidgets.QLabel("...")
+        self.price_label.setStyleSheet("color: #81d4fa;")
         
         self.quote_label = QtWidgets.QLabel("")
+        self.quote_label.setStyleSheet(f"color: {CLR_COLLATERAL};")
         if self._is_hl_like:
             self.fee_label = QtWidgets.QLabel("Builder Fee: -")
             self.fee_label.setStyleSheet("color: #aaaaaa;")
@@ -493,11 +542,11 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
             self.dex_label = None
 
         # Position / Account Info
-        self.info_pos_label = QtWidgets.QLabel("Position: N/A")
-        self.info_acc_label = QtWidgets.QLabel("Account: N/A")
+        #self.info_pos_label = QtWidgets.QLabel("포지션: N/A")
+        #self.info_acc_label = QtWidgets.QLabel("잔고: N/A")
         # 가독성을 위해 약간의 마진과 폰트 조정
-        self.info_pos_label.setStyleSheet("margin-top: 4px; color: #e0e0e0;")
-        self.info_acc_label.setStyleSheet("margin-bottom: 4px; color: #bdbdbd;")
+        #self.info_pos_label.setStyleSheet("margin-top: 4px; color: #e0e0e0;")
+        #self.info_acc_label.setStyleSheet("margin-bottom: 4px; color: #bdbdbd;")
 
         self._build_layout()
         self._connect_signals()
@@ -507,73 +556,111 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(6)
 
-        # 1. 헤더 (거래소 이름)
+        # 1. 헤더 행: 비율로 정렬
         header_row = QtWidgets.QHBoxLayout()
-        header_row.addWidget(self.title_label)
+        header_row.setSpacing(10)
         
-        # HL-like인 경우 DEX/Fee를 거래소 이름 오른쪽에 배치
-        if self._is_hl_like:
-            header_row.addSpacing(20)
-            if self.dex_combo:
-                header_row.addWidget(QtWidgets.QLabel("DEX:"))
-                header_row.addWidget(self.dex_combo)
-            if self.fee_label:
-                header_row.addSpacing(10)
-                header_row.addWidget(self.fee_label)
+        # 거래소 이름 (비율 2)
+        header_row.addWidget(self.title_label, stretch=2)
         
-        header_row.addStretch()
+        # 가격 + Quote (비율 2)
+        price_container = QtWidgets.QWidget()
+        price_layout = QtWidgets.QHBoxLayout(price_container)
+        price_layout.setContentsMargins(0, 0, 0, 0)
+        price_layout.setSpacing(4)
+        price_layout.addWidget(self.price_label)
+        price_layout.addWidget(self.quote_label)
+        header_row.addWidget(price_container, stretch=2)
+        
+        if self._is_hl_like and self.fee_label:
+            header_row.addWidget(self.fee_label, stretch=2)
+        else:
+            header_row.addWidget(QtWidgets.QWidget(), stretch=2)
+        
+        header_row.addStretch(4)
+        
+        for b in (self.long_btn, self.short_btn, self.off_btn, self.exec_btn):
+            header_row.addWidget(b, stretch=1)
+        
         main_layout.addLayout(header_row)
 
-        # 2. 입력 행: Ticker | Qty | Type | Price
+        # 2. 입력 행: 비율로 정렬
         input_row = QtWidgets.QHBoxLayout()
         input_row.setSpacing(10)
 
-        # 라벨 + 위젯 헬퍼
         def add_field(label_txt, widget, stretch=1):
             lbl = QtWidgets.QLabel(label_txt)
-            lbl.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+            lbl.setStyleSheet(f"color: {CLR_MUTED};")
             input_row.addWidget(lbl)
             input_row.addWidget(widget, stretch=stretch)
 
-        add_field("심볼:", self.ticker_edit, stretch=2)
+        
+        if self._is_hl_like:
+            add_field("심볼:", self.ticker_edit, stretch=2)
+            input_row.addWidget(self.dex_combo, stretch=1)
+        else:
+            add_field("심볼:", self.ticker_edit, stretch=3)
+
         add_field("수량:", self.qty_edit, stretch=2)
         
-        # 주문 타입 버튼 그룹
-        #input_row.addWidget(QtWidgets.QLabel("주문 타입:"))
-        input_row.addWidget(self.market_btn)
-        input_row.addWidget(self.limit_btn)
+        # 주문 타입 버튼 (각 비율 1)
+        input_row.addWidget(self.market_btn, stretch=1)
+        input_row.addWidget(self.limit_btn, stretch=1)
         
         add_field("주문 가격:", self.price_edit, stretch=2)
-        input_row.addStretch()
+        input_row.addStretch(1)
         
         main_layout.addLayout(input_row)
 
-        # 3. 버튼 행
-        btn_row = QtWidgets.QHBoxLayout()
-        btn_row.setSpacing(10)
-        for b in (self.long_btn, self.short_btn, self.off_btn, self.exec_btn):
-            b.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
-            #b.setMinimumHeight(32)
-            btn_row.addWidget(b)
-        main_layout.addLayout(btn_row)
+        # 3. 포지션 행: [포지션] [LONG/SHORT] [Size: xxx] [PnL: xxx]
+        pos_row = QtWidgets.QHBoxLayout()
+        pos_row.setSpacing(6)
+        
+        pos_title = QtWidgets.QLabel("포지션")
+        pos_title.setStyleSheet(f"color: {CLR_MUTED};")
+        pos_title.setFixedWidth(80)
+        pos_row.addWidget(pos_title)
+        
+        self.pos_side_label.setFixedWidth(80)
+        pos_row.addWidget(self.pos_side_label)
+        
+        pos_row.addWidget(self.pos_size_label)
+        pos_row.addSpacing(20)
+        pos_row.addWidget(self.pos_pnl_label)
+        pos_row.addStretch()
+        
+        main_layout.addLayout(pos_row)
 
-        # 4. 정보 행 (Price, Dex, Fee)
-        info_row = QtWidgets.QHBoxLayout()
-        info_row.addWidget(self.price_label)
-        info_row.addSpacing(10)
-        info_row.addWidget(self.quote_label)
-        info_row.addStretch()
-        main_layout.addLayout(info_row)
-
-        # 5. 상태 정보 (Position, Account) - 구분선 느낌으로 분리
-        #sep = QtWidgets.QFrame()
-        #sep.setFrameShape(QtWidgets.QFrame.Shape.HLine)
-        #sep.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
-        #sep.setStyleSheet("background-color: #555; max-height: 1px;")
-        #main_layout.addWidget(sep)
-
-        main_layout.addWidget(self.info_pos_label)
-        main_layout.addWidget(self.info_acc_label)
+        # 4. 잔고 행: [잔고] [Perp: xxx USDC] [|] [Spot: xx USDC | xx USDH | ...]
+        collat_row = QtWidgets.QHBoxLayout()
+        collat_row.setSpacing(6)
+        
+        collat_title = QtWidgets.QLabel("잔고")
+        collat_title.setStyleSheet(f"color: {CLR_MUTED};")
+        collat_title.setFixedWidth(80)
+        collat_row.addWidget(collat_title)
+        
+        perp_lbl = QtWidgets.QLabel("Perp:")
+        perp_lbl.setStyleSheet(f"color: {CLR_MUTED};")
+        collat_row.addWidget(perp_lbl)
+        collat_row.addWidget(self.collat_perp_label)
+        
+        collat_row.addSpacing(15)
+        
+        sep_lbl = QtWidgets.QLabel("|")
+        sep_lbl.setStyleSheet("color: #444;")
+        collat_row.addWidget(sep_lbl)
+        
+        collat_row.addSpacing(15)
+        
+        spot_lbl = QtWidgets.QLabel("Spot:")
+        spot_lbl.setStyleSheet(f"color: {CLR_MUTED};")
+        collat_row.addWidget(spot_lbl)
+        collat_row.addWidget(self.collat_spot_label)
+        
+        collat_row.addStretch()
+        
+        main_layout.addLayout(collat_row)
 
     def _on_market_clicked(self):
         self.market_btn.setChecked(True)
@@ -609,26 +696,125 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
             # DEX 팝업 열림 동안 Exec 버튼 막기
             self.dex_combo.popupOpened.connect(lambda: self.exec_btn.setEnabled(False))
             self.dex_combo.popupClosed.connect(lambda: self.exec_btn.setEnabled(True))
-
+        
     def set_ticker(self, t): 
         if self.ticker_edit.text() != t: self.ticker_edit.setText(t)
     def set_qty(self, q):
         if self.qty_edit.text() != q: self.qty_edit.setText(q)
     def get_qty(self): return self.qty_edit.text().strip()
     def get_price_text(self): return self.price_edit.text().strip()
-    def set_price_label(self, px): self.price_label.setText(f"Price: {px} USDC")
+    
+    def set_price_label(self, px): 
+        self.price_label.setText(f"{px}")
+        try:
+            self._current_price = float(str(px).replace(",", ""))
+        except:
+            self._current_price = None
+
     def set_quote_label(self, txt): self.quote_label.setText(txt or "")
     
     def set_fee_label(self, txt):
         if self.fee_label:
             self.fee_label.setText(txt)
     
-    def set_info_text(self, pos_str, col_str):
-        # 이모지 사용 여부에 따라 아이콘 붙이기
-        icon_pos = "📊 " if USE_EMOJI else ""
-        icon_acc = "💰 " if USE_EMOJI else ""
-        self.info_pos_label.setText(f"{icon_pos}{pos_str}")
-        self.info_acc_label.setText(f"{icon_acc}{col_str}")
+    def set_status_info(self, json_data: dict):
+        """
+        json_data format:
+        {
+            "collateral": {
+                "perp": {"USDC": 12.1},  # or None
+                "spot": {"USDT": 10.2, "USDC": 15.0, ...}  # or None
+            },
+            "position": {
+                "size": 0.002,
+                "side": "short",  # "long" or "short"
+                "unrealized_pnl": 1.2
+            }  # or None
+        }
+        """
+        CLR_LONG = "#81c784"
+        CLR_SHORT = "#ef9a9a"
+        CLR_NEUTRAL = "#e0e0e0"
+        CLR_PNL_POS = "#4caf50"
+        CLR_PNL_NEG = "#f44336"
+        
+        # 포지션 처리
+        position = json_data.get("position") if json_data else None
+        if position and position.get("size", 0) != 0:
+            side = position.get("side", "").upper()
+            size = abs(position.get("size", 0))
+            pnl = position.get("unrealized_pnl", 0)
+            
+            # 방향 표시
+            if side == "LONG":
+                self.pos_side_label.setText("LONG")
+                self.pos_side_label.setStyleSheet(f"color: {CLR_LONG};")
+            elif side == "SHORT":
+                self.pos_side_label.setText("SHORT")
+                self.pos_side_label.setStyleSheet(f"color: {CLR_SHORT};")
+            else:
+                self.pos_side_label.setText("")
+                self.pos_side_label.setStyleSheet(f"color: {CLR_MUTED};")
+            
+            # 사이즈 표시 + USD 값
+            size_text = _format_size(size)
+            if self._current_price and self._current_price > 0:
+                usd_value = size * self._current_price
+                size_text += f" <span style='color: {CLR_MUTED};'>({usd_value:,.1f}$)</span>"
+            self.pos_size_label.setText(size_text)
+            self.pos_size_label.setTextFormat(QtCore.Qt.TextFormat.RichText)
+            self.pos_size_label.setStyleSheet(f"color: {CLR_NEUTRAL};")
+            
+            # PnL 표시
+            pnl_color = CLR_PNL_POS if pnl >= 0 else CLR_PNL_NEG
+            pnl_sign = "+" if pnl >= 0 else ""
+            self.pos_pnl_label.setText(f"PNL: {pnl_sign}{pnl:,.1f}")
+            self.pos_pnl_label.setStyleSheet(f"color: {pnl_color};")
+        else:
+            self.pos_side_label.setText("")
+            self.pos_side_label.setStyleSheet(f"color: {CLR_MUTED};")
+            self.pos_size_label.setText("")
+            self.pos_size_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+            self.pos_size_label.setStyleSheet(f"color: {CLR_MUTED};")
+            self.pos_pnl_label.setText("")
+            self.pos_pnl_label.setStyleSheet(f"color: {CLR_MUTED};")
+        
+        # 잔고 처리
+        collateral = json_data.get("collateral") if json_data else None
+        
+        # Perp 잔고 - key도 muted 색상으로
+        perp_data = collateral.get("perp") if collateral else None
+        if perp_data and any(v != 0 for v in perp_data.values()):
+            perp_parts = []
+            for k, v in perp_data.items():
+                if v != 0:
+                    perp_parts.append(f"{_format_collateral(v)} <span style='color:{CLR_COLLATERAL};'>{k}</span>")
+            self.collat_perp_label.setText(", ".join(perp_parts) if perp_parts else "")
+            self.collat_perp_label.setTextFormat(QtCore.Qt.TextFormat.RichText)
+            self.collat_perp_label.setStyleSheet(f"color: {CLR_NEUTRAL};")
+        else:
+            self.collat_perp_label.setText("")
+            self.collat_perp_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+            self.collat_perp_label.setStyleSheet(f"color: {CLR_MUTED};")
+        
+        # Spot 잔고 - 간격 넓히고 깔끔하게
+        spot_data = collateral.get("spot") if collateral else None
+        if spot_data and any(v != 0 for v in spot_data.values()):
+            spot_parts = []
+            for k, v in spot_data.items():
+                if v != 0:
+                    spot_parts.append(
+                        f"<span style='background-color:#333; padding:3px 8px; border-radius:3px;'>"
+                        f"{_format_collateral(v)} <span style='color:{CLR_COLLATERAL};'>{k}</span></span>"
+                    )
+            # 간격을 위해 &nbsp; 4개 사용
+            self.collat_spot_label.setText("&nbsp;&nbsp;&nbsp;&nbsp;".join(spot_parts) if spot_parts else "")
+            self.collat_spot_label.setTextFormat(QtCore.Qt.TextFormat.RichText)
+            self.collat_spot_label.setStyleSheet(f"color: {CLR_NEUTRAL};")
+        else:
+            self.collat_spot_label.setText("")
+            self.collat_spot_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+            self.collat_spot_label.setStyleSheet(f"color: {CLR_MUTED};")
 
     def set_order_type(self, otype):
         otype = (otype or "market").lower()
@@ -677,11 +863,6 @@ class HeaderWidget(QtWidgets.QWidget):
         self._connect_signals()
 
     def _init_ui(self):
-        # 색상 정의 (미니멀: 3가지만)
-        CLR_TEXT = "#e0e0e0"       # 기본 텍스트
-        CLR_MUTED = "#888888"      # 보조 텍스트 (라벨)
-        CLR_ACCENT = "#4fc3f7"     # 포인트 (가격/중요 값)
-        
         # 버튼 스타일 (단일 스타일)
         BTN_STYLE = """
             QPushButton {
@@ -723,7 +904,7 @@ class HeaderWidget(QtWidgets.QWidget):
         self.ticker_edit = QtWidgets.QLineEdit("BTC")
         self.ticker_edit.setFixedWidth(120)
         
-        self.price_label = QtWidgets.QLabel("---")
+        self.price_label = QtWidgets.QLabel("...")
         self.price_label.setStyleSheet(f"color: {CLR_ACCENT};")
         
         self.total_label = QtWidgets.QLabel("$0.00")
@@ -777,12 +958,13 @@ class HeaderWidget(QtWidgets.QWidget):
 
         row_id = 0
         rows.append(QtWidgets.QHBoxLayout())
-        rows[row_id].addWidget(self._label("가격($)", CLR_MUTED))
+        rows[row_id].addWidget(self._label("가격 ($)", CLR_MUTED))
         rows[row_id].addWidget(self.price_label)
         rows[row_id].addSpacing(20)
-        rows[row_id].addWidget(self._label("거래잔고", CLR_MUTED))
+        rows[row_id].addWidget(self._label("총 잔고($)", CLR_MUTED))
         rows[row_id].addWidget(self.total_label)
         rows[row_id].addStretch()
+        rows[row_id].addWidget(self.close_all_btn)
         rows[row_id].addWidget(self.quit_btn)
         
         #main_layout.addLayout(rows[row_id])
@@ -810,7 +992,6 @@ class HeaderWidget(QtWidgets.QWidget):
         
         rows[row_id].addWidget(self.exec_all_btn)
         rows[row_id].addWidget(self.reverse_btn)
-        rows[row_id].addWidget(self.close_all_btn)
         rows[row_id].addStretch()
         
         
@@ -865,7 +1046,7 @@ class HeaderWidget(QtWidgets.QWidget):
         self.price_label.setText(str(p))
     
     def set_total(self, t):
-        self.total_label.setText(f"${t:,.2f}")
+        self.total_label.setText(f"{t:,.1f}")
     
     def set_dex_choices(self, dexs, cur):
         self.dex_combo.blockSignals(True)
@@ -957,13 +1138,14 @@ class UiQtApp(QtWidgets.QMainWindow):
             # GroupBox 타이틀 대신 내부 라벨 사용
             gb_layout = layout_type(gb)
             gb_layout.setContentsMargins(5, 5, 5, 5)
+            gb_layout.setSpacing(2)
             
             if title:
                 lbl = QtWidgets.QLabel(title)
-                lbl.setStyleSheet(f"color: #ffca28; font-weight: bold; font-size: {UI_FONT_SIZE}pt; margin-bottom: 4px;")
-                gb_layout.addWidget(lbl)
+                lbl.setStyleSheet(f"color: rgba(139, 152, 103, 1); font-size: {UI_FONT_SIZE}pt;")
+                gb_layout.addWidget(lbl, stretch=0)
             
-            gb_layout.addWidget(widget)
+            gb_layout.addWidget(widget, stretch=1)
             return gb
 
         # Header
@@ -980,19 +1162,23 @@ class UiQtApp(QtWidgets.QMainWindow):
         bottom_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         
         # Exchanges Switch
-        sw_gb = create_section("Exchanges", self.exchange_switch_container)
+        sw_gb = create_section("거래소 선택", self.exchange_switch_container)
         bottom_splitter.addWidget(sw_gb)
 
         # Logs
         logs_container = QtWidgets.QWidget()
         logs_layout = QtWidgets.QVBoxLayout(logs_container)
         logs_layout.setContentsMargins(0,0,0,0)
-        logs_layout.addWidget(QtWidgets.QLabel("Trading Log:"))
-        logs_layout.addWidget(self.log_edit, stretch=3)
-        logs_layout.addWidget(QtWidgets.QLabel("System Output:"))
-        logs_layout.addWidget(self.console_edit, stretch=2)
+        trading_log = QtWidgets.QLabel("기본 로그:")
+        trading_log.setStyleSheet(f"color: rgba(109, 109, 109, 1);")
+        logs_layout.addWidget(trading_log)
+        logs_layout.addWidget(self.log_edit)
+        system_output = QtWidgets.QLabel("온갖 로그:")
+        system_output.setStyleSheet(f"color: rgba(109, 109, 109, 1);")
+        logs_layout.addWidget(system_output)
+        logs_layout.addWidget(self.console_edit)
         
-        logs_gb = create_section("Logs", logs_container)
+        logs_gb = create_section("", logs_container)
         bottom_splitter.addWidget(logs_gb)
         
         bottom_splitter.setStretchFactor(0, 1)
@@ -1270,8 +1456,24 @@ class UiQtApp(QtWidgets.QMainWindow):
 
                     # Pos / Col
                     try:
-                        pos, col, col_val = await self.service.fetch_status(n, sym, True, True)
-                        # Inject USDC value
+                        pos, col, col_val, json_data = await self.service.fetch_status(n, sym, True, True)
+                        
+                        # json_data format
+                        """
+                        { "collateral": {
+                            "perp":{"USDC":12.1},  # or None
+                            "spot":{"USDT":10.2,"USDC":15.0,...} # or None, optional
+                            },
+                          "position": {
+                          "size":0.002,"side":"short","unrealized_pnl":1.2
+                          } # or None
+                        }
+                        """
+                        c.set_status_info(json_data)
+                        
+                        if col_val: 
+                            self.collateral[n] = float(col_val)
+                        """
                         try:
                             px_val = float(str(p).replace(",",""))
                         except: px_val = None
@@ -1281,6 +1483,7 @@ class UiQtApp(QtWidgets.QMainWindow):
                         c.set_info_text(pos_fmt, col_fmt)
                         
                         if col_val: self.collateral[n] = float(col_val)
+                        """
                     except: pass
                     
             except: pass
