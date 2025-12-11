@@ -16,19 +16,14 @@
 > 4) “아주 작은 수량”으로 시장가 번 테스트 후 사용
 > 5) 큰 금액을 넣어서 하지마세요. 어떤 버그가 있을지 모르니 본인이 감당가능한 선에서 돌리세요.
 
-# Hyperliquid Multi‑DEX Trader (urwid TUI)
+# Hyperliquid Multi‑DEX Trader
 ![스크린샷](screenshot.png)
 
-여러 Hyperliquid 엔진 기반 Perp DEX + mpdex 기반 비‑HL DEX(Lighter/Paradex/Edgex/GRVT/Backpack/Variational)를 하나의 터미널 UI(urwid)에서 동시에 거래하는 앱입니다.
+여러 Hyperliquid 엔진 기반 Perp DEX + mpdex 기반 비‑HL DEX(Lighter/Paradex/Edgex/GRVT/Backpack/Variational)를 하나의 UI에서 동시에 거래하는 앱입니다.
 
 - GitHub: https://github.com/NA-DEGEN-GIRL/perp_dex_hedge
-- 기본 UI: urwid
 
 ---
-
-## 다슬기 & 달팽이용 실행 파일 제공 (업데이트시 제공이 안될수도 있음)
-- 윈도우용 PerpDexHedge.exe 를 그냥 실행시키면 됩니다.
-- **.env / config.ini 설정은 하셔야 합니다.**
 
 ## 지원 거래소
 - hyperliquid 기반: 옵션으로 추가 가능, builder code와 fee만 알면됩니다.
@@ -110,6 +105,8 @@ python-dotenv
 urwid
 msgpack
 mpdex @ git+https://github.com/NA-DEGEN-GIRL/multi-perp-dex.git@master
+PySide6
+qasync
 ```
 
 ## 1.1 **지능이 없는 다슬기용**: Windows 스크립트만 실행해서 설치/업데이트/실행하기
@@ -336,82 +333,154 @@ BACKPACK_SECRET_KEY=https://backpack.exchange/portfolio/settings/api-keys에서_
 
 ### B) config.ini (표시/엔진/수수료)
 
-중요: `[섹션명]`은 “이름”일 뿐이고, **실제 엔진/백엔드**는 `exchange=` 값으로 결정됩니다.
+중요: `[섹션명]`은 "이름"일 뿐이고, **실제 엔진/백엔드**는 `exchange=` 값으로 결정됩니다.
 
-- 생략(혹은 `exchange=hyperliquid`): 일반 HL(native)
-- `exchange=superstack`: HL이지만 지갑 provider 서명 경로
-- `exchange=treadfi.hyperliquid`: **하이브리드** — 조회=HL, 주문=mpdex
-- 비‑HL(mpdex): `lighter | paradex | edgex | grvt | backpack`
-- show = True 로 한 카드들을 초기에 보여줌, 필요없을 경우 show = False로 해당 .env 관련 설정을 삭제 혹은 =오른쪽 부분을 지우면됨. 예시, VARIATIONAL_WALLET_ADDRESS=
+#### exchange 값 종류
+| exchange 값 | 설명 |
+|-------------|------|
+| (생략 또는 `hyperliquid`) | 일반 HL(native) - 빌더코드 사용 |
+| `superstack` | HL이지만 지갑 provider 서명 경로 |
+| `treadfi.hyperliquid` | **하이브리드** — 조회=HL, 주문=tread.fi |
+| `lighter` | Lighter (비-HL) |
+| `paradex` | Paradex (비-HL) |
+| `edgex` | EdgeX (비-HL) |
+| `grvt` | GRVT (비-HL) |
+| `backpack` | Backpack (비-HL) |
+| `variational` | Variational (비-HL) |
+| `pacifica` | Pacifica (비-HL) |
 
-예시:
+#### 주요 설정 키
+| 키 | 설명 | 예시 |
+|----|------|------|
+| `show` | UI에 표시 여부 | `True` / `False` |
+| `exchange` | 거래소 엔진 종류 | `hyperliquid`, `lighter`, `backpack` 등 |
+| `builder_code` | HL 빌더 코드 (HL 전용) | `0x24a7...` |
+| `fee_rate` | 기본 수수료 (limit / market) | `20 / 25` 또는 `20` |
+| `dex_fee_rate` | HIP-3 DEX 공통 수수료 | `30 / 50` |
+| `{dex}_fee_rate` | 개별 DEX 수수료 (우선 적용) | `xyz_fee_rate = 5 / 5` |
+| `FrontendMarket` | 시장가 주문 시 FrontendMarket tif 사용, 신경안써도됨 | `True` / `False` |
+
+#### 수수료 우선순위 (DEX 주문 시)
+1. 개별 DEX 수수료 (`xyz_fee_rate`, `flx_fee_rate` 등)
+2. `dex_fee_rate` (HIP-3 공통)
+3. `fee_rate` (기본값)
+
+#### 수수료 표기 형식
+```ini
+fee_rate = 20 / 25      # limit=20, market=25
+fee_rate = 20           # limit=market=20
+fee_rate = 20, 25       # 쉼표도 가능
+fee_rate = 20 | 25      # 파이프도 가능
+```
+
+#### HIP-3 DEX 지원 현황 (거래소별)
+| 거래소 | xyz | flx | vntl | hyna | 비고 |
+|--------|:---:|:---:|:----:|:----:|------|
+| treadfi_hl | ✓ | ✗ | ✗ | ✗ | |
+| hyena | ✓ | ✓ | ✓ | ✓ | |
+| mass | ✓ | ✗ | ✗ | ✗ | |
+| lit | ✓ | ✓ | ✓ | ✓ | |
+| dexari | ✓ | ✓ | ✓ | ✓ | 티어별 수수료 상이 |
+| liquid | ✓ | ✓ | ✓ | ✓ | |
+| based | ✓ | ✓ | ✓ | ✓ | |
+| supercexy | ✓ | ✗ | ✗ | ✗ | |
+| bullpen | ✓ | ✓ | ✓ | ✓ | |
+| dreamcash | ✓ | ✗ | ✗ | ✗ | |
+| superstack | ✓ | ✗ | ✗ | ✗ | |
+
+> **FLX / VNTL 거래 시 USDH가 spot에 있어야 거래 가능**
+
+> **HYNA 거래 시 USDE가 spot에 있어야 거래 가능**
+
+#### config.ini 예시
 
 ```ini
-# - HL: 섹션에 exchange 키가 없음(순수 Hyperliquid 경로)
-# - superstack: exchange=superstack (HL-like, 지갑 provider 서명)
-# - 비‑HL(mpdex): exchange=< lighter | paradex | edgex | grvt | backpack >
+# ===== HL 기반 거래소 =====
 
-# 일반 Hyperliquid 엔진 (빌더코드 없이 호출하는 기본 경로)
-[hl]
-show = False
-# 설명: hl 섹션은 빌더코드를 사용하지 않는 일반 예시
-
-[variational]
-show = True
-exchagne = variational
-
-# Tread.fi (조회=HL, 주문=mpdex)
+# Tread.fi (하이브리드: 조회=HL, 주문=tread.fi)
 [treadfi_hl]
+exchange = treadfi.hyperliquid
+fee_rate = 20
 show = True
-exchange = treadfi.hyperliquid   ; 하이브리드 모드 트리거
-fee_rate = 20                    ; (표시용) 코드상 주문 수수료 계산에는 직접 사용하지 않음
-# builder_code 불필요
 
-# HL: Lit (일반 HL + 빌더코드 예시)
+# Hyena (HL)
+[hyena]
+builder_code = 0x1924b8561eef20e70ede628a296175d358be80e5
+fee_rate = 0 / 0
+show = True
+
+# MASS (HL)
+[mass]
+builder_code = 0xf944069b489f1ebff4c3c6a6014d58cbef7c7009
+fee_rate = 85 / 55
+show = True
+
+# Lit (HL + FrontendMarket)
 [lit]
 builder_code = 0x24a747628494231347f4f6aead2ec14f50bcc8b7
-fee_rate = 20 / 25         ; limit / market
-dex_fee_rate = 30 / 50     ; (선택) HIP-3 공통 DEX 수수료, 없으면 fee_rate 사용
+fee_rate = 35 / 50
 show = True
 FrontendMarket = True
 
-# HL: Dexari
+# Dexari (HL) - 티어별 수수료 10~50, 직접 확인 필요
 [dexari]
 builder_code = 0x7975cafdff839ed5047244ed3a0dd82a89866081
 fee_rate = 10 / 10
 show = True
-# fee_rate 본인 tier에 따라 다름 10~50 까지, 확인하고 고쳐 쓰기
 
-# HL: Liquid
+# Liquid (HL)
 [liquid]
 builder_code = 0x6D4E7F472e6A491B98CBEeD327417e310Ae8ce48
 fee_rate = 50 / 50
 show = True
 
-# HL: BasedOne
+# BasedOne (HL) - DEX별 개별 수수료 설정 예시
 [based]
 builder_code = 0x1924b8561eef20e70ede628a296175d358be80e5
 fee_rate = 25 / 25
+xyz_fee_rate = 5 / 5
+flx_fee_rate = 5 / 5
+vntl_fee_rate = 25 / 25
+hyna_fee_rate = 25 / 25
 show = False
 FrontendMarket = True
 
-# HL: Supercexy
+# Supercexy (HL)
 [supercexy]
 builder_code = 0x0000000bfbf4c62c43c2e71ef0093f382bf7a7b4
-fee_rate = 15 / 16
-dex_fee_rate = 1 / 1        ; HIP-3 공통 수수료(예: xyz/flx/vntl)
+fee_rate = 14 / 14
 show = True
 FrontendMarket = True
 
+# Bullpen (HL)
+[bullpen]
+builder_code = 0x4c8731897503f86a2643959cbaa1e075e84babb7
+fee_rate = 32 / 40
+show = True
+FrontendMarket = True
+
+# Dreamcash (HL)
+[dreamcash]
+builder_code = 0x4950994884602d1b6c6d96e4fe30f58205c39395
+fee_rate = 0 / 0
+show = True
+FrontendMarket = True
+
+# Superstack (HL, 자체 지갑 provider)
 [superstack]
 builder_code = 0xcdb943570bcb48a6f1d3228d0175598fea19e87b
 fee_rate = 4 / 11
 show = True
 FrontendMarket = True
-exchange = superstack       ; need!
+exchange = superstack
 
-# 비‑HL(mpdex)
+# ===== 비-HL 거래소 (mpdex) =====
+
 [lighter]
+show = False
+exchange = lighter
+
+[liquid_lt]  # Liquid Lighter
 show = False
 exchange = lighter
 
@@ -428,26 +497,36 @@ show = False
 exchange = grvt
 
 [backpack]
-show = False
+show = True
 exchange = backpack
 
+[variational]
+show = False
+exchange = variational
+
 [pacifica]
-show = True
+show = False
 exchange = pacifica
 ```
 
-수수료 표기 규칙
-- `fee_rate = L / M`: 메인 HL(DEX 미선택) 주문의 표시용 수수료(정수, 빌더 tier 기준).
-- `dex_fee_rate = L / M`: HIP‑3 DEX 주문의 공통 기본값(설정 없으면 fee_rate 사용).
-- 개별 DEX 우선 적용: `xyz_fee_rate`, `vntl_fee_rate`, `flx_fee_rate` 등이 있으면 해당 DEX에 우선 적용.
-- 우선순위(DEX 주문): **개별 DEX > dex_fee_rate > fee_rate**.
-
----
+#### 설정 체크리스트
+1. **사용할 거래소**: `show = True` 설정
+2. **사용 안 할 거래소**: `show = False` 또는 해당 섹션 삭제
+3. **HL 거래소**: `builder_code`, `fee_rate` 확인
+4. **비-HL 거래소**: `exchange = 거래소명` 필수
+5. **.env 연동**: `[섹션명]` → `.env`의 `섹션명대문자_*` 키와 매칭
+   - 예: `[lit]` → `LIT_WALLET_ADDRESS`, `LIT_AGENT_API_KEY` 등
+   - 예: `[treadfi_hl]` → `TREADFI_HL_LOGIN_WALLET_ADDRESS` 등
 
 ## 3. 실행
 
 ```bash
 python main.py
+```
+
+#### 3.1 기존 UI 사용을 원할시
+```bash
+python main.py --ui urwid
 ```
 
 ---
@@ -574,14 +653,7 @@ python main.py
 
 ---
 
-## 5. 로그/디버깅
-
-- 파일 로그: `debug.log`(UTF‑8 텍스트)
-- 콘솔 로그는 기본 비활성(urwid 화면 보전). 필요 시 `PDEX_LOG_CONSOLE=1`로 임시 활성화.
-
----
-
-## 6. 보안 주의
+## 5. 보안 주의
 
 - `.env`는 절대 커밋/공유 금지
 - hyperliquid 환경 설정시 **agent api key 와 agent private key 사용**, 지갑의 private key 사용 금지
@@ -589,7 +661,7 @@ python main.py
 
 ---
 
-## 7. 기술 스택
+## 6. 기술 스택
 
 - UI: urwid(기본)
 - 거래소 API: hyperliquid api, mpdex(Lighter/Paradex/Edgex/GRVT/Backpack)
@@ -597,7 +669,7 @@ python main.py
 
 ---
 
-## 8. 로드맵
+## 7. 로드맵
 
 - ✅ urwid UI 안정화 / HL 가격 공유 / Exchanges 토글
 - ✅ REPEAT 즉시 중단 / Tab·Shift+Tab 탐색 안정화
