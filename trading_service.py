@@ -6,12 +6,7 @@ import os
 import logging
 from logging.handlers import RotatingFileHandler
 from decimal import Decimal, ROUND_HALF_UP #, ROUND_UP, ROUND_DOWN
-#from eth_account import Account
-#import aiohttp
-#import asyncio
-#from hl_sign import sign_l1_action as hl_sign_l1_action
-#from hl_ws.hl_ws_client import HLWSClientRaw, http_to_wss
-#from superstack_payload import get_superstack_payload
+from ui_config import ui_print as print
 
 STABLES = ["USDC", "USDH", "USDT0", "USDE"]
 STABLES_DISPLAY = ["USDC", "USDH", "USDT", "USDE"]
@@ -79,6 +74,8 @@ def _ensure_ts_logger():
     # 1회 안내 로그(최초 설정 확인용)
     logger.info("[TS-LOG] attached ts logger level=%s file=%s console=%s propagate=%s",
                 lvl_name, log_file, to_console, propagate)
+    print("[TS-LOG] attached ts logger level=%s file=%s console=%s propagate=%s",
+                lvl_name, log_file, to_console, propagate)
 
 # 모듈 import 시점에 전용 핸들러를 붙인다.
 _ensure_ts_logger()
@@ -88,6 +85,7 @@ try:
 except Exception:
     symbol_create = None
     logger.warning("[mpdex] exchange_factory.symbol_create 를 찾지 못했습니다. 비-HL 거래소는 비활성화됩니다.")
+    print("[mpdex] exchange_factory.symbol_create 를 찾지 못했습니다. 비-HL 거래소는 비활성화됩니다.")
 
 class TradingService:
     def __init__(self, manager: ExchangeManager):
@@ -231,6 +229,7 @@ class TradingService:
 
         except Exception as e:
             logger.debug("[FEE] pick reason error: %s", e)
+            print("[FEE] pick reason error: %s", e)
 
         return None, "none", None
 
@@ -298,6 +297,7 @@ class TradingService:
 
         except Exception as e:
             logger.info("[PRICE] %s fetch_price failed: %s", exchange_name, e)
+            print("[PRICE] %s fetch_price failed: %s", exchange_name, e)
             return "Error"
 
     async def fetch_status(
@@ -408,6 +408,7 @@ class TradingService:
         
         except Exception as e:
             logger.info(f"[{exchange_name}] non-HL fetch_status error: {e}")
+            print(f"[{exchange_name}] non-HL fetch_status error: {e}")
             json_data = {'position':None, 'collateral':None}
             return last_pos_str, last_col_str, last_col_val, last_json_data
     
@@ -423,6 +424,7 @@ class TradingService:
         client_id: Optional[str] = None,
     ) -> dict:
         logger.info(f"[EXECUTE] start: ex={exchange_name} sym={symbol} side={side} amt={amount} type={order_type}")
+        print(f"[EXECUTE] start: ex={exchange_name} sym={symbol} side={side} amt={amount} type={order_type}")
         ex = self.manager.get_exchange(exchange_name)
         if not ex:
             raise RuntimeError(f"{exchange_name} not configured")
@@ -461,10 +463,12 @@ class TradingService:
             pos = await ex.get_position(native)
             if not pos or float(pos.get("size") or 0.0) == 0.0:
                 logger.info("[CLOSE] %s non-HL: no position", exchange_name)
+                print("[CLOSE] %s non-HL: no position", exchange_name)
                 return None
             res = await ex.close_position(native, pos)
             oid = self._extract_order_id(res)
             return {"id": oid, "info": res}
         except Exception as e:
             logger.info(f"[CLOSE] non-HL {exchange_name} failed: {e}")
+            print(f"[CLOSE] non-HL {exchange_name} failed: {e}")
             raise

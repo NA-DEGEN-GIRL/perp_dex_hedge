@@ -21,16 +21,15 @@ import qasync
 
 from core import ExchangeManager
 from trading_service import TradingService
+from ui_config import set_ui_type, ui_print as print
 
 # 색상 정의 (미니멀: 3가지만)
 CLR_TEXT = "#e0e0e0"       # 기본 텍스트
 CLR_MUTED = "#888888"      # 보조 텍스트 (라벨)
 CLR_ACCENT = "#4fc3f7"     # 포인트 (가격/중요 값)
 CLR_COLLATERAL = "rgba(139, 125, 77, 1)" # collaterals
-        
 
 logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # 전역 설정
@@ -1182,11 +1181,11 @@ class UiQtApp(QtWidgets.QMainWindow):
         trading_log = QtWidgets.QLabel("기본 로그:")
         trading_log.setStyleSheet(f"color: rgba(109, 109, 109, 1);")
         logs_layout.addWidget(trading_log)
-        logs_layout.addWidget(self.log_edit)
+        logs_layout.addWidget(self.log_edit,stretch=2)
         system_output = QtWidgets.QLabel("온갖 로그:")
         system_output.setStyleSheet(f"color: rgba(109, 109, 109, 1);")
         logs_layout.addWidget(system_output)
-        logs_layout.addWidget(self.console_edit)
+        logs_layout.addWidget(self.console_edit,stretch=1)
         
         logs_gb = create_section("", logs_container)
         bottom_splitter.addWidget(logs_gb)
@@ -1211,8 +1210,6 @@ class UiQtApp(QtWidgets.QMainWindow):
         h.close_all_clicked.connect(self._on_close_all)
         h.repeat_clicked.connect(self._on_repeat_toggle)  # [수정]
         h.burn_clicked.connect(self._on_burn_toggle)      # [수정]
-        h.repeat_clicked.connect(lambda: self._log("[REPEAT] Not implemented"))
-        h.burn_clicked.connect(lambda: self._log("[BURN] Not implemented"))
         h.quit_clicked.connect(self.close)
         h.dex_changed.connect(self._on_header_dex)
 
@@ -1220,9 +1217,15 @@ class UiQtApp(QtWidgets.QMainWindow):
     def _append_console_text(self, text: str):
         text = text.replace("\r\n", "\n")
         if text.strip():
-            self.console_edit.appendPlainText(text.rstrip())
+            # 현재 스크롤바가 맨 아래에 있는지 확인
             sb = self.console_edit.verticalScrollBar()
-            sb.setValue(sb.maximum())
+            at_bottom = (sb.value() >= sb.maximum() - 10)  # 약간의 여유
+            
+            self.console_edit.appendPlainText(text.rstrip())
+            
+            # 맨 아래에 있었을 때만 자동 스크롤
+            if at_bottom:
+                sb.setValue(sb.maximum())
 
     # --- Async Init & Loops ---
     async def async_init(self):
@@ -1418,40 +1421,80 @@ class UiQtApp(QtWidgets.QMainWindow):
         asyncio.get_running_loop().create_task(self._do_close_all())
 
     # --- Actions ---
-    async def _do_exec(self, n):
+    async def _do_exec(self, n, silent=False) -> bool:
+        """
+        단일 거래소 주문 실행
+        silent=True: 간단 결과만 반환 (EXEC ALL용)
+        silent=False: 상세 로그 출력 (개별 버튼용)
+        """
         c = self.cards.get(n)
-        if not c: return
+        if not c:
+            return False
         try:
             qty = float(c.get_qty())
             otype = self.order_type[n]
             price = float(c.get_price_text()) if otype == "limit" else None
             side = self.side[n]
-            
+
             is_hl_like = self.mgr.is_hl_like(n)
             if is_hl_like:
                 sym = _compose_symbol(self.dex_by_ex[n], self.symbol_by_ex[n])
             else:
                 sym = self.symbol_by_ex[n].upper()
 
-            self._log(f"[{n}] {side} {qty} {sym} @ {otype}")
+            if not silent:
+                self._log(f"[{n.upper()}] {side} {qty} {sym} @ {otype}")
+
             res = await self.service.execute_order(n, sym, qty, otype, side, price)
-            self._log(f"[{n}] OK: {res['id']}")
+
+            if not silent:
+                self._log(f"[{n.upper()}] OK: {res['id']}")
+
+            return True
         except Exception as e:
-            self._log(f"[{n}] FAIL: {e}")
+            if not silent:
+                self._log(f"[{n.upper()}] FAIL: {e}")
+            raise e
 
     async def _do_exec_all(self):
-        tasks = []
+        # 실행할 거래소 목록 수집
+        exec_items = []
         for n in self.mgr.visible_names():
             if self.enabled.get(n) and self.side.get(n):
-                tasks.append(self._do_exec(n))
-        if tasks: await asyncio.gather(*tasks)
+                exec_items.append(n)
+
+        if not exec_items:
+            self._log("[EXEC ALL] 실행할 거래소 없음")
+            return
+
+        self._log(f"[EXEC ALL] {len(exec_items)}개 거래소 주문 시작...")
+
+        tasks = [self._do_exec(n, silent=True) for n in exec_items]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # 결과 집계
+        success = 0
+        failed = 0
+        for n, res in zip(exec_items, results):
+            if isinstance(res, Exception):
+                self._log(f"  ✗ {n.upper()}: {res}")
+                failed += 1
+            elif res:
+                self._log(f"  ✓ {n.upper()}: 주문 완료")
+                success += 1
+            else:
+                failed += 1
+
+        self._log(f"[EXEC ALL] 완료 (성공: {success}, 실패: {failed})")
 
     async def _do_close_all(self):
-        tasks = []
+        close_items = []
         for n in self.mgr.visible_names():
             if self.enabled.get(n):
-                try: hint = float(self.current_price.replace(",",""))
-                except: hint = None
+                try:
+                    hint = float(self.current_price.replace(",", ""))
+                except:
+                    hint = None
 
                 is_hl_like = self.mgr.is_hl_like(n)
                 if is_hl_like:
@@ -1459,11 +1502,33 @@ class UiQtApp(QtWidgets.QMainWindow):
                 else:
                     sym = self.symbol_by_ex[n].upper()
 
-                tasks.append(self.service.close_position(n, sym, hint))
+                close_items.append((n, sym, hint))
 
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-            self._log("Closed all positions")
+        if not close_items:
+            self._log("[CLOSE ALL] 종료할 포지션 없음")
+            return
+
+        self._log(f"[CLOSE ALL] {len(close_items)}개 포지션 종료 시작...")
+
+        tasks = [
+            self.service.close_position(n, sym, hint)
+            for n, sym, hint in close_items
+        ]
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # 결과 집계
+        success = 0
+        failed = 0
+        for (n, sym, _), res in zip(close_items, results):
+            if isinstance(res, Exception):
+                self._log(f"  ✗ {n.upper()}: {res}")
+                failed += 1
+            else:
+                self._log(f"  ✓ {n.upper()}: 종료 완료")
+                success += 1
+
+        self._log(f"[CLOSE ALL] 완료 (성공: {success}, 실패: {failed})")
 
     def _on_repeat_toggle(self):
         loop = asyncio.get_running_loop()
@@ -1471,22 +1536,22 @@ class UiQtApp(QtWidgets.QMainWindow):
         # burn 돌고 있으면 먼저 멈춤
         if self._burn_task and not self._burn_task.done():
             self._burn_cancel.set()
-            self._log("[BURN] 중지 요청")
+            self._log("[태우기] 중지 요청")
         
         # repeat 돌고 있으면 먼저 멈춤
         if self._repeat_task and not self._repeat_task.done():
             self._repeat_cancel.set()
-            self._log("[REPEAT] 중지 요청")
+            self._log("[반복] 중지 요청")
         else:
             try:
                 times = int(self.header.repeat_times.text() or "0")
                 a = float(self.header.repeat_min.text() or "0")
                 b = float(self.header.repeat_max.text() or "0")
             except Exception:
-                self._log("[REPEAT] 입력 파싱 실패")
+                self._log("[반복] 입력 파싱 실패")
                 return
             if times <= 0 or a < 0 or b < 0:
-                self._log("[REPEAT] Times>=1, Interval>=0 필요")
+                self._log("[반복] Times>=1, Interval>=0 필요")
                 return
             if b < a:
                 a, b = b, a
@@ -1499,11 +1564,11 @@ class UiQtApp(QtWidgets.QMainWindow):
         # 먼저 기존 repeat/burn 정리
         if self._repeat_task and not self._repeat_task.done():
             self._repeat_cancel.set()
-            self._log("[REPEAT] 중지 요청")
+            self._log("[반복] 중지 요청")
 
         if self._burn_task and not self._burn_task.done():
             self._burn_cancel.set()
-            self._log("[BURN] 중지 요청")
+            self._log("[태우기] 중지 요청")
             return
 
         # 입력값 파싱
@@ -1515,10 +1580,10 @@ class UiQtApp(QtWidgets.QMainWindow):
             burn_min = float(self.header.burn_min.text() or "0")
             burn_max = float(self.header.burn_max.text() or "0")
         except Exception:
-            self._log("[BURN] 입력 파싱 실패")
+            self._log("[태우기] 입력 파싱 실패")
             return
         if base_times <= 0 or rep_min < 0 or rep_max < 0 or burn_min < 0 or burn_max < 0:
-            self._log("[BURN] Times>=1, Interval>=0 필요")
+            self._log("[태우기] Times>=1, Interval>=0 필요")
             return
         if rep_max < rep_min:
             rep_min, rep_max = rep_max, rep_min
@@ -1532,41 +1597,41 @@ class UiQtApp(QtWidgets.QMainWindow):
 
     async def _repeat_runner(self, times: int, a: float, b: float):
         import random
-        self._log(f"[REPEAT] 시작: {times}회, 간격 {a:.2f}~{b:.2f}s 랜덤")
+        self._log(f"[반복] 시작: {times}회, 간격 {a:.2f}~{b:.2f}s 랜덤")
         try:
             i = 1
             while i <= times:
                 if self._repeat_cancel.is_set() or self._burn_cancel.is_set():
-                    self._log(f"[REPEAT] 취소됨 (진행 {i-1}/{times})")
+                    self._log(f"[반복] 취소됨 (진행 {i-1}/{times})")
                     break
 
-                self._log(f"[REPEAT] 실행 {i}/{times}")
+                self._log(f"[반복] 실행 {i}/{times}")
                 await self._do_exec_all()
 
                 if i >= times:
                     break
 
                 delay = random.uniform(a, b)
-                self._log(f"[REPEAT] 대기 {delay:.2f}s ...")
+                self._log(f"[반복] 대기 {delay:.2f}s ...")
                 try:
                     await asyncio.wait_for(self._wait_cancel_any(), timeout=delay)
                 except asyncio.TimeoutError:
                     pass
 
                 if self._repeat_cancel.is_set() or self._burn_cancel.is_set():
-                    self._log(f"[REPEAT] 취소됨 (대기 중)")
+                    self._log(f"[반복] 취소됨 (대기 중)")
                     break
 
                 i += 1
 
-            self._log("[REPEAT] 완료")
+            self._log("[반복] 완료")
         finally:
             self._repeat_task = None
             self._repeat_cancel.clear()
 
     async def _burn_runner(self, burn_times: int, base_times: int, rep_min: float, rep_max: float, burn_min: float, burn_max: float):
         import random
-        self._log(f"[BURN] 시작: burn_times={burn_times}, base={base_times}")
+        self._log(f"[태우기] 시작: burn_times={burn_times}, base={base_times}")
         try:
             # 첫 라운드
             if self._burn_cancel.is_set():
@@ -1582,7 +1647,7 @@ class UiQtApp(QtWidgets.QMainWindow):
                     break
                 
                 delay = random.uniform(burn_min, burn_max)
-                self._log(f"[BURN] interval 대기 {delay:.2f}s ... (round {round_idx}/{burn_times if burn_times>0 else '∞'})")
+                self._log(f"[태우기] interval 대기 {delay:.2f}s ... (round {round_idx}/{burn_times if burn_times>0 else '∞'})")
                 try:
                     await asyncio.wait_for(self._wait_cancel_any(), timeout=delay)
                 except asyncio.TimeoutError:
@@ -1602,7 +1667,7 @@ class UiQtApp(QtWidgets.QMainWindow):
 
                 round_idx += 1
 
-            self._log("[BURN] 완료")
+            self._log("[태우기] 완료")
         finally:
             self._burn_task = None
             self._burn_cancel.clear()
@@ -1624,7 +1689,7 @@ class UiQtApp(QtWidgets.QMainWindow):
             elif cur == "sell":
                 self._set_side(n, "buy")
                 cnt += 1
-        self._log(f"[ALL] REVERSE 완료: {cnt}개")
+        self._log(f"[ALL] 롱/숏 전환 완료: {cnt}개")
 
     # --- Loops ---
     async def _price_loop(self):
@@ -1787,7 +1852,16 @@ class UiQtApp(QtWidgets.QMainWindow):
 
     def _log(self, m):
         logger.info(m)
+        
+        # 현재 스크롤바가 맨 아래에 있는지 확인
+        sb = self.log_edit.verticalScrollBar()
+        at_bottom = (sb.value() >= sb.maximum() - 10)
+        
         self.log_edit.appendPlainText(m)
+        
+        # 맨 아래에 있었을 때만 자동 스크롤
+        if at_bottom:
+            sb.setValue(sb.maximum())
 
     async def shutdown(self):
         self._stopping = True
@@ -1804,6 +1878,7 @@ class UiQtApp(QtWidgets.QMainWindow):
         e.accept()
 
 def run_qt_app(mgr):
+    set_ui_type("qt")
     # WSL/X11 환경 감지 및 플랫폼 설정
     try:
         release = os.uname().release
