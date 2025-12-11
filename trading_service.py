@@ -365,7 +365,7 @@ class TradingService:
                     json_data['collateral']['spot'] = {}
                     spot_map = c.get("spot", {})
 
-                    for i, stable in enumerate(STABLES):
+                    for i, stable in enumerate(STABLES_DISPLAY):
                         val = float(spot_map.get(stable, 0) or 0.0)
                         stable_display = STABLES_DISPLAY[i]
                         json_data['collateral']['spot'][stable_display] = val
