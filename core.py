@@ -203,7 +203,7 @@ class ExchangeManager:
             
             try:
                 print()
-                print(name," is creating...")
+                print(name,"is beeing created...")
                 key = self._build_mpdex_key(name, exchange_platform)
                 if key is None:
                     print(f"[{name}] .env 키가 누락되어 생성 스킵")

@@ -1247,7 +1247,7 @@ class UrwidApp:
                         logger.info(f"[UI] Price update for {name} failed: {px_e}")
                         self.card_price_text[name].set_text(("pnl_neg", "Price: Error???"))
 
-                pos_str, col_str, col_val = await self.service.fetch_status(name, sym, need_balance=need_collat, need_position=need_pos)
+                pos_str, col_str, col_val, _ = await self.service.fetch_status(name, sym, need_balance=need_collat, need_position=need_pos)
 
                 if need_collat or is_ws:
                     self.collateral[name] = float(col_val)

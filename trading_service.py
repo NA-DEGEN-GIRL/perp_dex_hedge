@@ -13,7 +13,8 @@ from decimal import Decimal, ROUND_HALF_UP #, ROUND_UP, ROUND_DOWN
 #from hl_ws.hl_ws_client import HLWSClientRaw, http_to_wss
 #from superstack_payload import get_superstack_payload
 
-HL_SPOT_STABLES = ["USDC", "USDH", "USDT", "USDE"]
+STABLES = ["USDC", "USDH", "USDT0", "USDE"]
+STABLES_DISPLAY = ["USDC", "USDH", "USDT", "USDE"]
 
 # 모듈 전용 로거
 logger = logging.getLogger(__name__)
@@ -96,7 +97,6 @@ class TradingService:
         self._last_collateral: dict[str, float] = {}
         self._last_status: dict[str, Tuple[str, str, float]] = {}  # (pos_str, col_str, col_val)
         self._last_balance_at: dict[str, float] = {}               # balance 최근 호출 시각
-        
         logger.info("[TS] init (effective=%s handlers=%d)",
                     logging.getLevelName(logger.getEffectiveLevel()),
                     len(logging.getLogger().handlers))
@@ -306,28 +306,48 @@ class TradingService:
         symbol: str,
         need_balance: bool = True,  # [변경] balance 스킵 가능
         need_position: bool = True,    # 포지션 갱신 여부
-    ) -> Tuple[str, str, float]:
+    ) -> Tuple[str, str, float, dict]:
         """
         - HL 카드의 collateral을 'HL+모든 DEX 합산 AV'로 표기
         - USDH는 항상 함께 표기(0일 때도)
         - 데이터 미수신 시 직전 캐시 유지로 깜빡임 방지
+        - 마지막 dict는 새로운 ui_qt를 위함
         """
-        meta = self.manager.get_meta(exchange_name) or {}
-        ex = self.manager.get_exchange(exchange_name)
-        is_hl_like = self.manager.is_hl_like(exchange_name)
+        
+        try:
+            meta = self.manager.get_meta(exchange_name) or {}
+            ex = self.manager.get_exchange(exchange_name)
+            is_hl_like = self.manager.is_hl_like(exchange_name)
+            json_data = {
+                'position': None,
+                'collateral': {
+                    'perp': {},
+                    'spot': {}
+                }
+            }
+        except Exception as e:
+            print('fetch_status: initializetion error',{e})
+            json_data = {'position': None, 'collateral': {'perp': {}, 'spot': {}}}
+
+        try:
+            perp_quote = ex.get_perp_quote(symbol)
+        except Exception as e:
+            perp_quote = 'USD'
+            print('fetch_status: perp_quote error',{e})
+        
         if not ex:
-            return "📊 Position: N/A", "💰 Account Value: N/A", 0.0
+            return "📊 포지션: N/A", "💰 잔고: N/A", 0.0, json_data
         
         # 직전 캐시 불러오기 (없으면 기본값)
-        last_pos_str, last_col_str, last_col_val = self._last_status.get(
+        default_json = {'position': None, 'collateral': {'perp': {}, 'spot': {}}}
+        last_pos_str, last_col_str, last_col_val, last_json_data = self._last_status.get(
             exchange_name,
-            ("📊 Position: N/A", "💰 Account Value: N/A", self._last_collateral.get(exchange_name, 0.0)),
+            ("📊 포지션: N/A", "💰 잔고: N/A", self._last_collateral.get(exchange_name, 0.0), default_json),
         )
 
-        # 1) mpdex (hl=False) 처리
-        #if not is_hl_like:
         try:
             col_val = self._last_collateral.get(exchange_name, 0.0)
+            json_data['collateral']['perp'] = {perp_quote: col_val}
             
             is_ws = hasattr(ex,"fetch_by_ws") and getattr(ex,"fetch_by_ws",False)
             has_spot = False
@@ -336,30 +356,37 @@ class TradingService:
             if need_balance or is_ws:
                 c = await ex.get_collateral()
                 col_val = float(c.get("total_collateral") or 0.0)
+                json_data['collateral']['perp'][perp_quote] = col_val
                 self._last_collateral[exchange_name] = col_val
                 self._last_balance_at[exchange_name] = time.monotonic()
                 # {'available_collateral': 1816.099087, 'total_collateral': 1816.099087, 'spot': {'USDH': 0.0, 'USDC': 0.0, 'USDT': 0.0}}
                 has_spot = "spot" in c
                 if has_spot:
+                    json_data['collateral']['spot'] = {}
                     spot_map = c.get("spot", {})
-                    for stable in HL_SPOT_STABLES:
-                        stables.append(float(spot_map.get(stable, 0) or 0.0))
+
+                    for i, stable in enumerate(STABLES):
+                        val = float(spot_map.get(stable, 0) or 0.0)
+                        stable_display = STABLES_DISPLAY[i]
+                        json_data['collateral']['spot'][stable_display] = val
+                        stables.append(val)
                     
             if has_spot:
-                spot_parts = [f"{amt:,.1f} {stable}" for stable, amt in zip(HL_SPOT_STABLES, stables)]
+                spot_parts = [f"{amt:,.1f} {stable}" for stable, amt in zip(STABLES_DISPLAY, stables)]
                 spot_str = ", ".join(spot_parts) if spot_parts else "—"
                 col_str = (
-                    f"💰 Account Value: [red]PERP[/] {col_val:,.1f} USDC | "
+                    f"💰 잔고: [red]PERP[/] {col_val:,.1f} USDC | "
                     f"[cyan]SPOT[/] {spot_str}"
                 )
             else:
-                col_str = f"💰 Account Value: {col_val:,.1f} USDC"
+                col_str = f"💰 잔고: {col_val:,.1f} USDC"
 
             pos_str = last_pos_str
             if need_position  or is_ws:
                 native = self._to_native_symbol(exchange_name, symbol)
                 pos = await ex.get_position(native)
-                pos_str = "📊 Position: N/A"
+                json_data['position'] = None
+                pos_str = "📊 포지션: N/A"
                 if pos and float(pos.get("size") or 0.0) != 0.0:
                     side_raw = str(pos.get("side") or "").lower()
                     side = "LONG" if side_raw == "long" else "SHORT"
@@ -367,16 +394,22 @@ class TradingService:
                     pnl = float(pos.get("unrealized_pnl") or 0.0)
                     side_color = "green" if side == "LONG" else "red"
                     pnl_color = "green" if pnl >= 0 else "red"
-                    pos_str = f"📊 [{side_color}]{side}[/] {size:.5f} | PnL: [{pnl_color}]{pnl:,.1f}[/]"
+                    pos_str = f"📊 [{side_color}]{side}[/] {size:.5f} PnL: [{pnl_color}]{pnl:,.1f}[/]"
+                    
+                    json_data["position"] = {
+                        'side': side,
+                        'size': size,
+                        'unrealized_pnl': pnl
+                    }
 
             
-            self._last_status[exchange_name] = (pos_str, col_str, col_val)
-            return pos_str, col_str, col_val
+            self._last_status[exchange_name] = (pos_str, col_str, col_val, json_data)
+            return pos_str, col_str, col_val, json_data
         
         except Exception as e:
             logger.info(f"[{exchange_name}] non-HL fetch_status error: {e}")
-            # 실패 시에도 이전 값을 그대로 반환(깜빡임 방지)
-            return last_pos_str, last_col_str, last_col_val
+            json_data = {'position':None, 'collateral':None}
+            return last_pos_str, last_col_str, last_col_val, last_json_data
     
     async def execute_order(
         self,
