@@ -1258,45 +1258,70 @@ class UiQtApp(QtWidgets.QMainWindow):
                 row += 1
 
     def _rebuild_cards(self):
-        for c in self.cards.values():
-            c.setParent(None); c.deleteLater()
-        self.cards.clear()
+        # [최적화] 기존 카드 중 여전히 visible한 것은 재사용
+        visible_names = set(self.mgr.visible_names())
+        current_names = set(self.cards.keys())
         
-        # 레이아웃 아이템(스페이서 등) 정리
-        while self.cards_layout.count():
-            item = self.cards_layout.takeAt(0)
-            if item.widget(): item.widget().deleteLater()
+        # 제거할 카드
+        to_remove = current_names - visible_names
+        for name in to_remove:
+            card = self.cards.pop(name, None)
+            if card:
+                card.setParent(None)
+                card.deleteLater()
         
-        self.cards_layout.addStretch(1)
-
-        for name in self.mgr.visible_names():
-            is_hl_like = self.mgr.is_hl_like(name)
-            card = ExchangeCardWidget(name, self.dex_names, is_hl_like=is_hl_like)
-
-            st = self.exchange_state[name]
-            card.set_ticker(st.symbol)
-            card.set_order_type(st.order_type)
-            card.set_side_enabled(st.enabled, st.side)
-            
-            if is_hl_like:
-                card.set_dex(st.dex)
-            
-            # Signals
-            card.execute_clicked.connect(self._on_exec_one)
-            card.long_clicked.connect(self._on_long)
-            card.short_clicked.connect(self._on_short)
-            card.off_clicked.connect(self._on_off)
-            card.order_type_changed.connect(self._on_otype_change)
-            card.dex_changed.connect(self._on_card_dex)
-            card.ticker_changed.connect(self._on_card_ticker)
-            
-            self.cards[name] = card
-            self.cards_layout.insertWidget(self.cards_layout.count()-1, card)
+        # 새로 추가할 카드
+        to_add = visible_names - current_names
         
+        # 레이아웃 재구성이 필요한 경우에만
+        if to_remove or to_add:
+            # 레이아웃 아이템 정리 (stretch 포함)
+            while self.cards_layout.count():
+                item = self.cards_layout.takeAt(0)
+                # 카드는 이미 처리했으므로 stretch만 정리
+                if item.widget() and item.widget() not in self.cards.values():
+                    item.widget().deleteLater()
+            
+            # visible 순서대로 카드 추가
+            for name in self.mgr.visible_names():
+                if name in to_add:
+                    # 새 카드 생성
+                    is_hl_like = self.mgr.is_hl_like(name)
+                    card = ExchangeCardWidget(name, self.dex_names, is_hl_like=is_hl_like)
+                    
+                    st = self.exchange_state[name]
+                    card.set_ticker(st.symbol)
+                    card.set_order_type(st.order_type)
+                    card.set_side_enabled(st.enabled, st.side)
+                    
+                    if is_hl_like:
+                        card.set_dex(st.dex)
+                    
+                    # Signals 연결
+                    card.execute_clicked.connect(self._on_exec_one)
+                    card.long_clicked.connect(self._on_long)
+                    card.short_clicked.connect(self._on_short)
+                    card.off_clicked.connect(self._on_off)
+                    card.order_type_changed.connect(self._on_otype_change)
+                    card.dex_changed.connect(self._on_card_dex)
+                    card.ticker_changed.connect(self._on_card_ticker)
+                    
+                    self.cards[name] = card
+                
+                # 카드를 레이아웃에 추가
+                self.cards_layout.addWidget(self.cards[name])
+            
+            # 마지막에 stretch 추가
+            self.cards_layout.addStretch(1)
+        
+        # All Qty 동기화
         aq = self.header.allqty_edit.text()
-        if aq: self._on_allqty(aq)
+        if aq:
+            for c in self.cards.values():
+                c.set_qty(aq)
         
-        for n in self.mgr.visible_names():
+        # HL-like만 fee 업데이트
+        for n in visible_names:
             if self.mgr.is_hl_like(n):
                 self._update_fee(n)
 
@@ -1352,8 +1377,11 @@ class UiQtApp(QtWidgets.QMainWindow):
 
     def _on_toggle_show(self, n, state):
         self.mgr.get_meta(n)["show"] = state
-        if not state: self._set_side(n, None)
-        self._rebuild_cards()
+        if not state: 
+            self._set_side(n, None)
+        
+        # [수정] 비동기로 카드 재구성하여 UI 블로킹 방지
+        QtCore.QTimer.singleShot(0, self._rebuild_cards)
 
     def _on_exec_one(self, n):
         asyncio.get_running_loop().create_task(self._do_exec(n))
