@@ -32,7 +32,7 @@ GitHub: https://github.com/NA-DEGEN-GIRL/perp_dex_hedge
 ## 📌 지원 거래소
 
 ### Hyperliquid 기반
-- MASS, Lit, Dexari, Liquid, BasedOne, Supercexy, Bullpen, Dreamcash, Hyena
+- MASS, Lit, Dexari, Liquid, BasedOne, Supercexy, Bullpen, Dreamcash, HyEna
 - 특수 케이스: Superstack, Tread.fi (with Hyperliquid)
 
 ### 비-Hyperliquid 거래소
@@ -348,7 +348,7 @@ show = True
 - **XYZ**: Unit에서 운영
 - **FLX**: Felix에서 운영 (USDH 필요)
 - **VNTL**: Ventuals에서 운영 (USDH 필요)
-- **HYNA**: Hyena에서 운영 (USDE 필요)
+- **HYNA**: HyEna에서 운영 (USDE 필요)
 
 > ⚠️ FLX/VNTL 거래 시 **Spot에 USDH**가 있어야 합니다  
 > ⚠️ HYNA 거래 시 **Spot에 USDE**가 있어야 합니다
