@@ -108,8 +108,8 @@ def _parse_args():  # [ADD]
     parser.add_argument(
         "--ui", "-u",
         choices=["urwid", "qt"],
-        default=os.getenv("PDEX_UI", "urwid"),
-        help="UI 선택: urwid(기본) 또는 qt(PySide6)"
+        default=os.getenv("PDEX_UI", "qt"),
+        help="UI 선택: urwid 또는 qt(PySide6, 기본)"
     )
     return parser.parse_args()
 
