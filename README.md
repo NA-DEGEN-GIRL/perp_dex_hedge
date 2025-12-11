@@ -56,7 +56,7 @@ winget install -e --id Git.Git
 python --version
 git --version
 ```
-
+**스크립트 실행**
 ```powershell
 # 1. 프로젝트 다운로드
 git clone https://github.com/NA-DEGEN-GIRL/perp_dex_hedge
