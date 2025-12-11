@@ -275,6 +275,8 @@ class DexComboBox(QtWidgets.QComboBox):
         # 기본 QComboBox의 activated 시그널을 사용
         # (항목이 선택되면 자동으로 발생)
         self.activated.connect(self._on_activated)
+        # 스크롤 휠로 값 변경 방지
+        self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
 
     def _on_activated(self, index: int) -> None:
         # 선택 후 명시적으로 팝업 닫기
@@ -334,8 +336,32 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         self.price_edit = QtWidgets.QLineEdit()
 
         # Type: DexComboBox 사용
-        self.order_type_combo = DexComboBox()
-        self.order_type_combo.addItems(["Market", "Limit"])
+        self.market_btn = QtWidgets.QPushButton("Market")
+        self.limit_btn = QtWidgets.QPushButton("Limit")
+        
+        self.market_btn.setCheckable(True)
+        self.limit_btn.setCheckable(True)
+        self.market_btn.setChecked(True)  # 기본값: Market
+        BTN_ORDER_TYPE = """
+            QPushButton {
+                background-color: #3a3a3a;
+                color: #e0e0e0;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 4px 12px;
+            }
+            QPushButton:hover {
+                background-color: #4a4a4a;
+                border-color: #666;
+            }
+            QPushButton:checked {
+                background-color: #1b3146ff;
+                border: 2px solid #93b4c4ff;
+                color: #93b4c4ff;
+            }
+        """
+        self.market_btn.setStyleSheet(BTN_ORDER_TYPE)
+        self.limit_btn.setStyleSheet(BTN_ORDER_TYPE)
 
         # 버튼
         self.long_btn = QtWidgets.QPushButton("Long")
@@ -511,10 +537,15 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
 
         add_field("심볼:", self.ticker_edit, stretch=2)
         add_field("수량:", self.qty_edit, stretch=2)
-        add_field("주문 타입:", self.order_type_combo, stretch=1)
+        
+        # 주문 타입 버튼 그룹
+        #input_row.addWidget(QtWidgets.QLabel("주문 타입:"))
+        input_row.addWidget(self.market_btn)
+        input_row.addWidget(self.limit_btn)
+        
         add_field("주문 가격:", self.price_edit, stretch=2)
         input_row.addStretch()
-
+        
         main_layout.addLayout(input_row)
 
         # 3. 버튼 행
@@ -544,15 +575,29 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         main_layout.addWidget(self.info_pos_label)
         main_layout.addWidget(self.info_acc_label)
 
+    def _on_market_clicked(self):
+        self.market_btn.setChecked(True)
+        self.limit_btn.setChecked(False)
+        self.price_edit.setEnabled(False)
+        self.price_edit.setPlaceholderText("auto")
+        self.order_type_changed.emit(self.ex_name, "market")
+
+    def _on_limit_clicked(self):
+        self.market_btn.setChecked(False)
+        self.limit_btn.setChecked(True)
+        self.price_edit.setEnabled(True)
+        self.price_edit.setPlaceholderText("")
+        self.order_type_changed.emit(self.ex_name, "limit")
+
     def _connect_signals(self) -> None:
         self.exec_btn.clicked.connect(lambda: self.execute_clicked.emit(self.ex_name))
         self.long_btn.clicked.connect(lambda: self.long_clicked.emit(self.ex_name))
         self.short_btn.clicked.connect(lambda: self.short_clicked.emit(self.ex_name))
         self.off_btn.clicked.connect(lambda: self.off_clicked.emit(self.ex_name))
         
-        self.order_type_combo.currentTextChanged.connect(
-            lambda text: self.order_type_changed.emit(self.ex_name, text.lower())
-        )
+        self.market_btn.clicked.connect(self._on_market_clicked)
+        self.limit_btn.clicked.connect(self._on_limit_clicked)
+
         self.ticker_edit.textChanged.connect(
             lambda text: self.ticker_changed.emit(self.ex_name, text)
         )
@@ -564,10 +609,6 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
             # DEX 팝업 열림 동안 Exec 버튼 막기
             self.dex_combo.popupOpened.connect(lambda: self.exec_btn.setEnabled(False))
             self.dex_combo.popupClosed.connect(lambda: self.exec_btn.setEnabled(True))
-
-        # Type 팝업 열림 동안도 막기
-        self.order_type_combo.popupOpened.connect(lambda: self.exec_btn.setEnabled(False))
-        self.order_type_combo.popupClosed.connect(lambda: self.exec_btn.setEnabled(True))
 
     def set_ticker(self, t): 
         if self.ticker_edit.text() != t: self.ticker_edit.setText(t)
@@ -591,13 +632,13 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
 
     def set_order_type(self, otype):
         otype = (otype or "market").lower()
-        idx = 0 if otype == "market" else 1
-        if self.order_type_combo.currentIndex() != idx:
-            self.order_type_combo.setCurrentIndex(idx)
+        is_market = (otype == "market")
         
-        is_limit = (otype == "limit")
-        self.price_edit.setEnabled(is_limit)
-        self.price_edit.setPlaceholderText("" if is_limit else "auto")
+        self.market_btn.setChecked(is_market)
+        self.limit_btn.setChecked(not is_market)
+        
+        self.price_edit.setEnabled(not is_market)
+        self.price_edit.setPlaceholderText("auto" if is_market else "")
 
     def set_side_enabled(self, enabled, side):
         for b in (self.long_btn, self.short_btn, self.off_btn):
