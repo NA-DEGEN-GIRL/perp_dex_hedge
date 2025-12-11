@@ -314,9 +314,10 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
     dex_changed = QtCore.Signal(str, str)
     ticker_changed = QtCore.Signal(str, str)
 
-    def __init__(self, ex_name: str, dex_choices: List[str], parent=None):
+    def __init__(self, ex_name: str, dex_choices: List[str], is_hl_like: bool = True, parent=None):
         super().__init__(parent)
         self.ex_name = ex_name
+        self._is_hl_like = is_hl_like
         
         # GroupBox 타이틀 대신 안쪽 라벨 사용
         self.setTitle("") 
@@ -325,7 +326,7 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
 
         # 카드 제목
         self.title_label = QtWidgets.QLabel(f"[{ex_name.upper()}]")
-        self.title_label.setStyleSheet("color: #ffca28; font-weight: bold; font-size: 13pt;")
+        self.title_label.setStyleSheet(f"color: #ffca28; font-weight: bold; font-size: {UI_FONT_SIZE}pt;")
 
         # 입력 위젯
         self.ticker_edit = QtWidgets.QLineEdit()
@@ -339,115 +340,131 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         # 버튼
         self.long_btn = QtWidgets.QPushButton("Long")
         self.short_btn = QtWidgets.QPushButton("Short")
-        self.off_btn = QtWidgets.QPushButton("Off")
-        self.exec_btn = QtWidgets.QPushButton("Execute")
+        self.off_btn = QtWidgets.QPushButton("미선택")
+        self.exec_btn = QtWidgets.QPushButton("주문 실행")
 
         self.exec_btn.setAutoDefault(False)
         self.exec_btn.setDefault(False)
 
-        # 버튼 스타일
-        btn_style_base = "border: none; border-radius: 4px; font-weight: bold; padding: 6px;"
+        BTN_BASE = """
+            QPushButton {
+                background-color: #3a3a3a;
+                color: #e0e0e0;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 8px 16px;
+            }
+            QPushButton:hover {
+                background-color: #4a4a4a;
+                border-color: #666;
+            }
+            QPushButton:pressed {
+                background-color: #2a2a2a;
+            }
+            QPushButton:disabled {
+                background-color: #2a2a2a;
+                color: #555;
+                border-color: #333;
+            }
+            QPushButton:checked {
+                border: 2px solid #888;
+            }
+        """
         
-        self.long_btn.setStyleSheet("""
+        BTN_LONG = """
             QPushButton {
-                background-color: #388e3c;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                font-weight: bold;
-                padding: 6px;
+                background-color: #3a3a3a;
+                color: #81c784;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 8px 16px;
             }
             QPushButton:hover {
-                background-color: #4caf50;
+                background-color: #4a4a4a;
+                border-color: #81c784;
             }
             QPushButton:pressed {
-                background-color: #2e7d32;
+                background-color: #2a2a2a;
             }
             QPushButton:disabled {
-                background-color: #333;
-                color: #777;
+                background-color: #2a2a2a;
+                color: #555;
+                border-color: #333;
             }
             QPushButton:checked {
-                border: 2px solid white;
+                border: 2px solid #81c784;
+                background-color: #2e3d2e;
             }
-        """)
-
-        self.short_btn.setStyleSheet("""
+        """
+        
+        BTN_SHORT = """
             QPushButton {
-                background-color: #d32f2f;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                font-weight: bold;
-                padding: 6px;
+                background-color: #3a3a3a;
+                color: #ef9a9a;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 8px 16px;
             }
             QPushButton:hover {
-                background-color: #ef5350;
+                background-color: #4a4a4a;
+                border-color: #ef9a9a;
             }
             QPushButton:pressed {
-                background-color: #b71c1c;
+                background-color: #2a2a2a;
             }
             QPushButton:disabled {
-                background-color: #333;
-                color: #777;
+                background-color: #2a2a2a;
+                color: #555;
+                border-color: #333;
             }
             QPushButton:checked {
-                border: 2px solid white;
+                border: 2px solid #ef9a9a;
+                background-color: #3d2e2e;
             }
-        """)
-
-        self.off_btn.setStyleSheet("""
+        """
+        
+        BTN_EXEC = """
             QPushButton {
-                background-color: #616161;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                font-weight: bold;
-                padding: 6px;
+                background-color: #3a3a3a;
+                color: #90caf9;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 8px 16px;
             }
             QPushButton:hover {
-                background-color: #757575;
+                background-color: #4a4a4a;
+                border-color: #90caf9;
             }
             QPushButton:pressed {
-                background-color: #424242;
+                background-color: #2a2a2a;
             }
             QPushButton:disabled {
-                background-color: #333;
-                color: #777;
+                background-color: #2a2a2a;
+                color: #555;
+                border-color: #333;
             }
-            QPushButton:checked {
-                border: 2px solid white;
-            }
-        """)
+        """
 
-        self.exec_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #1976d2;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                font-weight: bold;
-                padding: 6px;
-            }
-            QPushButton:hover {
-                background-color: #2196f3;
-            }
-            QPushButton:pressed {
-                background-color: #0d47a1;
-            }
-            QPushButton:disabled {
-                background-color: #333;
-                color: #777;
-            }
-        """)
+        self.long_btn.setStyleSheet(BTN_LONG)
+        self.short_btn.setStyleSheet(BTN_SHORT)
+        self.off_btn.setStyleSheet(BTN_BASE)
+        self.exec_btn.setStyleSheet(BTN_EXEC)
 
         # 정보 라벨
-        self.price_label = QtWidgets.QLabel("Price: ...")
+        self.price_label = QtWidgets.QLabel("가격: ...")
         self.price_label.setStyleSheet("color: #81d4fa; font-weight: bold;")
         
         self.quote_label = QtWidgets.QLabel("")
-        self.fee_label = QtWidgets.QLabel("Builder Fee: -")
-        self.fee_label.setStyleSheet("color: #aaaaaa;")
+        if self._is_hl_like:
+            self.fee_label = QtWidgets.QLabel("Builder Fee: -")
+            self.fee_label.setStyleSheet("color: #aaaaaa;")
+            self.dex_combo = DexComboBox()
+            self.dex_combo.addItems(self._dex_choices)
+            self.dex_label = QtWidgets.QLabel("DEX:")
+        else:
+            self.fee_label = None
+            self.dex_combo = None
+            self.dex_label = None
 
         # Position / Account Info
         self.info_pos_label = QtWidgets.QLabel("Position: N/A")
@@ -455,10 +472,6 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         # 가독성을 위해 약간의 마진과 폰트 조정
         self.info_pos_label.setStyleSheet("margin-top: 4px; color: #e0e0e0;")
         self.info_acc_label.setStyleSheet("margin-bottom: 4px; color: #bdbdbd;")
-
-        # DEX 선택
-        self.dex_combo = DexComboBox()
-        self.dex_combo.addItems(self._dex_choices)
 
         self._build_layout()
         self._connect_signals()
@@ -471,6 +484,17 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         # 1. 헤더 (거래소 이름)
         header_row = QtWidgets.QHBoxLayout()
         header_row.addWidget(self.title_label)
+        
+        # HL-like인 경우 DEX/Fee를 거래소 이름 오른쪽에 배치
+        if self._is_hl_like:
+            header_row.addSpacing(20)
+            if self.dex_combo:
+                header_row.addWidget(QtWidgets.QLabel("DEX:"))
+                header_row.addWidget(self.dex_combo)
+            if self.fee_label:
+                header_row.addSpacing(10)
+                header_row.addWidget(self.fee_label)
+        
         header_row.addStretch()
         main_layout.addLayout(header_row)
 
@@ -485,10 +509,11 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
             input_row.addWidget(lbl)
             input_row.addWidget(widget, stretch=stretch)
 
-        add_field("T:", self.ticker_edit, stretch=4)
-        add_field("Q:", self.qty_edit, stretch=2)
-        add_field("Type:", self.order_type_combo, stretch=3)
-        add_field("P:", self.price_edit, stretch=3)
+        add_field("심볼:", self.ticker_edit, stretch=2)
+        add_field("수량:", self.qty_edit, stretch=2)
+        add_field("주문 타입:", self.order_type_combo, stretch=1)
+        add_field("주문 가격:", self.price_edit, stretch=2)
+        input_row.addStretch()
 
         main_layout.addLayout(input_row)
 
@@ -497,7 +522,7 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         btn_row.setSpacing(10)
         for b in (self.long_btn, self.short_btn, self.off_btn, self.exec_btn):
             b.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
-            b.setMinimumHeight(32)
+            #b.setMinimumHeight(32)
             btn_row.addWidget(b)
         main_layout.addLayout(btn_row)
 
@@ -507,19 +532,14 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         info_row.addSpacing(10)
         info_row.addWidget(self.quote_label)
         info_row.addStretch()
-        
-        info_row.addWidget(QtWidgets.QLabel("DEX:"))
-        info_row.addWidget(self.dex_combo)
-        info_row.addSpacing(10)
-        info_row.addWidget(self.fee_label)
         main_layout.addLayout(info_row)
 
         # 5. 상태 정보 (Position, Account) - 구분선 느낌으로 분리
-        sep = QtWidgets.QFrame()
-        sep.setFrameShape(QtWidgets.QFrame.Shape.HLine)
-        sep.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
-        sep.setStyleSheet("background-color: #555; max-height: 1px;")
-        main_layout.addWidget(sep)
+        #sep = QtWidgets.QFrame()
+        #sep.setFrameShape(QtWidgets.QFrame.Shape.HLine)
+        #sep.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
+        #sep.setStyleSheet("background-color: #555; max-height: 1px;")
+        #main_layout.addWidget(sep)
 
         main_layout.addWidget(self.info_pos_label)
         main_layout.addWidget(self.info_acc_label)
@@ -533,16 +553,18 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         self.order_type_combo.currentTextChanged.connect(
             lambda text: self.order_type_changed.emit(self.ex_name, text.lower())
         )
-        self.dex_combo.currentTextChanged.connect(
-            lambda text: self.dex_changed.emit(self.ex_name, text)
-        )
         self.ticker_edit.textChanged.connect(
             lambda text: self.ticker_changed.emit(self.ex_name, text)
         )
 
-        # DEX 팝업 열림 동안 Exec 버튼 막기 (오클릭 방지)
-        self.dex_combo.popupOpened.connect(lambda: self.exec_btn.setEnabled(False))
-        self.dex_combo.popupClosed.connect(lambda: self.exec_btn.setEnabled(True))
+        if self._is_hl_like and self.dex_combo:
+            self.dex_combo.currentTextChanged.connect(
+                lambda text: self.dex_changed.emit(self.ex_name, text)
+            )
+            # DEX 팝업 열림 동안 Exec 버튼 막기
+            self.dex_combo.popupOpened.connect(lambda: self.exec_btn.setEnabled(False))
+            self.dex_combo.popupClosed.connect(lambda: self.exec_btn.setEnabled(True))
+
         # Type 팝업 열림 동안도 막기
         self.order_type_combo.popupOpened.connect(lambda: self.exec_btn.setEnabled(False))
         self.order_type_combo.popupClosed.connect(lambda: self.exec_btn.setEnabled(True))
@@ -555,7 +577,10 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
     def get_price_text(self): return self.price_edit.text().strip()
     def set_price_label(self, px): self.price_label.setText(f"Price: {px} USDC")
     def set_quote_label(self, txt): self.quote_label.setText(txt or "")
-    def set_fee_label(self, txt): self.fee_label.setText(txt)
+    
+    def set_fee_label(self, txt):
+        if self.fee_label:
+            self.fee_label.setText(txt)
     
     def set_info_text(self, pos_str, col_str):
         # 이모지 사용 여부에 따라 아이콘 붙이기
@@ -586,14 +611,14 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
             elif side == "sell": self.short_btn.setChecked(True)
 
     def set_dex(self, dex):
-        idx = self.dex_combo.findText(dex, QtCore.Qt.MatchFlag.MatchFixedString)
-        if idx >= 0: self.dex_combo.setCurrentIndex(idx)
+        if self.dex_combo:
+            idx = self.dex_combo.findText(dex, QtCore.Qt.MatchFlag.MatchFixedString)
+            if idx >= 0: self.dex_combo.setCurrentIndex(idx)
 
 
 # ---------------------------------------------------------------------------
 # 헤더 위젯
 # ---------------------------------------------------------------------------
-
 class HeaderWidget(QtWidgets.QWidget):
     ticker_changed = QtCore.Signal(str)
     allqty_changed = QtCore.Signal(str)
@@ -611,130 +636,178 @@ class HeaderWidget(QtWidgets.QWidget):
         self._connect_signals()
 
     def _init_ui(self):
-        # 위젯 생성
+        # 색상 정의 (미니멀: 3가지만)
+        CLR_TEXT = "#e0e0e0"       # 기본 텍스트
+        CLR_MUTED = "#888888"      # 보조 텍스트 (라벨)
+        CLR_ACCENT = "#4fc3f7"     # 포인트 (가격/중요 값)
+        
+        # 버튼 스타일 (단일 스타일)
+        BTN_STYLE = """
+            QPushButton {
+                background-color: #3a3a3a;
+                color: #e0e0e0;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background-color: #4a4a4a;
+                border-color: #666;
+            }
+            QPushButton:pressed {
+                background-color: #2a2a2a;
+            }
+        """
+        
+        BTN_DANGER_STYLE = """
+            QPushButton {
+                background-color: #3a3a3a;
+                color: #ef5350;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background-color: #4a4a4a;
+                border-color: #ef5350;
+            }
+            QPushButton:pressed {
+                background-color: #2a2a2a;
+            }
+        """
+
+        # ===== 위젯 생성 =====
+        
+        # Row 1 위젯들
         self.ticker_edit = QtWidgets.QLineEdit("BTC")
-        self.price_label = QtWidgets.QLabel("Price: ...")
-        self.total_label = QtWidgets.QLabel("Total: 0.0 USDC")
-        self.quit_btn = QtWidgets.QPushButton("QUIT")
+        self.ticker_edit.setFixedWidth(120)
+        
+        self.price_label = QtWidgets.QLabel("---")
+        self.price_label.setStyleSheet(f"color: {CLR_ACCENT};")
+        
+        self.total_label = QtWidgets.QLabel("$0.00")
+        self.total_label.setStyleSheet(f"color: {CLR_ACCENT};")
         
         self.allqty_edit = QtWidgets.QLineEdit()
-        self.exec_all_btn = QtWidgets.QPushButton("EXECUTE ALL")
-        self.reverse_btn = QtWidgets.QPushButton("REVERSE")
-        self.close_all_btn = QtWidgets.QPushButton("CLOSE ALL")
+        self.allqty_edit.setFixedWidth(100)
         
         self.dex_combo = DexComboBox()
+        self.dex_combo.setFixedWidth(100)
         
+        # Row 1 버튼들
+        self.exec_all_btn = QtWidgets.QPushButton("전체 주문 수행")
+        self.exec_all_btn.setStyleSheet(BTN_STYLE)
+        
+        self.reverse_btn = QtWidgets.QPushButton("롱/숏 전환")
+        self.reverse_btn.setStyleSheet(BTN_STYLE)
+        
+        self.close_all_btn = QtWidgets.QPushButton("모든 포지션 종료")
+        self.close_all_btn.setStyleSheet(BTN_DANGER_STYLE)
+        
+        self.quit_btn = QtWidgets.QPushButton("프로그램 종료")
+        self.quit_btn.setStyleSheet(BTN_DANGER_STYLE)
+        
+        # Row 2 위젯들 (REPEAT)
         self.repeat_times = QtWidgets.QLineEdit()
+        self.repeat_times.setFixedWidth(60)
         self.repeat_min = QtWidgets.QLineEdit()
+        self.repeat_min.setFixedWidth(80)
         self.repeat_max = QtWidgets.QLineEdit()
-        self.repeat_btn = QtWidgets.QPushButton("REPEAT")
+        self.repeat_max.setFixedWidth(80)
+        self.repeat_btn = QtWidgets.QPushButton("반복 실행")
+        self.repeat_btn.setStyleSheet(BTN_STYLE)
         
+        # Row 2 위젯들 (BURN)
         self.burn_count = QtWidgets.QLineEdit()
+        self.burn_count.setFixedWidth(60)
         self.burn_min = QtWidgets.QLineEdit()
+        self.burn_min.setFixedWidth(80)
         self.burn_max = QtWidgets.QLineEdit()
-        self.burn_btn = QtWidgets.QPushButton("BURN")
+        self.burn_max.setFixedWidth(80)
+        self.burn_btn = QtWidgets.QPushButton("태우기 실행")
+        self.burn_btn.setStyleSheet(BTN_STYLE)
 
-        # 스타일
-        self.price_label.setStyleSheet("color: #81d4fa; font-weight: bold;")
-        self.total_label.setStyleSheet("color: #a5d6a7; font-weight: bold;")
-        self.quit_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #d32f2f;
-                color: white;
-                font-weight: bold;
-                border: none;
-                border-radius: 4px;
-                padding: 5px;
-            }
-            QPushButton:hover {
-                background-color: #ef5350;
-            }
-            QPushButton:pressed {
-                background-color: #b71c1c;
-            }
-        """)
-                
-        self.exec_all_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #1565c0;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 5px;
-            }
-            QPushButton:hover {
-                background-color: #1976d2;
-            }
-            QPushButton:pressed {
-                background-color: #0d47a1;
-            }
-        """)
+        # ===== 레이아웃 =====
+        main_layout = QtWidgets.QVBoxLayout(self)
+        main_layout.setContentsMargins(8, 6, 8, 6)
+        main_layout.setSpacing(8)
 
-        self.close_all_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #c62828;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 5px;
-            }
-            QPushButton:hover {
-                background-color: #e53935;
-            }
-            QPushButton:pressed {
-                background-color: #b71c1c;
-            }
-        """)
+        rows = []
 
-        # 레이아웃
-        grid = QtWidgets.QGridLayout(self)
-        grid.setSpacing(8)
+        row_id = 0
+        rows.append(QtWidgets.QHBoxLayout())
+        rows[row_id].addWidget(self._label("가격($)", CLR_MUTED))
+        rows[row_id].addWidget(self.price_label)
+        rows[row_id].addSpacing(20)
+        rows[row_id].addWidget(self._label("거래잔고", CLR_MUTED))
+        rows[row_id].addWidget(self.total_label)
+        rows[row_id].addStretch()
+        rows[row_id].addWidget(self.quit_btn)
+        
+        #main_layout.addLayout(rows[row_id])
 
-        # 라벨 생성 헬퍼 (오른쪽 정렬)
-        def L(txt):
-            lbl = QtWidgets.QLabel(txt)
-            lbl.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
-            return lbl
+        # --- Row 1: 메인 컨트롤 ---
+        row_id += 1
+        rows.append(QtWidgets.QHBoxLayout())
+        rows[row_id].setSpacing(8)
+        
+        rows[row_id].addWidget(self._label("거래 심볼", CLR_MUTED))
+        rows[row_id].addWidget(self.ticker_edit)
+        
+        rows[row_id].addSpacing(20)
+        
+        rows[row_id].addWidget(self._label("수량", CLR_MUTED))
+        rows[row_id].addWidget(self.allqty_edit)
+        
+        rows[row_id].addSpacing(20)
+        
+        rows[row_id].addWidget(self._label("DEX", CLR_MUTED))
+        rows[row_id].addWidget(self.dex_combo)
+        
+        #rows[row_id].addStretch()
+        rows[row_id].setSpacing(20)
+        
+        rows[row_id].addWidget(self.exec_all_btn)
+        rows[row_id].addWidget(self.reverse_btn)
+        rows[row_id].addWidget(self.close_all_btn)
+        rows[row_id].addStretch()
+        
+        
+        #main_layout.addLayout(rows[row_id])
 
-        # 1행
-        grid.addWidget(L("Ticker:"), 0, 0)
-        grid.addWidget(self.ticker_edit, 0, 1)
-        grid.addWidget(self.price_label, 0, 2)
-        grid.addWidget(self.total_label, 0, 3)
-        grid.addWidget(self.quit_btn, 0, 4)
+        # REPEAT
+        row_id += 1
+        rows.append(QtWidgets.QHBoxLayout())
+        rows[row_id].setSpacing(8)
+        rows[row_id].addWidget(self._label("반복 수행횟수", CLR_MUTED))
+        rows[row_id].addWidget(self.repeat_times)
+        rows[row_id].addWidget(self._label("반복 대기시간(초)", CLR_MUTED))
+        rows[row_id].addWidget(self.repeat_min)
+        rows[row_id].addWidget(self._label("~", CLR_MUTED))
+        rows[row_id].addWidget(self.repeat_max)
+        rows[row_id].addWidget(self.repeat_btn)
+        rows[row_id].addStretch()
+        
+        # BURN
+        row_id += 1
+        rows.append(QtWidgets.QHBoxLayout())
+        rows[row_id].setSpacing(8)
+        rows[row_id].addWidget(self._label("태우기 횟수", CLR_MUTED))
+        rows[row_id].addWidget(self.burn_count)
+        rows[row_id].addWidget(self._label("태우기 대기시간(초)", CLR_MUTED))
+        rows[row_id].addWidget(self.burn_min)
+        rows[row_id].addWidget(self._label("~", CLR_MUTED))
+        rows[row_id].addWidget(self.burn_max)
+        rows[row_id].addWidget(self.burn_btn)
+        rows[row_id].addStretch()
+        
+        for row in rows:
+            main_layout.addLayout(row)
 
-        # 2행
-        grid.addWidget(L("All Qty:"), 1, 0)
-        grid.addWidget(self.allqty_edit, 1, 1)
-        grid.addWidget(self.exec_all_btn, 1, 2)
-        grid.addWidget(self.reverse_btn, 1, 3)
-        grid.addWidget(self.close_all_btn, 1, 4)
-
-        # 3행
-        grid.addWidget(L("HIP3-DEX:"), 2, 0)
-        grid.addWidget(self.dex_combo, 2, 1, 1, 2)
-
-        # 4행 REPEAT
-        grid.addWidget(L("Times:"), 3, 0)
-        grid.addWidget(self.repeat_times, 3, 1)
-        grid.addWidget(L("min(s):"), 3, 2)
-        grid.addWidget(self.repeat_min, 3, 3)
-        grid.addWidget(L("max(s):"), 3, 4)
-        grid.addWidget(self.repeat_max, 3, 5)
-        grid.addWidget(self.repeat_btn, 3, 6)
-
-        # 5행 BURN
-        grid.addWidget(L("Burn:"), 4, 0)
-        grid.addWidget(self.burn_count, 4, 1)
-        grid.addWidget(L("min(s):"), 4, 2)
-        grid.addWidget(self.burn_min, 4, 3)
-        grid.addWidget(L("max(s):"), 4, 4)
-        grid.addWidget(self.burn_max, 4, 5)
-        grid.addWidget(self.burn_btn, 4, 6)
-
-        grid.setColumnStretch(1, 1)
-        grid.setColumnStretch(2, 1)
-        grid.setColumnStretch(3, 1)
+    def _label(self, text, color):
+        lbl = QtWidgets.QLabel(text)
+        lbl.setStyleSheet(f"color: {color};")
+        return lbl
 
     def _connect_signals(self):
         self.ticker_edit.textChanged.connect(self.ticker_changed)
@@ -747,16 +820,20 @@ class HeaderWidget(QtWidgets.QWidget):
         self.quit_btn.clicked.connect(self.quit_clicked)
         self.dex_combo.currentTextChanged.connect(self.dex_changed)
 
-    def set_price(self, p): self.price_label.setText(f"Price: {p}")
-    def set_total(self, t): self.total_label.setText(f"Total: {t:,.1f} USDC")
+    def set_price(self, p):
+        self.price_label.setText(str(p))
+    
+    def set_total(self, t):
+        self.total_label.setText(f"${t:,.2f}")
+    
     def set_dex_choices(self, dexs, cur):
         self.dex_combo.blockSignals(True)
         self.dex_combo.clear()
         self.dex_combo.addItems(dexs)
         idx = self.dex_combo.findText(cur, QtCore.Qt.MatchFlag.MatchFixedString)
-        if idx>=0: self.dex_combo.setCurrentIndex(idx)
+        if idx >= 0:
+            self.dex_combo.setCurrentIndex(idx)
         self.dex_combo.blockSignals(False)
-
 
 # ---------------------------------------------------------------------------
 # 메인 앱
@@ -842,14 +919,14 @@ class UiQtApp(QtWidgets.QMainWindow):
             
             if title:
                 lbl = QtWidgets.QLabel(title)
-                lbl.setStyleSheet("color: #ffca28; font-weight: bold; font-size: 11pt; margin-bottom: 4px;")
+                lbl.setStyleSheet(f"color: #ffca28; font-weight: bold; font-size: {UI_FONT_SIZE}pt; margin-bottom: 4px;")
                 gb_layout.addWidget(lbl)
             
             gb_layout.addWidget(widget)
             return gb
 
         # Header
-        header_gb = create_section("Header", self.header)
+        header_gb = create_section("", self.header)
         main_vbox.addWidget(header_gb)
 
         # Cards Scroll
@@ -966,12 +1043,16 @@ class UiQtApp(QtWidgets.QMainWindow):
         self.cards_layout.addStretch(1)
 
         for name in self.mgr.visible_names():
-            card = ExchangeCardWidget(name, self.dex_names)
+            is_hl_like = self.mgr.is_hl_like(name)
+            card = ExchangeCardWidget(name, self.dex_names, is_hl_like=is_hl_like)
+
             st = self.exchange_state[name]
             card.set_ticker(st.symbol)
             card.set_order_type(st.order_type)
             card.set_side_enabled(st.enabled, st.side)
-            card.set_dex(st.dex)
+            
+            if is_hl_like:
+                card.set_dex(st.dex)
             
             # Signals
             card.execute_clicked.connect(self._on_exec_one)
@@ -989,7 +1070,8 @@ class UiQtApp(QtWidgets.QMainWindow):
         if aq: self._on_allqty(aq)
         
         for n in self.mgr.visible_names():
-            self._update_fee(n)
+            if self.mgr.is_hl_like(n):
+                self._update_fee(n)
 
     # --- Handlers ---
     def _on_header_ticker(self, t):
