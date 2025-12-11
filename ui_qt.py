@@ -541,13 +541,10 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
             self.dex_combo = None
             self.dex_label = None
 
-        # Position / Account Info
-        #self.info_pos_label = QtWidgets.QLabel("포지션: N/A")
-        #self.info_acc_label = QtWidgets.QLabel("잔고: N/A")
-        # 가독성을 위해 약간의 마진과 폰트 조정
-        #self.info_pos_label.setStyleSheet("margin-top: 4px; color: #e0e0e0;")
-        #self.info_acc_label.setStyleSheet("margin-bottom: 4px; color: #bdbdbd;")
-
+        # Spot 관련 위젯들 (숨김 처리용)
+        self.spot_sep_label = None
+        self.spot_title_label = None
+        
         self._build_layout()
         self._connect_signals()
 
@@ -647,15 +644,15 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         
         collat_row.addSpacing(15)
         
-        sep_lbl = QtWidgets.QLabel("|")
-        sep_lbl.setStyleSheet("color: #444;")
-        collat_row.addWidget(sep_lbl)
+        self.spot_sep_label = QtWidgets.QLabel("|")
+        self.spot_sep_label.setStyleSheet("color: #444;")
+        collat_row.addWidget(self.spot_sep_label)
         
         collat_row.addSpacing(15)
         
-        spot_lbl = QtWidgets.QLabel("Spot:")
-        spot_lbl.setStyleSheet(f"color: {CLR_MUTED};")
-        collat_row.addWidget(spot_lbl)
+        self.spot_title_label = QtWidgets.QLabel("Spot:")
+        self.spot_title_label.setStyleSheet(f"color: {CLR_MUTED};")
+        collat_row.addWidget(self.spot_title_label)
         collat_row.addWidget(self.collat_spot_label)
         
         collat_row.addStretch()
@@ -798,23 +795,30 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
             self.collat_perp_label.setStyleSheet(f"color: {CLR_MUTED};")
         
         # Spot 잔고 - 간격 넓히고 깔끔하게
-        spot_data = collateral.get("spot") if collateral else None
-        if spot_data and any(v != 0 for v in spot_data.values()):
+        spot_data = collateral.get("spot") if collateral else {}
+        spot_nonzero = {k: v for k, v in spot_data.items() if v and float(v) != 0}
+        has_spot = len(spot_nonzero) > 0
+
+        if has_spot:
             spot_parts = []
             for k, v in spot_data.items():
                 if v != 0:
                     spot_parts.append(
                         f"<span style='background-color:#333; padding:3px 8px; border-radius:3px;'>"
-                        f"{_format_collateral(v)} <span style='color:{CLR_COLLATERAL};'>{k}</span></span>"
+                        f"{_format_collateral(v)} <span style='color:{CLR_MUTED};'>{k}</span></span>"
                     )
-            # 간격을 위해 &nbsp; 4개 사용
-            self.collat_spot_label.setText("&nbsp;&nbsp;&nbsp;&nbsp;".join(spot_parts) if spot_parts else "")
+            self.collat_spot_label.setText("&nbsp;&nbsp;&nbsp;&nbsp;".join(spot_parts))
             self.collat_spot_label.setTextFormat(QtCore.Qt.TextFormat.RichText)
             self.collat_spot_label.setStyleSheet(f"color: {CLR_NEUTRAL};")
         else:
             self.collat_spot_label.setText("")
-            self.collat_spot_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-            self.collat_spot_label.setStyleSheet(f"color: {CLR_MUTED};")
+        
+        # Spot 위젯들 보이기/숨기기
+        if self.spot_sep_label:
+            self.spot_sep_label.setVisible(has_spot)
+        if self.spot_title_label:
+            self.spot_title_label.setVisible(has_spot)
+        self.collat_spot_label.setVisible(has_spot)
 
     def set_order_type(self, otype):
         otype = (otype or "market").lower()
