@@ -7,7 +7,7 @@ import math
 import urwid
 from urwid.widget.pile import PileWarning  # urwid 레이아웃 경고 제거용
 from ui_scroll import ScrollBar, ScrollableListBox, hook_global_mouse_events
-
+from ui_config import set_ui_type
 
 from core import ExchangeManager
 from trading_service import TradingService
@@ -318,6 +318,7 @@ class CustomFrame(urwid.Frame):
 
 class UrwidApp:
     def __init__(self, manager: ExchangeManager):
+        set_ui_type("urwid")
         self.mgr = manager
 
         # 상태
