@@ -237,7 +237,7 @@ _ensure_ts_logger()
 
 
 RATE = {
-    "GAP_FOR_INF": 0.1,
+    "GAP_FOR_INF": 0.05,
     "STATUS_POS_INTERVAL": {"default": 0.5, "lighter": 2.0},
     "STATUS_COLLATERAL_INTERVAL": {"default": 0.5, "lighter": 5.0},
     "CARD_PRICE_INTERVAL": {"default": 1.0, "lighter": 5.0},
@@ -1113,6 +1113,12 @@ class UiQtApp(QtWidgets.QMainWindow):
         self._stderr_stream = None
         self._console_redirect_installed = False
 
+        # REPEAT / BURN 태스크
+        self._repeat_task: Optional[asyncio.Task] = None
+        self._repeat_cancel = asyncio.Event()
+        self._burn_task: Optional[asyncio.Task] = None
+        self._burn_cancel = asyncio.Event()
+
         self._build_main_layout()
         self._connect_header_signals()
 
@@ -1199,6 +1205,8 @@ class UiQtApp(QtWidgets.QMainWindow):
         h.exec_all_clicked.connect(self._on_exec_all)
         h.reverse_clicked.connect(self._on_reverse)
         h.close_all_clicked.connect(self._on_close_all)
+        h.repeat_clicked.connect(self._on_repeat_toggle)  # [수정]
+        h.burn_clicked.connect(self._on_burn_toggle)      # [수정]
         h.repeat_clicked.connect(lambda: self._log("[REPEAT] Not implemented"))
         h.burn_clicked.connect(lambda: self._log("[BURN] Not implemented"))
         h.quit_clicked.connect(self.close)
@@ -1340,12 +1348,14 @@ class UiQtApp(QtWidgets.QMainWindow):
     def _on_header_dex(self, d):
         self.header_dex = d
         for n in self.mgr.all_names():
-            self.dex_by_ex[n] = d
-            self.exchange_state[n].dex = d
+            if self.mgr.is_hl_like(n):
+                self.dex_by_ex[n] = d
+                self.exchange_state[n].dex = d
         for n, c in self.cards.items():
-            c.set_dex(d)
-            self._update_fee(n)
-    
+            if self.mgr.is_hl_like(n):
+                c.set_dex(d)
+                self._update_fee(n)
+            
     def _on_card_ticker(self, n, t):
         s = _normalize_symbol_input(t or self.symbol)
         self.symbol_by_ex[n] = s
@@ -1413,7 +1423,12 @@ class UiQtApp(QtWidgets.QMainWindow):
             price = float(c.get_price_text()) if otype == "limit" else None
             side = self.side[n]
             
-            sym = _compose_symbol(self.dex_by_ex[n], self.symbol_by_ex[n])
+            is_hl_like = self.mgr.is_hl_like(n)
+            if is_hl_like:
+                sym = _compose_symbol(self.dex_by_ex[n], self.symbol_by_ex[n])
+            else:
+                sym = self.symbol_by_ex[n].upper()
+
             self._log(f"[{n}] {side} {qty} {sym} @ {otype}")
             res = await self.service.execute_order(n, sym, qty, otype, side, price)
             self._log(f"[{n}] OK: {res['id']}")
@@ -1433,11 +1448,179 @@ class UiQtApp(QtWidgets.QMainWindow):
             if self.enabled.get(n):
                 try: hint = float(self.current_price.replace(",",""))
                 except: hint = None
-                sym = _compose_symbol(self.dex_by_ex[n], self.symbol_by_ex[n])
+
+                is_hl_like = self.mgr.is_hl_like(n)
+                if is_hl_like:
+                    sym = _compose_symbol(self.dex_by_ex[n], self.symbol_by_ex[n])
+                else:
+                    sym = self.symbol_by_ex[n].upper()
+
                 tasks.append(self.service.close_position(n, sym, hint))
+
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
             self._log("Closed all positions")
+
+    def _on_repeat_toggle(self):
+        loop = asyncio.get_running_loop()
+        
+        # burn 돌고 있으면 먼저 멈춤
+        if self._burn_task and not self._burn_task.done():
+            self._burn_cancel.set()
+            self._log("[BURN] 중지 요청")
+        
+        # repeat 돌고 있으면 먼저 멈춤
+        if self._repeat_task and not self._repeat_task.done():
+            self._repeat_cancel.set()
+            self._log("[REPEAT] 중지 요청")
+        else:
+            try:
+                times = int(self.header.repeat_times.text() or "0")
+                a = float(self.header.repeat_min.text() or "0")
+                b = float(self.header.repeat_max.text() or "0")
+            except Exception:
+                self._log("[REPEAT] 입력 파싱 실패")
+                return
+            if times <= 0 or a < 0 or b < 0:
+                self._log("[REPEAT] Times>=1, Interval>=0 필요")
+                return
+            if b < a:
+                a, b = b, a
+            self._repeat_cancel.clear()
+            self._repeat_task = loop.create_task(self._repeat_runner(times, a, b))
+
+    def _on_burn_toggle(self):
+        loop = asyncio.get_running_loop()
+        
+        # 먼저 기존 repeat/burn 정리
+        if self._repeat_task and not self._repeat_task.done():
+            self._repeat_cancel.set()
+            self._log("[REPEAT] 중지 요청")
+
+        if self._burn_task and not self._burn_task.done():
+            self._burn_cancel.set()
+            self._log("[BURN] 중지 요청")
+            return
+
+        # 입력값 파싱
+        try:
+            base_times = int(self.header.repeat_times.text() or "0")
+            rep_min = float(self.header.repeat_min.text() or "0")
+            rep_max = float(self.header.repeat_max.text() or "0")
+            burn_times = int(self.header.burn_count.text() or "0")
+            burn_min = float(self.header.burn_min.text() or "0")
+            burn_max = float(self.header.burn_max.text() or "0")
+        except Exception:
+            self._log("[BURN] 입력 파싱 실패")
+            return
+        if base_times <= 0 or rep_min < 0 or rep_max < 0 or burn_min < 0 or burn_max < 0:
+            self._log("[BURN] Times>=1, Interval>=0 필요")
+            return
+        if rep_max < rep_min:
+            rep_min, rep_max = rep_max, rep_min
+        if burn_max < burn_min:
+            burn_min, burn_max = burn_max, burn_min
+
+        self._burn_cancel.clear()
+        self._burn_task = loop.create_task(
+            self._burn_runner(burn_times, base_times, rep_min, rep_max, burn_min, burn_max)
+        )
+
+    async def _repeat_runner(self, times: int, a: float, b: float):
+        import random
+        self._log(f"[REPEAT] 시작: {times}회, 간격 {a:.2f}~{b:.2f}s 랜덤")
+        try:
+            i = 1
+            while i <= times:
+                if self._repeat_cancel.is_set() or self._burn_cancel.is_set():
+                    self._log(f"[REPEAT] 취소됨 (진행 {i-1}/{times})")
+                    break
+
+                self._log(f"[REPEAT] 실행 {i}/{times}")
+                await self._do_exec_all()
+
+                if i >= times:
+                    break
+
+                delay = random.uniform(a, b)
+                self._log(f"[REPEAT] 대기 {delay:.2f}s ...")
+                try:
+                    await asyncio.wait_for(self._wait_cancel_any(), timeout=delay)
+                except asyncio.TimeoutError:
+                    pass
+
+                if self._repeat_cancel.is_set() or self._burn_cancel.is_set():
+                    self._log(f"[REPEAT] 취소됨 (대기 중)")
+                    break
+
+                i += 1
+
+            self._log("[REPEAT] 완료")
+        finally:
+            self._repeat_task = None
+            self._repeat_cancel.clear()
+
+    async def _burn_runner(self, burn_times: int, base_times: int, rep_min: float, rep_max: float, burn_min: float, burn_max: float):
+        import random
+        self._log(f"[BURN] 시작: burn_times={burn_times}, base={base_times}")
+        try:
+            # 첫 라운드
+            if self._burn_cancel.is_set():
+                return
+            await self._repeat_runner(base_times, rep_min, rep_max)
+            if self._burn_cancel.is_set():
+                return
+
+            # 이후 라운드
+            round_idx = 2
+            while True:
+                if burn_times > 0 and round_idx > burn_times:
+                    break
+                
+                delay = random.uniform(burn_min, burn_max)
+                self._log(f"[BURN] interval 대기 {delay:.2f}s ... (round {round_idx}/{burn_times if burn_times>0 else '∞'})")
+                try:
+                    await asyncio.wait_for(self._wait_cancel_any(), timeout=delay)
+                except asyncio.TimeoutError:
+                    pass
+                if self._burn_cancel.is_set():
+                    break
+
+                # reverse
+                self._reverse_enabled()
+                if self._burn_cancel.is_set():
+                    break
+
+                # repeat 2×base_times
+                await self._repeat_runner(2 * base_times, rep_min, rep_max)
+                if self._burn_cancel.is_set():
+                    break
+
+                round_idx += 1
+
+            self._log("[BURN] 완료")
+        finally:
+            self._burn_task = None
+            self._burn_cancel.clear()
+
+    async def _wait_cancel_any(self):
+        while not (self._repeat_cancel.is_set() or self._burn_cancel.is_set()):
+            await asyncio.sleep(0.05)
+
+    def _reverse_enabled(self):
+        """활성된 거래소만 LONG↔SHORT 토글"""
+        cnt = 0
+        for n in self.mgr.visible_names():
+            if not self.enabled.get(n, False):
+                continue
+            cur = self.side.get(n)
+            if cur == "buy":
+                self._set_side(n, "sell")
+                cnt += 1
+            elif cur == "sell":
+                self._set_side(n, "buy")
+                cnt += 1
+        self._log(f"[ALL] REVERSE 완료: {cnt}개")
 
     # --- Loops ---
     async def _price_loop(self):
@@ -1460,62 +1643,111 @@ class UiQtApp(QtWidgets.QMainWindow):
             await asyncio.sleep(RATE["GAP_FOR_INF"])
 
     async def _status_loop(self):
+        """
+        거래소별 상태(가격/포지션/잔고) 업데이트 루프.
+        - WS 거래소: 매 틱마다 업데이트
+        - REST 거래소: RATE에 정의된 주기에 따라 업데이트
+        """
+        # 초기 지연 (UI가 완전히 로드된 후 시작)
+        await asyncio.sleep(0.3)
+        
         while not self._stopping:
             try:
                 now = time.monotonic()
+                
                 for n in self.mgr.visible_names():
-                    if n not in self.cards: continue
+                    if n not in self.cards:
+                        continue
                     c = self.cards[n]
                     
-                    # Update Intervals (Skip logic omitted for brevity, assume check)
-                    sym = _compose_symbol(self.dex_by_ex[n], self.symbol_by_ex[n])
+                    # 거래소 플랫폼별 업데이트 주기 결정
+                    meta = self.mgr.get_meta(n)
+                    exchange_platform = meta.get("exchange", "hyperliquid")
                     
-                    # Price & Quote
                     try:
-                        p = await self.service.fetch_price(n, sym)
-                        c.set_price_label(p)
-                    except: c.set_price_label("Err")
+                        col_interval = RATE["STATUS_COLLATERAL_INTERVAL"].get(
+                            exchange_platform, 
+                            RATE["STATUS_COLLATERAL_INTERVAL"]["default"]
+                        )
+                        pos_interval = RATE["STATUS_POS_INTERVAL"].get(
+                            exchange_platform,
+                            RATE["STATUS_POS_INTERVAL"]["default"]
+                        )
+                        price_interval = RATE["CARD_PRICE_INTERVAL"].get(
+                            exchange_platform,
+                            RATE["CARD_PRICE_INTERVAL"]["default"]
+                        )
+                    except Exception:
+                        col_interval = RATE["STATUS_COLLATERAL_INTERVAL"]["default"]
+                        pos_interval = RATE["STATUS_POS_INTERVAL"]["default"]
+                        price_interval = RATE["CARD_PRICE_INTERVAL"]["default"]
                     
-                    if self.mgr.is_hl_like(n):
-                         ex = self.mgr.get_exchange(n)
-                         if ex: c.set_quote_label(ex.get_perp_quote(sym))
+                    # 업데이트 필요 여부 판단
+                    need_collat = (now - self._last_balance_at.get(n, 0.0) >= col_interval)
+                    need_pos = (now - self._last_pos_at.get(n, 0.0) >= pos_interval)
+                    need_price = (now - self._last_price_at.get(n, 0.0) >= price_interval)
+                    
+                    # WS 거래소는 항상 업데이트
+                    ex = self.mgr.get_exchange(n)
+                    if not ex:
+                        continue
+                    is_ws = hasattr(ex, "fetch_by_ws") and getattr(ex, "fetch_by_ws", False)
+                    is_hl_like = self.mgr.is_hl_like(n)
+                    
+                    # [수정] 비-HL은 DEX 무시, HL-like만 DEX 적용
+                    if is_hl_like:
+                        sym = _compose_symbol(self.dex_by_ex[n], self.symbol_by_ex[n])
+                    else:
+                        sym = self.symbol_by_ex[n].upper()
 
-                         self._update_fee(n)
-
-                    # Pos / Col
-                    try:
-                        pos, col, col_val, json_data = await self.service.fetch_status(n, sym, True, True)
-                        
-                        # json_data format
-                        """
-                        { "collateral": {
-                            "perp":{"USDC":12.1},  # or None
-                            "spot":{"USDT":10.2,"USDC":15.0,...} # or None, optional
-                            },
-                          "position": {
-                          "size":0.002,"side":"short","unrealized_pnl":1.2
-                          } # or None
-                        }
-                        """
-                        c.set_status_info(json_data)
-                        
-                        if col_val: 
-                            self.collateral[n] = float(col_val)
-                        """
+                    is_hl_like = self.mgr.is_hl_like(n)
+                    
+                    # 가격 업데이트
+                    if need_price or is_ws:
                         try:
-                            px_val = float(str(p).replace(",",""))
-                        except: px_val = None
-                        
-                        pos_fmt = _inject_usdc_value_into_pos(px_val, pos)
-                        col_fmt = _strip_bracket_markup(col)
-                        c.set_info_text(pos_fmt, col_fmt)
-                        
-                        if col_val: self.collateral[n] = float(col_val)
-                        """
-                    except: pass
+                            p = await self.service.fetch_price(n, sym)
+                            c.set_price_label(p)
+                            self._last_price_at[n] = now
+                        except Exception:
+                            c.set_price_label("Err")
                     
-            except: pass
-            await asyncio.sleep(1.0) # Reduce load
+                    # 이제 모든 거래소 지원 (USD dummy로)
+                    quote_str = ex.get_perp_quote(sym)
+                    c.set_quote_label(quote_str)
+                    # Quote 업데이트 (HL-like만)
+                    if is_hl_like:
+                        # Builder Fee 업데이트
+                        self._update_fee(n)
+
+                    # 포지션/잔고 업데이트
+                    if need_pos or need_collat or is_ws:
+                        try:
+                            pos, col, col_val, json_data = await self.service.fetch_status(
+                                n, sym, 
+                                need_balance=need_collat or is_ws, 
+                                need_position=need_pos or is_ws
+                            )
+                            
+                            c.set_status_info(json_data)
+                            
+                            if need_collat or is_ws:
+                                if col_val:
+                                    self.collateral[n] = float(col_val)
+                                self._last_balance_at[n] = now
+                            
+                            if need_pos or is_ws:
+                                self._last_pos_at[n] = now
+                                
+                        except Exception as e:
+                            logger.debug(f"[UI] Status update for {n} failed: {e}")
+                
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"[UI] Status loop error: {e}")
+            
+            # 루프 간격
+            await asyncio.sleep(RATE["GAP_FOR_INF"])
 
     def _update_fee(self, n):
         """
