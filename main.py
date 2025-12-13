@@ -7,6 +7,10 @@ from dotenv import load_dotenv
 from pathlib import Path
 import sys
 import argparse
+import asyncio
+
+if sys.platform.startswith("win"):
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 def _detect_wsl_and_set_qt_platform():
     try:
