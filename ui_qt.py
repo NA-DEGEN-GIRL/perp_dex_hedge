@@ -1781,8 +1781,13 @@ class UiQtApp(QtWidgets.QMainWindow):
                             c.set_price_label("Err")
                     
                     # 이제 모든 거래소 지원 (USD dummy로)
-                    quote_str = ex.get_perp_quote(sym)
-                    c.set_quote_label(quote_str)
+                    try:
+                        quote_str = ex.get_perp_quote(sym)
+                        c.set_quote_label(quote_str)
+                    except Exception as e:
+                        logger.debug(f"[UI] quote update failed for {n}: {e}", exc_info=True)
+                        print(f"[UI] quote update failed for {n}: {e}")
+                        c.set_quote_label("")
                     # Quote 업데이트 (HL-like만)
                     if is_hl_like:
                         # Builder Fee 업데이트
@@ -1809,11 +1814,13 @@ class UiQtApp(QtWidgets.QMainWindow):
                                 
                         except Exception as e:
                             logger.debug(f"[UI] Status update for {n} failed: {e}")
+                            print(f"[UI] Status update for {n} failed: {e}")
                 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"[UI] Status loop error: {e}")
+                print(f"[UI] Status loop error: {e}")
             
             # 루프 간격
             await asyncio.sleep(RATE["GAP_FOR_INF"])
@@ -1849,6 +1856,7 @@ class UiQtApp(QtWidgets.QMainWindow):
         except Exception as e:
             # 에러 시 조용히 무시 (로그만 남김)
             logger.debug(f"[UI] Fee update for {n} failed: {e}")
+            print(f"[UI] Fee update for {n} failed: {e}")
 
     def _log(self, m):
         logger.info(m)
