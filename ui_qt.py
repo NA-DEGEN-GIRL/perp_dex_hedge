@@ -315,6 +315,22 @@ class DexComboBox(QtWidgets.QComboBox):
     def _on_activated(self, index: int) -> None:
         # 선택 후 명시적으로 팝업 닫기
         self.hidePopup()
+    
+    def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
+        # FIX: 콤보가 닫혀 있을 때 휠로 값이 바뀌는 걸 방지
+        # - 닫혀있으면 ignore -> 부모(카드 스크롤 영역)가 휠을 받도록
+        # - 열려있으면 super -> 드롭다운 목록 자체는 휠로 스크롤 가능
+        view = self.view()
+        popup_open = False
+        try:
+            popup_open = bool(view) and view.isVisible()
+        except Exception:
+            popup_open = False
+
+        if popup_open:
+            super().wheelEvent(event)
+        else:
+            event.ignore()
 
     def showPopup(self) -> None:
         self.popupOpened.emit()
