@@ -20,6 +20,10 @@ from types import SimpleNamespace
 import logging
 from logging.handlers import RotatingFileHandler
 
+GROUP_MIN = 0
+GROUP_MAX = 5
+GROUP_COUNT = GROUP_MAX - GROUP_MIN + 1
+
 logger = logging.getLogger(__name__)
 def _ensure_ts_logger():
     """
@@ -88,6 +92,32 @@ _ensure_ts_logger()
 CARD_HEIGHT = 5
 LOGS_ROWS = 6
 SWITCHER_ROWS = 5
+
+class ConfirmEdit(urwid.Edit):
+    """
+    Enter 또는 포커스 이탈 시 on_confirm 콜백을 호출하는 Edit.
+    - 'change' 시그널은 기존처럼 글자마다 발생(캐시 업데이트용)
+    - 'confirm' 시그널은 Enter/포커스 이탈 시에만 발생(전파용)
+    """
+    signals = ['change', 'confirm']  # confirm 시그널 추가
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._had_focus = False
+
+    def keypress(self, size, key):
+        if key == 'enter':
+            # Enter 입력 시 confirm 시그널 발생
+            self._emit('confirm', self.edit_text)
+            return None  # 키 소비
+        return super().keypress(size, key)
+
+    def render(self, size, focus=False):
+        # 포커스 상실 감지: 이전에 포커스가 있었는데 지금 없으면 → confirm
+        if self._had_focus and not focus:
+            self._emit('confirm', self.edit_text)
+        self._had_focus = focus
+        return super().render(size, focus)
 
 class ExchangesGrid(urwid.WidgetWrap):
     """
@@ -420,6 +450,34 @@ class UrwidApp:
         self._seeded_side_done: Dict[str, bool] = {name: False for name in self.mgr.all_names()}
         self.trade_type_by_ex: Dict[str, str] = {name: "perp" for name in self.mgr.all_names()}  # 아직 기능 X, 저장만
 
+        # CHANGED: 그룹 전환 중(change 시그널에 의한 전파 방지) 플래그
+        self._switching_group: bool = False
+
+        # [ADD] 헤더에서 선택된 그룹
+        self.current_group: int = 0  
+
+        # [ADD] 거래소 카드별 그룹 지정
+        self.group_by_ex: Dict[str, int] = {name: 0 for name in self.mgr.all_names()}
+
+        # [ADD] 그룹별 헤더 설정 캐시(선택 그룹만 적용되는 값들)
+        self.group_symbol: Dict[int, str] = {g: "BTC" for g in range(GROUP_COUNT)}
+        self.group_qty: Dict[int, str] = {g: "" for g in range(GROUP_COUNT)}
+        self.group_dex: Dict[int, str] = {g: "HL" for g in range(GROUP_COUNT)}
+
+        # [ADD] 그룹별 repeat/burn 입력값 캐시(UI 표시용 + 실행용)
+        self.group_repeat_cfg: Dict[int, Dict[str, str]] = {
+            g: {"times": "", "min": "", "max": ""} for g in range(GROUP_COUNT)
+        }
+        self.group_burn_cfg: Dict[int, Dict[str, str]] = {
+            g: {"burn": "", "min": "", "max": ""} for g in range(GROUP_COUNT)
+        }
+
+        # [ADD] 그룹별 repeat/burn 태스크/캔슬 (그룹 독립 실행)
+        self.repeat_task_by_group: Dict[int, Optional[asyncio.Task]] = {g: None for g in range(GROUP_COUNT)}
+        self.repeat_cancel_by_group: Dict[int, asyncio.Event] = {g: asyncio.Event() for g in range(GROUP_COUNT)}
+        self.burn_task_by_group: Dict[int, Optional[asyncio.Task]] = {g: None for g in range(GROUP_COUNT)}
+        self.burn_cancel_by_group: Dict[int, asyncio.Event] = {g: asyncio.Event() for g in range(GROUP_COUNT)}
+
         # [ADD] meta.initial_setup를 상태 dict에 1회 반영
         self._seed_initial_setup_defaults()
 
@@ -431,7 +489,7 @@ class UrwidApp:
         - symbol: 카드 입력창에 들어갈 coin (HL-like면 'XYZ100' 형태)
         - dex: HL-like일 때만 의미(HL/XYZ/FLX...)
         """
-        out = {"symbol": None, "amount": None, "side": None, "trade_type": None, "dex": None}
+        out = {"symbol": None, "amount": None, "side": None, "trade_type": None, "dex": None, "group": 0}
 
         if not raw:
             return out
@@ -443,6 +501,7 @@ class UrwidApp:
             out["side"] = raw.get("side") or raw.get("long_short")
             out["trade_type"] = raw.get("trade_type") or raw.get("spot_or_perp") or raw.get("mode")
             out["dex"] = raw.get("dex")
+            out["group"] = raw.get("group", 0)
         else:
             # 2) 문자열 "xyz:XYZ100, 0.0002, long, perp" 파싱
             try:
@@ -457,6 +516,12 @@ class UrwidApp:
                 out["side"] = parts[2].lower()
             if len(parts) >= 4:
                 out["trade_type"] = parts[3].lower()
+            if len(parts) >= 5:
+                try: g = int(parts[4])
+                except: g = 0
+                if g < 0: g = 0
+                if g > 5: g = 5
+                out["group"] = g
 
         # 3) HL-like일 때 dex:coin 처리
         sym = (out["symbol"] or "").strip()
@@ -547,6 +612,15 @@ class UrwidApp:
                             self.side[name] = None
 
                     self._seeded_side_done[name] = True
+            
+            try:
+                g = setup.get("group")
+                if isinstance(g, int):
+                    if g < GROUP_MIN: g = GROUP_MIN
+                    if g > GROUP_MAX: g = GROUP_MAX
+                    self.group_by_ex[name] = g  # [ADD] 카드 그룹 초기값 적용
+            except Exception:
+                pass
 
     # [ADD] Logs 맨 아래로 안전하게 스크롤하는 헬퍼 (UI 루프에서 실행)
     def _scroll_logs_to_bottom(self, redraw=True):
@@ -769,23 +843,45 @@ class UrwidApp:
 
     def _on_header_dex_select(self, dex: str):
         """
-        헤더에서 dex 하나를 선택 → 전체 카드에 dex 일괄 적용 + 버튼 스타일 동기화.
+        CHANGED: 헤더에서 dex 하나를 선택 → '현재 그룹'에만 dex 적용 + 버튼 스타일 동기화.
+        - 기존 코드: 전체 카드에 dex 일괄 적용
+        - 변경 코드: group_by_ex[name] == current_group 인 카드만 dex 적용
         """
+        # CHANGED: dex 정규화(일관성)
+        dex = (dex or "HL").strip().upper()
+        g = int(self.current_group)
+
+        # CHANGED: 그룹별 DEX 캐시 저장(그룹 전환 시 복원용)
+        self.group_dex[g] = dex
+
+        # CHANGED: 헤더의 현재 선택 dex도 갱신(표시/로직에서 사용)
         self.header_dex = dex
-        # 헤더 버튼 스타일 반영
+
+        # CHANGED: 헤더 버튼 스타일 반영(헤더는 "현재 그룹"의 상태를 보여줌)
         for d, w in self.dex_btns_header.items():
-            w.set_attr_map({None: "btn_dex_on" if d == dex else "btn_dex"})
-        # 모든 카드 dex 동기화
-        self._bulk_updating_tickers = True
-        try:
-            for n in self.mgr.all_names():
-                self.dex_by_ex[n] = dex
-            # 화면에 보이는 카드 버튼 스타일 갱신
-            for n in self.mgr.visible_names():
-                self._update_card_dex_styles(n)
-                self._update_card_fee(n)
-        finally:
-            self._bulk_updating_tickers = False
+            dd = str(d).strip().upper()
+            w.set_attr_map({None: "btn_dex_on" if dd == dex else "btn_dex"})
+
+        # CHANGED: 현재 그룹에 속한 카드 중, HL-like인 카드에만 적용
+        # (비-HL은 dex 개념이 의미 없으므로 건드리지 않음)
+        for n in self.mgr.all_names():
+            if self.group_by_ex.get(n, 0) != g:
+                continue
+            if not self.mgr.is_hl_like(n):
+                continue
+            self.dex_by_ex[n] = dex
+
+        # CHANGED: 화면에 보이는 카드의 DEX 버튼/수수료만 갱신(그룹 필터)
+        for n in self.mgr.visible_names():
+            if self.group_by_ex.get(n, 0) != g:
+                continue
+            if not self.mgr.is_hl_like(n):
+                continue
+            self._update_card_dex_styles(n)
+            self._update_card_fee(n)
+
+        # CHANGED: 화면 갱신 예약
+        self._request_redraw()
 
     def _update_card_dex_styles(self, name: str):
         """
@@ -873,10 +969,142 @@ class UrwidApp:
     def _collateral_sum(self) -> float:
         return sum(self.collateral.values())
 
+    def _build_header_group_row(self) -> urwid.Widget:
+        buttons = []
+        self.group_btns_header = {}  # [ADD] 헤더 그룹 버튼 래퍼
+
+        for g in range(GROUP_COUNT):
+            b = urwid.Button(str(g))
+            def on_sel(btn, gg=g):
+                self._on_header_group_select(gg)
+            urwid.connect_signal(b, "click", on_sel)
+
+            wrap = urwid.AttrMap(b, "btn_dex_on" if g == self.current_group else "btn_dex", "btn_focus")
+            self.group_btns_header[g] = wrap
+            buttons.append(('given', 4, wrap))
+
+        row = urwid.Columns(buttons, dividechars=1)
+        return urwid.Columns([(12, urwid.Text(("label", "Group:"))), row], dividechars=1)
+
+    def _on_header_group_select(self, g: int):
+        """
+        CHANGED:
+        - 그룹 선택은 '그룹 선택'만 하고 끝. (헤더값을 카드로 전파하지 않음)
+        - 그룹 전환 시 헤더 Edit set_edit_text로 인해 change 시그널이 발생하므로,
+        self._switching_group 플래그로 전파를 잠시 막는다.
+        """
+        # 1) 현재 그룹 값들을 캐시에 저장 (그룹 전환 후 다시 돌아왔을 때 복원용)
+        cur = int(self.current_group)
+
+        # symbol/qty/dex 저장 (헤더에 현재 표시된 값을 저장)
+        try:
+            self.group_symbol[cur] = _normalize_symbol_input(self.ticker_edit.edit_text or "BTC")
+        except Exception:
+            self.group_symbol[cur] = "BTC"
+        try:
+            self.group_qty[cur] = (self.allqty_edit.edit_text or "").strip()
+        except Exception:
+            self.group_qty[cur] = ""
+        try:
+            self.group_dex[cur] = (self.header_dex or "HL").upper()
+        except Exception:
+            self.group_dex[cur] = "HL"
+
+        # repeat/burn 입력값 저장
+        self.group_repeat_cfg[cur] = {
+            "times": (self.repeat_times.edit_text or "").strip(),
+            "min": (self.repeat_min.edit_text or "").strip(),
+            "max": (self.repeat_max.edit_text or "").strip(),
+        }
+        self.group_burn_cfg[cur] = {
+            "burn": (self.burn_count.edit_text or "").strip(),
+            "min": (self.burn_min.edit_text or "").strip(),
+            "max": (self.burn_max.edit_text or "").strip(),
+        }
+
+        # 2) 그룹 변경(여기서부터 헤더 표시값만 바꿈)
+        self.current_group = int(g)
+
+        # 헤더 그룹 버튼 스타일 반영
+        for gg, w in self.group_btns_header.items():
+            w.set_attr_map({None: "btn_dex_on" if gg == self.current_group else "btn_dex"})
+
+        # 3) 그룹 전환 중에는 헤더 change 시그널이 전파 로직을 실행하지 않게 막기
+        self._switching_group = True
+        try:
+            ng = int(self.current_group)
+
+            # (A) 헤더 입력값 복원: UI만 바꾸고 카드로 전파 X
+            self.ticker_edit.set_edit_text(self.group_symbol.get(ng, "BTC"))
+            self.allqty_edit.set_edit_text(self.group_qty.get(ng, ""))
+
+            # (B) DEX 복원: UI 버튼 highlight만 바꾸고 카드로 전파 X
+            #     -> _on_header_dex_select는 전파용이므로 직접 쓰지 않고,
+            #        아래처럼 "헤더 상태만" 갱신합니다.
+            dex = (self.group_dex.get(ng, "HL") or "HL").upper()
+            self.header_dex = dex
+            # 헤더 DEX 버튼 스타일만 갱신
+            for d, w in self.dex_btns_header.items():
+                dd = str(d).strip().upper()
+                w.set_attr_map({None: "btn_dex_on" if dd == dex else "btn_dex"})
+
+            # (C) repeat/burn 복원(표시만)
+            self.repeat_times.set_edit_text(self.group_repeat_cfg[ng]["times"])
+            self.repeat_min.set_edit_text(self.group_repeat_cfg[ng]["min"])
+            self.repeat_max.set_edit_text(self.group_repeat_cfg[ng]["max"])
+            self.burn_count.set_edit_text(self.group_burn_cfg[ng]["burn"])
+            self.burn_min.set_edit_text(self.group_burn_cfg[ng]["min"])
+            self.burn_max.set_edit_text(self.group_burn_cfg[ng]["max"])
+
+        finally:
+            self._switching_group = False  # 전파 다시 허용
+
+        # CHANGED: 여기서 절대 전파하지 않음 (요구사항)
+        # self._apply_header_settings_to_group(ng)  # <- 제거
+
+        self._request_redraw()
+
+    def _is_group_cancelled(self, g: int) -> bool:
+        # CHANGED: 그룹별 cancel 이벤트를 기준으로 중단 여부 판단
+        return bool(self.repeat_cancel_by_group[g].is_set() or self.burn_cancel_by_group[g].is_set())
+
+    def _apply_header_settings_to_group(self, g: int):
+        # ticker
+        coin = _normalize_symbol_input(self.ticker_edit.edit_text or "BTC")
+        for ex_name in self.mgr.all_names():
+            if self.group_by_ex.get(ex_name, 0) != g:
+                continue
+            self.symbol_by_ex[ex_name] = coin
+            # 카드 입력 위젯도 즉시 반영
+            ew = self.ticker_edit_by_ex.get(ex_name)
+            if ew:
+                ew.set_edit_text(coin)
+
+        # all qty
+        qty = (self.allqty_edit.edit_text or "").strip()
+        for ex_name in self.mgr.all_names():
+            if self.group_by_ex.get(ex_name, 0) != g:
+                continue
+            qew = self.qty_edit.get(ex_name)
+            if qew:
+                qew.set_edit_text(qty)
+            self.qty_by_ex[ex_name] = qty
+
+        # dex(hl-like만)
+        dex = (self.header_dex or "HL")
+        for ex_name in self.mgr.all_names():
+            if self.group_by_ex.get(ex_name, 0) != g:
+                continue
+            if self.mgr.is_hl_like(ex_name):
+                self.dex_by_ex[ex_name] = dex
+                self._update_card_dex_styles(ex_name)
+                self._update_card_fee(ex_name)
+
     # --------- 헤더(3행) ----------
     def _hdr_widgets(self):
         # 1행
-        self.ticker_edit = urwid.Edit(("label", "Ticker: "), self.symbol)
+        #self.ticker_edit = urwid.Edit(("label", "Ticker: "), self.symbol)
+        self.ticker_edit = ConfirmEdit(("label", "Ticker: "), self.symbol)
         self.price_text = urwid.Text(("info", f"Price: {self.current_price}"))
         self.total_text = urwid.Text(("info", "Total: 0.00 USDC"))
         quit_btn = urwid.AttrMap(urwid.Button("QUIT", on_press=self._on_quit), "btn_warn", "btn_focus")
@@ -908,6 +1136,7 @@ class UrwidApp:
 
         # 2.5행 HIP3‑DEX (처음엔 HL만, _bootstrap에서 갱신)
         self.header_dex_row = self._build_header_dex_row()
+        self.header_group_row = self._build_header_group_row()  # [ADD]
 
         # 3행
         self.repeat_times = urwid.Edit(("label", "Times: "))
@@ -939,11 +1168,26 @@ class UrwidApp:
         )
 
         # pack 대신 기본(FLOW)로 두어 경고 제거
-        return urwid.Pile([row1, row2, self.header_dex_row, row3, row4])
+        return urwid.Pile([row1, row2, self.header_dex_row, self.header_group_row, row3, row4])
 
     # --------- 거래소 카드 ----------
-    def _row(self, name: str):
+    def _drow(self, name: str):
         meta = self.mgr.get_meta(name) or {}
+        init_group = str(self.group_by_ex.get(name, 0))
+        g_edit = urwid.AttrMap(urwid.Edit(("label", "G:"), init_group), "edit", "edit_focus")
+        g_base = g_edit.base_widget
+
+        def on_group_changed(edit, new, n=name):
+            try:
+                v = int((new or "").strip() or "0")
+            except Exception:
+                v = 0
+            if v < GROUP_MIN: v = GROUP_MIN
+            if v > GROUP_MAX: v = GROUP_MAX
+            self.group_by_ex[n] = v
+            # UI에 정규화된 값 다시 표시
+            if (new or "").strip() != str(v):
+                edit.set_edit_text(str(v))
 
         # [ADD] 안전망: __init__에서 시딩을 했어도, 혹시 누락되면 여기서 한 번 더 시딩
         try:
@@ -1039,12 +1283,16 @@ class UrwidApp:
         self.info_text[name] = info
 
         card_dex_row = self._build_card_dex_row(name)  # NEW
+
+        urwid.connect_signal(g_base, "change", on_group_changed)
+
         controls = urwid.Columns(
             [
                 (14, urwid.Text(("title", f"[{name.upper()}]"))),
-                (10, t_edit),          # ← NEW: 거래소별 Ticker
+                (10, t_edit),
                 (14, qty),
                 (14, price),
+                (8,  g_edit),
                 (7,  type_wrap),
                 (5,  long_wrap),
                 (5,  short_wrap),
@@ -1066,6 +1314,176 @@ class UrwidApp:
                     ('pack', price_line),                    # Price: 25,180.00 형태 길이만 차지
                     ('pack', urwid.Padding(quote_line, left=0, right=1)), # quote_line을 오른쪽에 붙이고, 좌우에 1칸씩 패딩을 줍니다.
                     ('weight', 1, urwid.Padding(card_dex_row, left=1)),  # DEX 행이 남은 폭 전체
+                ],
+                dividechars=1,
+            )
+            card = urwid.Pile([controls, price_and_dex, info])
+        else:
+            card = urwid.Pile([controls, price_line, info])
+
+        # 초기 FEE 표기 1회 갱신(해당 카드가 HL-like일 경우)
+        if is_hl_like:
+            self._update_card_fee(name)
+
+        self._refresh_side(name)
+
+        return card
+
+    def _row(self, name: str):
+        meta = self.mgr.get_meta(name) or {}
+        init_group = str(self.group_by_ex.get(name, 0))
+        g_edit = urwid.AttrMap(urwid.Edit(("label", "G:"), init_group), "edit", "edit_focus")
+        g_base = g_edit.base_widget
+
+        def on_group_changed(edit, new, n=name):
+            try:
+                v = int((new or "").strip() or "0")
+            except Exception:
+                v = 0
+            if v < GROUP_MIN: v = GROUP_MIN
+            if v > GROUP_MAX: v = GROUP_MAX
+            self.group_by_ex[n] = v
+            # UI에 정규화된 값 다시 표시
+            if (new or "").strip() != str(v):
+                edit.set_edit_text(str(v))
+
+        # [ADD] 안전망: __init__에서 시딩을 했어도, 혹시 누락되면 여기서 한 번 더 시딩
+        try:
+            if meta.get("initial_setup"):
+                is_hl_like = self.mgr.is_hl_like(name)
+                setup = self._parse_initial_setup(meta.get("initial_setup"), is_hl_like=is_hl_like)
+                if setup.get("symbol") and (self.symbol_by_ex.get(name) in (None, "", self.symbol)):
+                    self.symbol_by_ex[name] = setup["symbol"]
+                if setup.get("amount") and not (self.qty_by_ex.get(name) or "").strip():
+                    self.qty_by_ex[name] = setup["amount"]
+                if is_hl_like and setup.get("dex") and (self.dex_by_ex.get(name) or "HL").upper() == "HL":
+                    self.dex_by_ex[name] = setup["dex"]
+                if setup.get("trade_type"):
+                    self.trade_type_by_ex[name] = setup["trade_type"]
+        except Exception:
+            pass
+
+        # [CHG] 상태 dict 기반으로 기본 텍스트를 넣기
+        init_ticker = (self.symbol_by_ex.get(name) or self.symbol or "BTC")
+        init_qty = (self.qty_by_ex.get(name) or "")
+
+        qty = urwid.AttrMap(urwid.Edit(("label", "Q:"), init_qty), "edit", "edit_focus")
+        price = urwid.AttrMap(urwid.Edit(("label", "P:"), ""), "edit", "edit_focus")
+
+        # [CHANGED] T: 입력칸을 ConfirmEdit로 변경 (Enter/포커스이탈 시에만 확정)
+        t_edit_widget = ConfirmEdit(("label", "T:"), init_ticker)
+        t_edit = urwid.AttrMap(t_edit_widget, "edit", "edit_focus")
+
+        self.qty_edit[name] = qty.base_widget
+        self.price_edit[name] = price.base_widget
+        self.ticker_edit_by_ex[name] = t_edit_widget  # ConfirmEdit 인스턴스 저장
+
+        # [ADD] qty 변경 시 상태 dict도 업데이트(재빌드 시 값 유지에 도움)
+        def on_qty_changed(edit, new, n=name):
+            self.qty_by_ex[n] = (new or "").strip()
+        urwid.connect_signal(qty.base_widget, "change", on_qty_changed)
+
+        # [CHANGED] T: change 시에는 로컬 캐시만 업데이트 (symbol_by_ex 확정 X)
+        def on_card_ticker_cache_only(edit, new, n=name):
+            # 입력 중에는 아무것도 하지 않음 (또는 로컬 임시 변수에만 저장)
+            # symbol_by_ex에 반영하지 않음 → status_loop가 중간값을 읽지 않음
+            pass
+
+        # [CHANGED] T: confirm(Enter/포커스이탈) 시에만 symbol_by_ex에 확정 반영
+        def on_card_ticker_confirm(edit, new, n=name):
+            coin = _normalize_symbol_input(new or self.symbol)
+            self.symbol_by_ex[n] = coin
+
+            # (선택) 헤더에서 일괄 동기화 중에는 추가 작업 건너뜀
+            if self._bulk_updating_tickers:
+                return
+
+            dex = self.dex_by_ex.get(n, "HL")
+            sym = _compose_symbol(dex, coin)
+
+            # 디바운스 알람 취소 (있다면)
+            try:
+                if self._lev_alarm_by_ex.get(n):
+                    self.loop.remove_alarm(self._lev_alarm_by_ex[n])
+                    self._lev_alarm_by_ex[n] = None
+            except Exception:
+                pass
+
+        urwid.connect_signal(t_edit_widget, "change", on_card_ticker_cache_only)
+        urwid.connect_signal(t_edit_widget, "confirm", on_card_ticker_confirm)
+
+        # 타입 토글
+        def on_type(btn, n=name):
+            self.order_type[n] = "limit" if self.order_type[n] == "market" else "market"
+            self._refresh_type_label(n)
+            self._update_card_fee(n)
+        type_btn = urwid.Button("MKT", on_press=on_type)
+        type_wrap = urwid.AttrMap(type_btn, "btn_type", "btn_focus")
+        self.type_btn[name] = type_btn
+        self.type_btn_wrap[name] = type_wrap
+
+        # L/S/OFF/EX
+        def on_long(btn, n=name):
+            self.side[n] = "buy"; self.enabled[n] = True; self._refresh_side(n)
+        def on_short(btn, n=name):
+            self.side[n] = "sell"; self.enabled[n] = True; self._refresh_side(n)
+        def on_off(btn, n=name):
+            self.enabled[n] = False; self.side[n] = None; self._refresh_side(n)
+
+        async def ex_async(n=name): await self._exec_one(n, self.group_by_ex.get(n, 0))
+        def on_ex(btn, n=name): asyncio.get_event_loop().create_task(ex_async(n))
+
+        long_b = urwid.Button("L", on_press=on_long)
+        short_b = urwid.Button("S", on_press=on_short)
+        off_b = urwid.Button("OFF", on_press=on_off)
+        ex_b = urwid.Button("EX", on_press=on_ex)
+
+        long_wrap  = urwid.AttrMap(long_b,  "btn_long",         "btn_focus")
+        short_wrap = urwid.AttrMap(short_b, "btn_short",        "btn_focus")
+        off_wrap   = urwid.AttrMap(off_b,   "btn_off",          "btn_focus")
+        ex_wrap    = urwid.AttrMap(ex_b,    "btn_exec",         "btn_focus")
+
+        self.long_btn[name],  self.long_btn_wrap[name]   = long_b,  long_wrap
+        self.short_btn[name], self.short_btn_wrap[name]  = short_b, short_wrap
+        self.off_btn[name],   self.off_btn_wrap[name]    = off_b,   off_wrap
+        self.ex_btn[name],    self.ex_btn_wrap[name]     = ex_b,    ex_wrap
+
+        # 상태
+        info = urwid.Text(("info", "📊 Position: N/A | 💰 Collateral: N/A"))
+        self.info_text[name] = info
+
+        card_dex_row = self._build_card_dex_row(name)
+
+        urwid.connect_signal(g_base, "change", on_group_changed)
+
+        controls = urwid.Columns(
+            [
+                (14, urwid.Text(("title", f"[{name.upper()}]"))),
+                (10, t_edit),
+                (14, qty),
+                (14, price),
+                (8,  g_edit),
+                (7,  type_wrap),
+                (5,  long_wrap),
+                (5,  short_wrap),
+                (7,  off_wrap),
+                (6,  ex_wrap),
+            ],
+            dividechars=1,
+        )
+        is_hl_like = self.mgr.is_hl_like(name)
+        
+        price_line = urwid.Text(("info", "Price: ..."))
+        self.card_price_text[name] = price_line
+
+        if is_hl_like:
+            quote_line = urwid.Text(("quote_color", ""))
+            self.card_quote_text[name] = quote_line
+            price_and_dex = urwid.Columns(
+                [
+                    ('pack', price_line),
+                    ('pack', urwid.Padding(quote_line, left=0, right=1)),
+                    ('weight', 1, urwid.Padding(card_dex_row, left=1)),
                 ],
                 dividechars=1,
             )
@@ -1448,8 +1866,12 @@ class UrwidApp:
         asyncio.get_event_loop().create_task(self._exec_all())
 
     def _on_reverse(self, btn):
+        self._reverse_enabled(self.current_group)
+        """
         cnt = 0
         for n in self.mgr.visible_names():
+            if self.group_by_ex.get(n, 0) != self.current_group:
+                continue
             if not self.enabled.get(n, False):
                 continue
             if self.side.get(n) == "buy":
@@ -1458,43 +1880,62 @@ class UrwidApp:
                 self.side[n] = "buy";  cnt += 1
             self._refresh_side(n)
         self._log(f"[ALL] REVERSE 완료: {cnt}개")
+        """
 
     def _on_repeat_toggle(self, btn):
         loop = asyncio.get_event_loop()
-        
-        # burn 돌고 있으면 먼저 멈춤
-        if self.burn_task and not self.burn_task.done():
-            self.burn_cancel.set()
-            self._log("[BURN] 중지 요청")
-        
-        # repeat 돌고 있으면 먼저 멈춤
-        if self.repeat_task and not self.repeat_task.done():
-            self.repeat_cancel.set()
-            self._log("[REPEAT] 중지 요청")
-        else:
-            try:
-                times = int(self.repeat_times.edit_text or "0")
-                a = float(self.repeat_min.edit_text or "0")
-                b = float(self.repeat_max.edit_text or "0")
-            except Exception:
-                self._log("[REPEAT] 입력 파싱 실패"); return
-            if times <= 0 or a < 0 or b < 0:
-                self._log("[REPEAT] Times>=1, Interval>=0 필요"); return
-            if b < a: a, b = b, a
-            self.repeat_cancel.clear()
-            self.repeat_task = loop.create_task(self._repeat_runner(times, a, b))
+        g = self.current_group
+
+        # CHANGED: 이 그룹의 burn만 중단 (다른 그룹 burn은 건드리지 않음)
+        bt = self.burn_task_by_group.get(g)
+        if bt and not bt.done():
+            self.burn_cancel_by_group[g].set()
+            self._log(f"[BURN:G{g}] 중지 요청")
+            return
+
+        # CHANGED: 이 그룹의 repeat 토글
+        rt = self.repeat_task_by_group.get(g)
+        if rt and not rt.done():
+            self.repeat_cancel_by_group[g].set()
+            self._log(f"[REPEAT:G{g}] 중지 요청")
+            return
+
+        # 시작
+        try:
+            times = int(self.repeat_times.edit_text or "0")
+            a = float(self.repeat_min.edit_text or "0")
+            b = float(self.repeat_max.edit_text or "0")
+        except Exception:
+            self._log(f"[REPEAT:G{g}] 입력 파싱 실패")
+            return
+
+        if times <= 0 or a < 0 or b < 0:
+            self._log(f"[REPEAT:G{g}] Times>=1, Interval>=0 필요")
+            return
+        if b < a:
+            a, b = b, a
+
+        # CHANGED: 그룹별 cancel/event 초기화 및 그룹별 task 저장
+        self.repeat_cancel_by_group[g].clear()
+        self.repeat_task_by_group[g] = loop.create_task(self._repeat_runner(g, times, a, b))
+        self._log(f"[REPEAT:G{g}] 시작 요청")
 
     def _on_burn_toggle(self, btn):
         loop = asyncio.get_event_loop()
-        # 먼저 기존 repeat/burn 정리
-        if self.repeat_task and not self.repeat_task.done():
-            self.repeat_cancel.set()
-            self._log("[REPEAT] 중지 요청")
+        g = self.current_group
 
-        if self.burn_task and not self.burn_task.done():
-            self.burn_cancel.set()
-            self._log("[BURN] 중지 요청")
-            return  # 누르면 중지 동작으로 동작
+        # CHANGED: 이 그룹 repeat가 돌고 있으면 중단
+        rt = self.repeat_task_by_group.get(g)
+        if rt and not rt.done():
+            self.repeat_cancel_by_group[g].set()
+            self._log(f"[REPEAT:G{g}] 중지 요청")
+
+        # CHANGED: burn 토글
+        bt = self.burn_task_by_group.get(g)
+        if bt and not bt.done():
+            self.burn_cancel_by_group[g].set()
+            self._log(f"[BURN:G{g}] 중지 요청")
+            return
 
         # 입력값 파싱
         try:
@@ -1505,19 +1946,24 @@ class UrwidApp:
             burn_min = float(self.burn_min.edit_text or "0")
             burn_max = float(self.burn_max.edit_text or "0")
         except Exception:
-            self._log("[BURN] 입력 파싱 실패"); return
+            self._log(f"[BURN:G{g}] 입력 파싱 실패")
+            return
+
         if base_times <= 0 or rep_min < 0 or rep_max < 0 or burn_min < 0 or burn_max < 0:
-            self._log("[BURN] Times>=1, Interval>=0 필요"); return
+            self._log(f"[BURN:G{g}] Times>=1, Interval>=0 필요")
+            return
+
         if rep_max < rep_min:
             rep_min, rep_max = rep_max, rep_min
         if burn_max < burn_min:
             burn_min, burn_max = burn_max, burn_min
 
-        # 태스크 시작
-        self.burn_cancel.clear()
-        self.burn_task = loop.create_task(
-            self._burn_runner(burn_times, base_times, rep_min, rep_max, burn_min, burn_max)
+        # CHANGED: 그룹별 cancel/task 시작
+        self.burn_cancel_by_group[g].clear()
+        self.burn_task_by_group[g] = loop.create_task(
+            self._burn_runner(g, burn_times, base_times, rep_min, rep_max, burn_min, burn_max)
         )
+        self._log(f"[BURN:G{g}] 시작 요청")
     
     def _on_close_positions(self, btn):
         asyncio.get_event_loop().create_task(self._close_all_positions())
@@ -1526,50 +1972,54 @@ class UrwidApp:
         raise urwid.ExitMainLoop()
 
     # --------- 주문 실행 ----------
-    async def _exec_one(self, name: str):
-        # 반복/번 해제 신호가 이미 켜져 있으면 즉시 반환
-        if self.repeat_cancel.is_set() or self.burn_cancel.is_set():
+    async def _exec_one(self, name: str, g: int):
+        # CHANGED: 그룹 cancel 기준으로 즉시 중단
+        if self._is_group_cancelled(g):
             return
-        
+
+        # CHANGED: 그룹 불일치면 실행하지 않음(안전)
+        if self.group_by_ex.get(name, 0) != g:
+            return
+
         ex = self.mgr.get_exchange(name)
         if not ex:
-            self._log(f"[{name.upper()}] 설정 없음"); return
+            self._log(f"[{name.upper()}] 설정 없음")
+            return
         if not self.enabled.get(name, False):
-            self._log(f"[{name.upper()}] 비활성 상태"); return
+            self._log(f"[{name.upper()}] 비활성 상태")
+            return
         side = self.side.get(name)
         if not side:
-            self._log(f"[{name.upper()}] LONG/SHORT 미선택"); return
+            self._log(f"[{name.upper()}] LONG/SHORT 미선택")
+            return
 
         max_retry = 5
-        for attempt in range(1,max_retry+1):
-            # 루프 중에도 즉시 중단
-            if self.repeat_cancel.is_set() or self.burn_cancel.is_set():
+        for attempt in range(1, max_retry + 1):
+            if self._is_group_cancelled(g):
                 return
             try:
                 qty_text = (self.qty_edit[name].edit_text or "").strip()
                 if not qty_text:
-                    self._log(f"[{name.upper()}] 수량 없음"); return
+                    self._log(f"[{name.upper()}] 수량 없음")
+                    return
                 amount = float(qty_text)
 
                 otype = (self.order_type[name] or "").lower()
 
                 if otype == "limit":
-                    # [수정] 지정가: 입력된 가격을 사용
                     p_txt = (self.price_edit[name].edit_text or "").strip()
                     if not p_txt:
                         self._log(f"[{name.upper()}] 지정가(Price) 없음")
                         return
                     price = float(p_txt)
                 else:
-                    # 시장가: 헤더 Price를 쓰지 않음 → 서비스가 심볼별로 안전하게 산출
                     price = None
-                
+
                 sym_coin = _normalize_symbol_input(self.symbol_by_ex.get(name) or self.symbol)
                 dex = self.dex_by_ex.get(name, self.header_dex)
                 sym = _compose_symbol(dex, sym_coin)
 
-                # 로그도 실제 주문 심볼을 표시
-                self._log(f"[{name.upper()}] {side.upper()} {amount} {sym} @ {otype}")
+                self._log(f"[G{g}] [{name.upper()}] {side.upper()} {amount} {sym} @ {otype}")
 
                 order = await self.service.execute_order(
                     exchange_name=name,
@@ -1579,189 +2029,196 @@ class UrwidApp:
                     side=side,
                     price=price,
                 )
-                self._log(f"[{name.upper()}] 주문 성공: #{order['id']}")
+                self._log(f"[G{g}] [{name.upper()}] 주문 성공: #{order['id']}")
                 break
+
             except Exception as e:
-                self._log(f"[{name.upper()}] 주문 실패: {e}")
-                self._log(f"[{name.upper()}] 주문 재시도...{attempt} | {max_retry}")
+                self._log(f"[G{g}] [{name.upper()}] 주문 실패: {e}")
+                self._log(f"[G{g}] [{name.upper()}] 주문 재시도...{attempt} | {max_retry}")
                 if attempt >= max_retry:
-                    self._log(f"[{name.upper()}] 재시도 한도 초과, 중단")
+                    self._log(f"[G{g}] [{name.upper()}] 재시도 한도 초과, 중단")
                     return
                 await asyncio.sleep(1.0)
 
-    async def _exec_all(self):
-        # 즉시 중단 체크
-        if self.repeat_cancel.is_set() or self.burn_cancel.is_set():
-            self._log("[ALL] 취소됨")
+    async def _exec_all(self, g: Optional[int] = None):
+        # CHANGED: runner에서 넘긴 그룹을 우선 사용(그룹 전환해도 실행은 고정)
+        if g is None:
+            g = self.current_group
+
+        if self._is_group_cancelled(g):
+            self._log(f"[ALL:G{g}] 취소됨")
             return
-        
-        self._log("[ALL] 동시 주문 시작")
+
+        self._log(f"[ALL:G{g}] 동시 주문 시작")
         tasks = []
+
         for n in self.mgr.visible_names():
-            if self.repeat_cancel.is_set() or self.burn_cancel.is_set():
-                self._log("[ALL] 취소됨(준비 중)")
+            if self.group_by_ex.get(n, 0) != g:
+                continue
+            if self._is_group_cancelled(g):
+                self._log(f"[ALL:G{g}] 취소됨(준비 중)")
                 break
 
-            if not self.mgr.get_exchange(n): 
+            if not self.mgr.get_exchange(n):
                 continue
             if not self.enabled.get(n, False):
-                self._log(f"[ALL] {n.upper()} 건너뜀: 비활성"); continue
+                self._log(f"[ALL:G{g}] {n.upper()} 건너뜀: 비활성")
+                continue
             if not self.side.get(n):
-                self._log(f"[ALL] {n.upper()} 건너뜀: 방향 미선택"); continue
-            
-            tasks.append(self._exec_one(n))
+                self._log(f"[ALL:G{g}] {n.upper()} 건너뜀: 방향 미선택")
+                continue
+
+            tasks.append(self._exec_one(n, g))
 
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
-            self._log("[ALL] 완료")
+            self._log(f"[ALL:G{g}] 완료")
         else:
-            self._log("[ALL] 실행할 거래소가 없습니다.")
+            self._log(f"[ALL:G{g}] 실행할 거래소가 없습니다.")
 
-    async def _repeat_runner(self, times: int, a: float, b: float):
-        self._log(f"[REPEAT] 시작: {times}회, 간격 {a:.2f}~{b:.2f}s 랜덤")
+    async def _repeat_runner(self, g: int, times: int, a: float, b: float):
+        self._log(f"[REPEAT:G{g}] 시작: {times}회, 간격 {a:.2f}~{b:.2f}s 랜덤")
         try:
-            i = 1
-            while i <= times:
-                # 즉시 중단 체크 (BURN 취소 또는 REPEAT 취소)
-                if self.repeat_cancel.is_set() or self.burn_cancel.is_set():
-                    self._log(f"[REPEAT] 취소됨 (진행 {i-1}/{times})")
+            for i in range(1, times + 1):
+                if self._is_group_cancelled(g):
+                    self._log(f"[REPEAT:G{g}] 취소됨 (진행 {i-1}/{times})")
                     break
 
-                self._log(f"[REPEAT] 실행 {i}/{times}")
-                await self._exec_all()
+                self._log(f"[REPEAT:G{g}] 실행 {i}/{times}")
+                await self._exec_all(g)
 
                 if i >= times:
                     break
 
-                # sleep도 cancel 즉시 반영
                 delay = random.uniform(a, b)
-                self._log(f"[REPEAT] 대기 {delay:.2f}s ...")
+                self._log(f"[REPEAT:G{g}] 대기 {delay:.2f}s ...")
                 try:
-                    # 둘 중 하나라도 켜지면 즉시 리턴
-                    await asyncio.wait_for(self._wait_cancel_any(), timeout=delay)
+                    await asyncio.wait_for(self._wait_cancel_any(g), timeout=delay)
                 except asyncio.TimeoutError:
                     pass
 
-                if self.repeat_cancel.is_set() or self.burn_cancel.is_set():
-                    self._log(f"[REPEAT] 취소됨 (대기 중)")
+                if self._is_group_cancelled(g):
+                    self._log(f"[REPEAT:G{g}] 취소됨 (대기 중)")
                     break
 
-                i += 1
-
-            self._log("[REPEAT] 완료")
+            self._log(f"[REPEAT:G{g}] 완료")
         finally:
-            self.repeat_task = None
-            self.repeat_cancel.clear()
+            # CHANGED: 그룹 task 종료 처리
+            self.repeat_task_by_group[g] = None
+            self.repeat_cancel_by_group[g].clear()
 
-    async def _burn_runner(self, burn_times: int, base_times: int, rep_min: float, rep_max: float, burn_min: float, burn_max: float):
+    async def _burn_runner(self, g: int, burn_times: int, base_times: int,
+                       rep_min: float, rep_max: float, burn_min: float, burn_max: float):
         """
         burn_times=1 → repeat(base_times) 한 번만
         burn_times>=2 → repeat(base_times) → (sleep c~d → reverse → repeat(2*base_times)) × (burn_times-1)
         burn_times<0  → repeat(base_times) → 이후 무한 루프 [sleep c~d → reverse → repeat(2*base_times)]
         """
-        self._log(f"[BURN] 시작: burn_times={burn_times}, base={base_times}, repeat_interval={rep_min}~{rep_max}, burn_interval={burn_min}~{burn_max}")
+        self._log(f"[BURN:G{g}] 시작: burn_times={burn_times}, base={base_times}, "
+              f"repeat_interval={rep_min}~{rep_max}, burn_interval={burn_min}~{burn_max}")
         try:
-            # 1) 첫 라운드: repeat(base_times)
-            if self.burn_cancel.is_set(): return
-            await self._repeat_runner(base_times, rep_min, rep_max)
-            if self.burn_cancel.is_set(): return
+            if self._is_group_cancelled(g):
+                return
 
-            # 2) 이후 라운드: 2*base_times, 방향 반전, burn interval 휴식
+            # 1) 첫 라운드: repeat(base_times)
+            await self._repeat_runner(g, base_times, rep_min, rep_max)
+            if self._is_group_cancelled(g):
+                return
+
             round_idx = 2
             while True:
                 if burn_times > 0 and round_idx > burn_times:
                     break
-                # burn interval 대기
+
                 delay = random.uniform(burn_min, burn_max)
-                self._log(f"[BURN] interval 대기 {delay:.2f}s ... (round {round_idx}/{burn_times if burn_times>0 else '∞'})")
+                self._log(f"[BURN:G{g}] interval 대기 {delay:.2f}s ... (round {round_idx}/{burn_times if burn_times>0 else '∞'})")
                 try:
-                    await asyncio.wait_for(asyncio.shield(self._wait_cancel_any()), timeout=delay)
+                    await asyncio.wait_for(self._wait_cancel_any(g), timeout=delay)
                 except asyncio.TimeoutError:
                     pass
-                if self.burn_cancel.is_set(): break
+                if self._is_group_cancelled(g):
+                    break
 
-                # reverse
-                self._reverse_enabled()
-                if self.burn_cancel.is_set(): break
+                # reverse (CHANGED: 그룹만 reverse)
+                self._reverse_enabled(g)
+                if self._is_group_cancelled(g):
+                    break
 
                 # repeat 2×base_times
-                await self._repeat_runner(2 * base_times, rep_min, rep_max)
-                if self.burn_cancel.is_set(): break
+                await self._repeat_runner(g, 2 * base_times, rep_min, rep_max)
+                if self._is_group_cancelled(g):
+                    break
 
-                if burn_times > 0:
-                    round_idx += 1
-                else:
-                    # 무한 반복
-                    round_idx += 1
-                    continue
+                round_idx += 1
 
-            self._log("[BURN] 완료")
-
+            self._log(f"[BURN:G{g}] 완료")
         finally:
-            self.burn_task = None
-            self.burn_cancel.clear()
+            self.burn_task_by_group[g] = None
+            self.burn_cancel_by_group[g].clear()
 
-    async def _wait_cancel_any(self):
-        # 단순 event wait (실제 wait_for의 timeout과 함께 사용)
-        # cancel 이벤트가 켜지면 즉시 반환
-        while not (self.repeat_cancel.is_set() or self.burn_cancel.is_set()):
+    async def _wait_cancel_any(self, g: int):
+        # CHANGED: 그룹 cancel 기준으로 대기 종료
+        while not self._is_group_cancelled(g):
             await asyncio.sleep(0.05)
 
-    def _reverse_enabled(self):
-        """활성(enabled=True) + 방향 선택된 거래소만 LONG↔SHORT 토글."""
+    def _reverse_enabled(self, g: Optional[int] = None):
+        """
+        활성(enabled=True) + 방향 선택된 거래소만 LONG↔SHORT 토글.
+        CHANGED: 그룹 지정 시 해당 그룹만 reverse.
+        """
+        if g is None:
+            g = self.current_group
+
         cnt = 0
         for n in self.mgr.visible_names():
+            if self.group_by_ex.get(n, 0) != g:
+                continue
             if not self.enabled.get(n, False):
                 continue
+
             cur = self.side.get(n)
             if cur == "buy":
-                self.side[n] = "sell"
-                cnt += 1
+                self.side[n] = "sell"; cnt += 1
             elif cur == "sell":
-                self.side[n] = "buy"
-                cnt += 1
-            # 버튼 색/상태 갱신
-            try:
-                if n in self.long_btn_wrap and n in self.short_btn_wrap:
-                    if self.side[n] == "buy":
-                        self.long_btn_wrap[n].set_attr_map({None: "btn_long_on"})
-                        self.short_btn_wrap[n].set_attr_map({None: "btn_short"})
-                    elif self.side[n] == "sell":
-                        self.long_btn_wrap[n].set_attr_map({None: "btn_long"})
-                        self.short_btn_wrap[n].set_attr_map({None: "btn_short_on"})
-                    else:
-                        self.long_btn_wrap[n].set_attr_map({None: "btn_long"})
-                        self.short_btn_wrap[n].set_attr_map({None: "btn_short"})
-            except Exception:
-                pass
-        self._log(f"[ALL] REVERSE 완료: {cnt}개")
+                self.side[n] = "buy";  cnt += 1
 
-    async def _close_all_positions(self):
+            self._refresh_side(n)
+
+        self._log(f"[ALL:G{g}] REVERSE 완료: {cnt}개")
+
+    async def _close_all_positions(self, g: Optional[int] = None):
         """
         show=True & enabled=True 거래소만 대상으로,
         현재 포지션의 반대 방향으로 '시장가' 주문을 넣어 포지션을 0으로 만든다.
         - 포지션 없으면 건너뜀
         - 지정가/가격 입력과 무관하게 항상 시장가(price=현재가) 사용
         """
-        self._log("[CLOSE] CLOSE ALL 시작")
+        if g is None:
+            g = self.current_group
+
+        self._log(f"[CLOSE:G{g}] CLOSE ALL 시작")
         tasks = []
+
         for n in self.mgr.visible_names():
-            # OFF는 건너뜀
-            if not self.enabled.get(n, False):
-                self._log(f"[CLOSE] {n.upper()} 건너뜀: 비활성(OFF)")
+            if self.group_by_ex.get(n, 0) != g:
                 continue
+            if not self.enabled.get(n, False):
+                self._log(f"[CLOSE:G{g}] {n.upper()} 건너뜀: 비활성(OFF)")
+                continue
+
             ex = self.mgr.get_exchange(n)
             if not ex:
-                self._log(f"[CLOSE] {n.upper()} 건너뜀: 설정 없음")
+                self._log(f"[CLOSE:G{g}] {n.upper()} 건너뜀: 설정 없음")
                 continue
+
             tasks.append(self._close_one_position(n, ex))
 
         if tasks:
             results = await asyncio.gather(*tasks, return_exceptions=True)
             ok = sum(1 for r in results if not isinstance(r, Exception))
-            self._log(f"[CLOSE] 완료: 성공 {ok}/{len(tasks)}")
+            self._log(f"[CLOSE:G{g}] 완료: 성공 {ok}/{len(tasks)}")
         else:
-            self._log("[CLOSE] 실행할 거래소가 없습니다.")
+            self._log(f"[CLOSE:G{g}] 실행할 거래소가 없습니다.")
 
     async def _close_one_position(self, name: str, ex):
         """단일 거래소 청산(시장가) 헬퍼."""
@@ -2341,11 +2798,66 @@ class UrwidApp:
 
     def _apply_to_all_qty(self, new_text):
         """
-        헤더의 All Qty 입력칸이 변경될 때 모든 카드에 반영합니다.
+        CHANGED:
+        - 헤더 All Qty 변경 시 '현재 그룹'에만 적용
+        - 그룹 전환으로 set_edit_text가 호출될 때는 전파하지 않음
         """
+        if getattr(self, "_switching_group", False):
+            return  # CHANGED: 그룹 전환 중에는 전파 금지
+
+        g = int(self.current_group)
+        txt = (new_text or "").strip()
+
+        # 현재 그룹 캐시에도 저장
+        self.group_qty[g] = txt
+
         for name in self.mgr.all_names():
+            if self.group_by_ex.get(name, 0) != g:
+                continue
             if name in self.qty_edit:
-                self.qty_edit[name].set_edit_text(new_text or "")
+                self.qty_edit[name].set_edit_text(txt)
+            self.qty_by_ex[name] = txt
+
+    def _on_header_ticker_cache_only(self, edit, new):
+        """
+        CHANGED: 글자 입력 시에는 캐시(self.symbol, self.group_symbol)만 업데이트.
+        카드로 전파하지 않음. 전파는 Enter/포커스이탈(confirm) 시에만.
+        """
+        # 그룹 전환 중에는 아무것도 하지 않음
+        if getattr(self, "_switching_group", False):
+            return
+
+        g = int(self.current_group)
+        coin = _normalize_symbol_input(new or "BTC")
+
+        # 캐시만 업데이트 (전파 X)
+        self.group_symbol[g] = coin
+        self.symbol = coin
+
+    def _on_header_ticker_confirm(self, edit, new):
+        """
+        CHANGED: Enter 입력 또는 포커스 이탈 시 호출.
+        현재 그룹 카드들에 Ticker를 전파.
+        """
+        # 그룹 전환 중에는 전파하지 않음
+        if getattr(self, "_switching_group", False):
+            return
+
+        g = int(self.current_group)
+        coin = _normalize_symbol_input(new or "BTC")
+
+        # 캐시 확정
+        self.group_symbol[g] = coin
+        self.symbol = coin
+
+        # 현재 그룹에 전파
+        self._bulk_updating_tickers = True
+        try:
+            self._apply_header_settings_to_group(g)
+        finally:
+            self._bulk_updating_tickers = False
+
+        self._request_redraw()
 
     # --------- 실행/루프 ----------
     def run(self):
@@ -2425,7 +2937,7 @@ class UrwidApp:
                 #dexs = await self.service.fetch_perp_dexs()
                 first_hl = self.mgr.first_hl_exchange()
                 dexs = [x.upper() for x in first_hl.dex_list]
-                self.dex_names = dexs #["HL"] + dexs
+                self.dex_names = dexs
                 # Frame.header(LineBox)의 original_widget을 교체해야 실제로 헤더가 재그려집니다.
                 # 기존 코드는 self.header(original_widget 아님)에 새 Pile을 할당해 효과가 없었습니다.
                 new_header_pile = self._hdr_widgets()  # 새 헤더 Pile 생성
@@ -2462,18 +2974,7 @@ class UrwidApp:
                 self._bulk_updating_tickers = True
 
                 try:
-                    # 모든 거래소(표시/비표시 포함)의 심볼 상태를 먼저 갱신
-                    for ex_name in self.mgr.all_names():
-                        self.symbol_by_ex[ex_name] = coin
-
-                    # 화면에 보이는 카드의 T 입력칸 텍스트를 갱신 (체인지 시그널은 발생해도 레버리지 예약은 벌크 플래그로 억제됨)
-                    for ex_name in self.mgr.visible_names():
-                        try:
-                            edit_w = self.ticker_edit_by_ex.get(ex_name)
-                            if edit_w:
-                                edit_w.set_edit_text(coin)
-                        except Exception:
-                            pass
+                    self._apply_header_settings_to_group(self.current_group)
                 finally:
                     # 벌크 모드 해제
                     self._bulk_updating_tickers = False
@@ -2485,8 +2986,12 @@ class UrwidApp:
                 except Exception:
                     pass
 
-            urwid.connect_signal(self.ticker_edit, "change", ticker_changed)
-            urwid.connect_signal(self.allqty_edit, 'change', lambda _, new: self._apply_to_all_qty(new))
+            #urwid.connect_signal(self.ticker_edit, "change", ticker_changed)
+            #urwid.connect_signal(self.allqty_edit, 'change', lambda _, new: self._apply_to_all_qty(new))
+            #urwid.connect_signal(self.ticker_edit, "change", self._on_header_ticker_changed)
+            urwid.connect_signal(self.ticker_edit, "change", self._on_header_ticker_cache_only)
+            urwid.connect_signal(self.ticker_edit, "confirm", self._on_header_ticker_confirm)
+            urwid.connect_signal(self.allqty_edit, "change", lambda _, new: self._apply_to_all_qty(new))
 
             self._request_redraw()
 

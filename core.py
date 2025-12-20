@@ -143,7 +143,14 @@ class ExchangeManager:
             frontend_market = (fm_raw or "").strip().lower() == "true"
 
             raw_setup = config.get(exchange_name, "initial_setup", fallback=None)
-            setup_data = {"symbol": "BTC", "amount": "", "trade_type": "perp", "dex": "HL", "side":None}
+            setup_data = {
+                "symbol": "BTC",
+                "amount": "",
+                "trade_type": "perp",
+                "dex": "HL",
+                "side": None,
+                "group": 0,  # [ADD] 기본 그룹 0
+            }
             
             if raw_setup:
                 try:
@@ -156,12 +163,27 @@ class ExchangeManager:
                             setup_data["dex"] = setup_data["dex"].upper()
                         else:
                             setup_data["symbol"] = full_sym
+
                     if len(parts) >= 2:
                         setup_data["amount"] = parts[1]
+
                     if len(parts) >= 3:
                         setup_data["side"] = parts[2].lower()
+
                     if len(parts) >= 4:
                         setup_data["trade_type"] = parts[3].lower()
+
+                    # 5 into group_max to do
+                    if len(parts) >= 5:
+                        try:
+                            g = int(parts[4])
+                        except Exception:
+                            g = 0
+                        # [ADD] clamp
+                        if g < 0: g = 0
+                        if g > 5: g = 5
+                        setup_data["group"] = g
+
                 except Exception as e:
                     logger.warning(f"[{exchange_name}] initial_setup 파싱 실패: {e}")
                     print(f"[{exchange_name}] initial_setup 파싱 실패: {e}")
