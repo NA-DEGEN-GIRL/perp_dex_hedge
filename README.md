@@ -121,6 +121,26 @@ python main.py
 python main.py --ui urwid
 ```
 
+#### 3.3 WSL(root)에서 Qt UI 실행이 안 될 때 (WSLg)
+WSL에서 root 사용자로 Qt를 실행하면 Wayland/X 권한 문제로 Qt가 안 뜨는 경우가 있습니다.  
+이 프로젝트에는 이를 자동으로 세팅해 주는 실행 스크립트가 있습니다.
+
+- 파일: `run_qt_root_wsl.sh`
+- 하는 일:
+  - `/run/user/0` 생성 및 권한 설정
+  - WSLg의 wayland 소켓을 root 런타임으로 연결
+  - `DISPLAY`, `XDG_RUNTIME_DIR`, `QT_QPA_PLATFORM` 등 환경변수 설정
+  - 마지막에 `python main.py` 실행
+
+사용 방법:
+```bash
+chmod +x run_qt_root_wsl.sh
+./run_qt_root_wsl.sh
+```
+
+주의:
+- 스크립트를 실행한 다음 따로 `python main.py`를 치는 방식이 아니라, **스크립트가 알아서 실행까지 해주는 형태**입니다.
+
 ---
 
 ## 📁 설정 파일 상세 설명
@@ -238,6 +258,8 @@ show = True              # UI에 표시할지 여부
 exchange = hyperliquid   # 거래소 엔진 종류
 builder_code = 0x...     # HL 빌더 코드 (HL 기반만)
 fee_rate = 20 / 25       # 수수료 (limit / market)
+# [신규] 카드 초기값 설정 (심볼, 수량, spot/perp)
+initial_setup = xyz:XYZ100, 0.0002, perp
 ```
 
 #### exchange 값 종류
@@ -254,12 +276,40 @@ fee_rate = 20 / 25       # 수수료 (limit / market)
 | `grvt` | GRVT |
 | `pacifica` | Pacifica |
 
+#### initial_setup (카드 초기값 설정)  ✅ 신규
+프로그램 실행 직후, 각 거래소 카드의 기본 입력값(코인/수량/유형)을 자동으로 채우기 위한 옵션입니다.
+
+형식
+```ini
+initial_setup = <symbol>, <amount>, <spot|perp>
+```
+
+- `<symbol>`
+  - 일반적으로 `BTC`, `ETH` 같은 코인 심볼을 넣습니다.
+  - **Hyperliquid(HL) 계열에서 DEX 심볼을 미리 지정하고 싶다면** `dex:COIN` 형태로 쓸 수 있습니다.
+    - 예: `xyz:XYZ100`  
+      - 이 경우 초기 설정 시 **DEX = xyz 선택**, 카드 입력창에는 **XYZ100**만 들어가도록 처리됩니다.
+    - 예: `hyna:BTC`  
+      - DEX = hyna 선택, 코인 = BTC
+- `<amount>`
+  - 카드의 Q(수량) 입력칸에 들어갈 값입니다.
+  - 예: `0.0002`
+- `<spot|perp>`
+  - 아직 spot은 미지원 이지만, **추후 spot/perp 분리를 위해 값은 저장/파싱됩니다.**
+  - 지금은 일단 `perp`로 두세요.
+
+주의사항
+- `initial_setup`은 **섹션별로 하나만** 지정 가능합니다.
+- 값이 없으면 프로그램 기본값(기존 로직)에 따릅니다.
+- 잘못된 포맷(콤마 누락 등)인 경우 해당 섹션만 기본값으로 동작합니다.
+
 #### 예시
 ```ini
 # 사용할 거래소: show = True
 [lit]
 builder_code = 0x24a747628494231347f4f6aead2ec14f50bcc8b7
 fee_rate = 35 / 50
+initial_setup = BTC, 0.002, perp
 show = True
 
 # 사용 안 할 거래소: show = False

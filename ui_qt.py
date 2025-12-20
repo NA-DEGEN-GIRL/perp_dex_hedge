@@ -1318,15 +1318,21 @@ class UiQtApp(QtWidgets.QMainWindow):
                 if name in to_add:
                     # 새 카드 생성
                     is_hl_like = self.mgr.is_hl_like(name)
+                    meta = self.mgr.get_meta(name)
+                    setup = meta.get("initial_setup", {}) # [ADD] 초기값 가져오기
+
                     card = ExchangeCardWidget(name, self.dex_names, is_hl_like=is_hl_like)
                     
                     st = self.exchange_state[name]
-                    card.set_ticker(st.symbol)
+                    card.set_ticker(setup.get("symbol",st.symbol))
+                    setup_qty = setup.get("amount",None)
+                    if setup_qty:
+                        card.set_qty(setup_qty)
                     card.set_order_type(st.order_type)
                     card.set_side_enabled(st.enabled, st.side)
                     
                     if is_hl_like:
-                        card.set_dex(st.dex)
+                        card.set_dex(setup.get("dex",st.dex))
                     
                     # Signals 연결
                     card.execute_clicked.connect(self._on_exec_one)

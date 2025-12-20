@@ -415,6 +415,110 @@ class UrwidApp:
         self._status_locks: Dict[str, asyncio.Lock] = {name: asyncio.Lock() for name in self.mgr.all_names()}
         self.fee_text: Dict[str, urwid.Text] = {}  # [ADD] 카드별 FEE 라벨 위젯
 
+        # [ADD] 거래소별 초기값(카드 입력값) 상태 저장용
+        self.qty_by_ex: Dict[str, str] = {name: "" for name in self.mgr.all_names()}
+        self.trade_type_by_ex: Dict[str, str] = {name: "perp" for name in self.mgr.all_names()}  # 아직 기능 X, 저장만
+
+        # [ADD] meta.initial_setup를 상태 dict에 1회 반영
+        self._seed_initial_setup_defaults()
+
+    # [ADD] initial_setup 파싱/적용 유틸
+    def _parse_initial_setup(self, raw, is_hl_like: bool) -> dict:
+        """
+        core.py가 meta['initial_setup']을 dict로 넣어준 케이스 + 문자열로 남겨둔 케이스 둘 다 처리.
+        반환: {symbol, amount, trade_type, dex}
+        - symbol: 카드 입력창에 들어갈 coin (HL-like면 'XYZ100' 형태)
+        - dex: HL-like일 때만 의미(HL/XYZ/FLX...)
+        """
+        out = {"symbol": None, "amount": None, "trade_type": None, "dex": None}
+
+        if not raw:
+            return out
+
+        # 1) dict 형태면 그대로 흡수
+        if isinstance(raw, dict):
+            out["symbol"] = raw.get("symbol")
+            out["amount"] = raw.get("amount")
+            out["trade_type"] = raw.get("trade_type") or raw.get("spot_or_perp") or raw.get("mode")
+            out["dex"] = raw.get("dex")
+            # symbol에 dex:coin이 들어있을 수도 있으니 아래에서 정규화
+        else:
+            # 2) 문자열 "xyz:XYZ100, 0.0002, perp" 형태 파싱
+            try:
+                parts = [p.strip() for p in str(raw).split(",")]
+            except Exception:
+                parts = []
+            if len(parts) >= 1:
+                out["symbol"] = parts[0]
+            if len(parts) >= 2:
+                out["amount"] = parts[1]
+            if len(parts) >= 3:
+                out["trade_type"] = parts[2].lower()
+
+        # 3) HL-like일 때 dex:coin 처리
+        sym = (out["symbol"] or "").strip()
+        if sym and ":" in sym:
+            dex_part, coin_part = sym.split(":", 1)
+            if is_hl_like:
+                out["dex"] = (out["dex"] or dex_part).strip().upper()
+                out["symbol"] = coin_part.strip().upper()
+            else:
+                # 비-HL이면 dex prefix 무시하고 coin만
+                out["symbol"] = coin_part.strip().upper()
+                out["dex"] = None
+        else:
+            # ':' 없으면 코인만
+            if sym:
+                out["symbol"] = sym.strip().upper()
+
+        # 4) trade_type 기본값
+        if out["trade_type"]:
+            out["trade_type"] = str(out["trade_type"]).strip().lower()
+        else:
+            out["trade_type"] = "perp"
+
+        # 5) dex 기본값
+        if is_hl_like:
+            out["dex"] = (out["dex"] or "HL").strip().upper()
+
+        # amount는 string 그대로 저장(urwid Edit에 넣기 쉬움)
+        if out["amount"] is not None:
+            out["amount"] = str(out["amount"]).strip()
+
+        return out
+
+
+    def _seed_initial_setup_defaults(self):
+        """
+        meta['initial_setup']을 읽어, 카드 상태 dict(symbol_by_ex/dex_by_ex/qty_by_ex/trade_type_by_ex)에 초기값을 1회 주입.
+        - 이미 사용자가 바꾼 값이 있을 수 있으니, '기본값 상태'일 때만 덮어쓰기.
+        """
+        for name in self.mgr.all_names():
+            meta = self.mgr.get_meta(name) or {}
+            raw = meta.get("initial_setup")
+            if not raw:
+                continue
+
+            is_hl_like = self.mgr.is_hl_like(name)
+            setup = self._parse_initial_setup(raw, is_hl_like=is_hl_like)
+
+            # 심볼 초기값 주입: 현재가 기본 심볼(self.symbol)인 경우에만 덮어쓰기(사용자 변경 보호)
+            if setup.get("symbol") and (self.symbol_by_ex.get(name) in (None, "", self.symbol)):
+                self.symbol_by_ex[name] = setup["symbol"]
+
+            # 수량 초기값 주입: 비어 있을 때만
+            if setup.get("amount") and not (self.qty_by_ex.get(name) or "").strip():
+                self.qty_by_ex[name] = setup["amount"]
+
+            # dex 초기값 주입: HL-like일 때, 기본 HL일 때만 덮어쓰기
+            if is_hl_like and setup.get("dex"):
+                if (self.dex_by_ex.get(name) or "HL").upper() == "HL":
+                    self.dex_by_ex[name] = setup["dex"]
+
+            # trade_type 저장(아직 기능 X)
+            if setup.get("trade_type"):
+                self.trade_type_by_ex[name] = setup["trade_type"]
+
     # [ADD] Logs 맨 아래로 안전하게 스크롤하는 헬퍼 (UI 루프에서 실행)
     def _scroll_logs_to_bottom(self, redraw=True):
         # comment: UI 루프에서 set_focus가 실행되도록 알람으로 예약
@@ -810,13 +914,40 @@ class UrwidApp:
 
     # --------- 거래소 카드 ----------
     def _row(self, name: str):
-        # 입력
-        qty = urwid.AttrMap(urwid.Edit(("label", "Q:"), ""), "edit", "edit_focus")
+        meta = self.mgr.get_meta(name) or {}
+
+        # [ADD] 안전망: __init__에서 시딩을 했어도, 혹시 누락되면 여기서 한 번 더 시딩
+        try:
+            if meta.get("initial_setup"):
+                is_hl_like = self.mgr.is_hl_like(name)
+                setup = self._parse_initial_setup(meta.get("initial_setup"), is_hl_like=is_hl_like)
+                if setup.get("symbol") and (self.symbol_by_ex.get(name) in (None, "", self.symbol)):
+                    self.symbol_by_ex[name] = setup["symbol"]
+                if setup.get("amount") and not (self.qty_by_ex.get(name) or "").strip():
+                    self.qty_by_ex[name] = setup["amount"]
+                if is_hl_like and setup.get("dex") and (self.dex_by_ex.get(name) or "HL").upper() == "HL":
+                    self.dex_by_ex[name] = setup["dex"]
+                if setup.get("trade_type"):
+                    self.trade_type_by_ex[name] = setup["trade_type"]
+        except Exception:
+            pass
+
+        # [CHG] 상태 dict 기반으로 기본 텍스트를 넣기
+        init_ticker = (self.symbol_by_ex.get(name) or self.symbol or "BTC")
+        init_qty = (self.qty_by_ex.get(name) or "")
+
+        qty = urwid.AttrMap(urwid.Edit(("label", "Q:"), init_qty), "edit", "edit_focus")
         price = urwid.AttrMap(urwid.Edit(("label", "P:"), ""), "edit", "edit_focus")
-        t_edit = urwid.AttrMap(urwid.Edit(("label", "T:"), (self.symbol_by_ex.get(name) or self.symbol)), "edit", "edit_focus")
+        t_edit = urwid.AttrMap(urwid.Edit(("label", "T:"), init_ticker), "edit", "edit_focus")
+
         self.qty_edit[name] = qty.base_widget
         self.price_edit[name] = price.base_widget
         self.ticker_edit_by_ex[name] = t_edit.base_widget
+
+        # [ADD] qty 변경 시 상태 dict도 업데이트(재빌드 시 값 유지에 도움)
+        def on_qty_changed(edit, new, n=name):
+            self.qty_by_ex[n] = (new or "").strip()
+        urwid.connect_signal(qty.base_widget, "change", on_qty_changed)
 
         def on_ticker_changed(edit, new, n=name):
             # 대문자로 정규화하여 저장

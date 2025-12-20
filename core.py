@@ -142,11 +142,34 @@ class ExchangeManager:
             fm_raw = config.get(exchange_name, "FrontendMarket", fallback="False")
             frontend_market = (fm_raw or "").strip().lower() == "true"
 
+            raw_setup = config.get(exchange_name, "initial_setup", fallback=None)
+            setup_data = {"symbol": "BTC", "amount": "", "trade_type": "perp", "dex": "HL"}
+            
+            if raw_setup:
+                try:
+                    # 쉼표 구분자 파싱 (예: xyz:XYZ100, 0.0002, perp)
+                    parts = [p.strip() for p in raw_setup.split(",")]
+                    if len(parts) >= 1:
+                        full_sym = parts[0]
+                        if ":" in full_sym:
+                            setup_data["dex"], setup_data["symbol"] = full_sym.split(":", 1)
+                            setup_data["dex"] = setup_data["dex"].upper()
+                        else:
+                            setup_data["symbol"] = full_sym
+                    if len(parts) >= 2:
+                        setup_data["amount"] = parts[1]
+                    if len(parts) >= 3:
+                        setup_data["trade_type"] = parts[2].lower()
+                except Exception as e:
+                    logger.warning(f"[{exchange_name}] initial_setup 파싱 실패: {e}")
+                    print(f"[{exchange_name}] initial_setup 파싱 실패: {e}")
+
             self.meta[exchange_name] = {
                 "show": show,
                 "hl": hl_like,
                 "frontend_market": frontend_market,
                 "exchange": exchange_platform,
+                "initial_setup": setup_data,
             }
 
             self.exchanges[exchange_name] = None
@@ -220,6 +243,10 @@ class ExchangeManager:
                     pass
                 try:
                     print(client.builder_fee_pair)
+                except:
+                    pass
+                try:
+                    print(self.meta[name]["initial_setup"])
                 except:
                     pass
 
