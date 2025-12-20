@@ -154,6 +154,7 @@ chmod +x run_qt_root_wsl.sh
 # 거래소명_WALLET_ADDRESS = 거래 지갑 주소
 # 거래소명_AGENT_API_KEY = Agent API 주소 (HL에서 생성)
 # 거래소명_AGENT_PRIVATE_KEY = Agent 프라이빗 키
+# 거래소명_IS_SUB = sub account이면 1/true (선택)
 
 # 예시: Lit 거래소
 LIT_WALLET_ADDRESS=0x...
@@ -258,8 +259,8 @@ show = True              # UI에 표시할지 여부
 exchange = hyperliquid   # 거래소 엔진 종류
 builder_code = 0x...     # HL 빌더 코드 (HL 기반만)
 fee_rate = 20 / 25       # 수수료 (limit / market)
-# [신규] 카드 초기값 설정 (심볼, 수량, spot/perp)
-initial_setup = xyz:XYZ100, 0.0002, perp
+# [신규] 카드 초기값 설정 (심볼, 수량, long/short, spot/perp)
+initial_setup = xyz:XYZ100, 0.0002, long, perp
 ```
 
 #### exchange 값 종류
@@ -281,7 +282,7 @@ initial_setup = xyz:XYZ100, 0.0002, perp
 
 형식
 ```ini
-initial_setup = <symbol>, <amount>, <spot|perp>
+initial_setup = <symbol>, <amount>, <long|short|off>, <spot|perp>
 ```
 
 - `<symbol>`
@@ -294,6 +295,9 @@ initial_setup = <symbol>, <amount>, <spot|perp>
 - `<amount>`
   - 카드의 Q(수량) 입력칸에 들어갈 값입니다.
   - 예: `0.0002`
+- `<long|short|off>`
+  - 카드의 방향 선택을 초기화합니다.
+  - `long` → Long 활성화, `short` → Short 활성화, `off` → 비활성(OFF) 상태
 - `<spot|perp>`
   - 아직 spot은 미지원 이지만, **추후 spot/perp 분리를 위해 값은 저장/파싱됩니다.**
   - 지금은 일단 `perp`로 두세요.
@@ -309,7 +313,7 @@ initial_setup = <symbol>, <amount>, <spot|perp>
 [lit]
 builder_code = 0x24a747628494231347f4f6aead2ec14f50bcc8b7
 fee_rate = 35 / 50
-initial_setup = BTC, 0.002, perp
+initial_setup = BTC, 0.002, long, perp
 show = True
 
 # 사용 안 할 거래소: show = False

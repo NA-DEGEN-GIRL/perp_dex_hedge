@@ -143,7 +143,7 @@ class ExchangeManager:
             frontend_market = (fm_raw or "").strip().lower() == "true"
 
             raw_setup = config.get(exchange_name, "initial_setup", fallback=None)
-            setup_data = {"symbol": "BTC", "amount": "", "trade_type": "perp", "dex": "HL"}
+            setup_data = {"symbol": "BTC", "amount": "", "trade_type": "perp", "dex": "HL", "side":None}
             
             if raw_setup:
                 try:
@@ -159,7 +159,9 @@ class ExchangeManager:
                     if len(parts) >= 2:
                         setup_data["amount"] = parts[1]
                     if len(parts) >= 3:
-                        setup_data["trade_type"] = parts[2].lower()
+                        setup_data["side"] = parts[2].lower()
+                    if len(parts) >= 4:
+                        setup_data["trade_type"] = parts[3].lower()
                 except Exception as e:
                     logger.warning(f"[{exchange_name}] initial_setup 파싱 실패: {e}")
                     print(f"[{exchange_name}] initial_setup 파싱 실패: {e}")

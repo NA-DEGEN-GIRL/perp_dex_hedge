@@ -417,6 +417,7 @@ class UrwidApp:
 
         # [ADD] 거래소별 초기값(카드 입력값) 상태 저장용
         self.qty_by_ex: Dict[str, str] = {name: "" for name in self.mgr.all_names()}
+        self._seeded_side_done: Dict[str, bool] = {name: False for name in self.mgr.all_names()}
         self.trade_type_by_ex: Dict[str, str] = {name: "perp" for name in self.mgr.all_names()}  # 아직 기능 X, 저장만
 
         # [ADD] meta.initial_setup를 상태 dict에 1회 반영
@@ -430,7 +431,7 @@ class UrwidApp:
         - symbol: 카드 입력창에 들어갈 coin (HL-like면 'XYZ100' 형태)
         - dex: HL-like일 때만 의미(HL/XYZ/FLX...)
         """
-        out = {"symbol": None, "amount": None, "trade_type": None, "dex": None}
+        out = {"symbol": None, "amount": None, "side": None, "trade_type": None, "dex": None}
 
         if not raw:
             return out
@@ -439,11 +440,11 @@ class UrwidApp:
         if isinstance(raw, dict):
             out["symbol"] = raw.get("symbol")
             out["amount"] = raw.get("amount")
+            out["side"] = raw.get("side") or raw.get("long_short")
             out["trade_type"] = raw.get("trade_type") or raw.get("spot_or_perp") or raw.get("mode")
             out["dex"] = raw.get("dex")
-            # symbol에 dex:coin이 들어있을 수도 있으니 아래에서 정규화
         else:
-            # 2) 문자열 "xyz:XYZ100, 0.0002, perp" 형태 파싱
+            # 2) 문자열 "xyz:XYZ100, 0.0002, long, perp" 파싱
             try:
                 parts = [p.strip() for p in str(raw).split(",")]
             except Exception:
@@ -453,7 +454,9 @@ class UrwidApp:
             if len(parts) >= 2:
                 out["amount"] = parts[1]
             if len(parts) >= 3:
-                out["trade_type"] = parts[2].lower()
+                out["side"] = parts[2].lower()
+            if len(parts) >= 4:
+                out["trade_type"] = parts[3].lower()
 
         # 3) HL-like일 때 dex:coin 처리
         sym = (out["symbol"] or "").strip()
@@ -463,11 +466,9 @@ class UrwidApp:
                 out["dex"] = (out["dex"] or dex_part).strip().upper()
                 out["symbol"] = coin_part.strip().upper()
             else:
-                # 비-HL이면 dex prefix 무시하고 coin만
                 out["symbol"] = coin_part.strip().upper()
                 out["dex"] = None
         else:
-            # ':' 없으면 코인만
             if sym:
                 out["symbol"] = sym.strip().upper()
 
@@ -477,16 +478,27 @@ class UrwidApp:
         else:
             out["trade_type"] = "perp"
 
-        # 5) dex 기본값
+        # 5) side 매핑: long/short/off → buy/sell/None
+        s = (out["side"] or "").strip().lower()
+        if s in ("long", "l", "buy"):
+            out["side"] = "buy"
+        elif s in ("short", "s", "sell"):
+            out["side"] = "sell"
+        elif s in ("off", "none", "", "null"):
+            out["side"] = None
+        else:
+            # 알 수 없는 값이면 None(미선택)
+            out["side"] = None
+
+        # 6) dex 기본값
         if is_hl_like:
             out["dex"] = (out["dex"] or "HL").strip().upper()
 
-        # amount는 string 그대로 저장(urwid Edit에 넣기 쉬움)
+        # amount는 string 그대로 저장
         if out["amount"] is not None:
             out["amount"] = str(out["amount"]).strip()
 
         return out
-
 
     def _seed_initial_setup_defaults(self):
         """
@@ -518,6 +530,23 @@ class UrwidApp:
             # trade_type 저장(아직 기능 X)
             if setup.get("trade_type"):
                 self.trade_type_by_ex[name] = setup["trade_type"]
+            
+            if not self._seeded_side_done.get(name, False):
+                if setup.get("side") in ("buy", "sell", None):
+                    # 사용자가 아직 선택 안 했을 때만 초기 side 적용
+                    if (not self.enabled.get(name, False)) and (self.side.get(name) is None):
+                        if setup["side"] == "buy":
+                            self.enabled[name] = True
+                            self.side[name] = "buy"
+                        elif setup["side"] == "sell":
+                            self.enabled[name] = True
+                            self.side[name] = "sell"
+                        else:
+                            # off/none
+                            self.enabled[name] = False
+                            self.side[name] = None
+
+                    self._seeded_side_done[name] = True
 
     # [ADD] Logs 맨 아래로 안전하게 스크롤하는 헬퍼 (UI 루프에서 실행)
     def _scroll_logs_to_bottom(self, redraw=True):

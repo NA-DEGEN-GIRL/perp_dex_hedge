@@ -1328,6 +1328,32 @@ class UiQtApp(QtWidgets.QMainWindow):
                     setup_qty = setup.get("amount",None)
                     if setup_qty:
                         card.set_qty(setup_qty)
+                        
+                    # 2) (신규) initial_setup의 long/short/off 반영
+                    #    - setup에서 side 값을 가져와 buy/sell/None으로 변환
+                    raw_side = (setup.get("side") or setup.get("long_short") or "").strip().lower()
+                    setup_side = None
+                    if raw_side in ("long", "l", "buy"):
+                        setup_side = "buy"
+                    elif raw_side in ("short", "s", "sell"):
+                        setup_side = "sell"
+                    elif raw_side in ("off", "none", "", "null"):
+                        setup_side = None
+
+                    # 3) "초기값"일 때만 적용(사용자가 이미 눌러둔 상태 보호)
+                    #    - st.enabled=False & st.side=None 상태면 초기값 적용
+                    if (not st.enabled) and (st.side is None) and raw_side:
+                        if setup_side is None:
+                            st.enabled = False
+                            st.side = None
+                        else:
+                            st.enabled = True
+                            st.side = setup_side
+                        # UI 상태도 동기화
+                        self.enabled[name] = st.enabled
+                        self.side[name] = st.side
+
+                    # 4) 카드에 최종 상태 반영
                     card.set_order_type(st.order_type)
                     card.set_side_enabled(st.enabled, st.side)
                     
