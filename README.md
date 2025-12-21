@@ -121,25 +121,35 @@ python main.py
 python main.py --ui urwid
 ```
 
-#### 3.3 WSL(root)에서 Qt UI 실행이 안 될 때 (WSLg)
-WSL에서 root 사용자로 Qt를 실행하면 Wayland/X 권한 문제로 Qt가 안 뜨는 경우가 있습니다.  
-이 프로젝트에는 이를 자동으로 세팅해 주는 실행 스크립트가 있습니다.
+#### 3.3 WSL에서 Qt UI 실행 (Linux/WSL)
 
-- 파일: `run_qt_root_wsl.sh`
-- 하는 일:
-  - `/run/user/0` 생성 및 권한 설정
-  - WSLg의 wayland 소켓을 root 런타임으로 연결
-  - `DISPLAY`, `XDG_RUNTIME_DIR`, `QT_QPA_PLATFORM` 등 환경변수 설정
-  - 마지막에 `python main.py` 실행
-
-사용 방법:
+##### 1) 필수 패키지 설치 (Qt xcb 플러그인)
 ```bash
-chmod +x run_qt_root_wsl.sh
-./run_qt_root_wsl.sh
+sudo apt update
+sudo apt install -y \
+    libxcb-cursor0 \
+    libxcb-cursor-dev \
+    libxcb-xinerama0 \
+    libxcb-icccm4 \
+    libxcb-image0 \
+    libxcb-keysyms1 \
+    libxcb-render-util0 \
+    libxcb-shape0 \
+    libxcb-xfixes0 \
+    libxcb-xkb1 \
+    libxkbcommon-x11-0
 ```
 
-주의:
-- 스크립트를 실행한 다음 따로 `python main.py`를 치는 방식이 아니라, **스크립트가 알아서 실행까지 해주는 형태**입니다.
+##### 2) 한글 폰트 설치 (글자가 □□□로 보일 경우)
+```bash
+sudo apt install -y fonts-noto-cjk fonts-nanum
+fc-cache -fv
+```
+
+##### 3) 실행
+```bash
+python main.py
+```
 
 ---
 
@@ -282,7 +292,7 @@ initial_setup = xyz:XYZ100, 0.0002, long, perp
 
 형식
 ```ini
-initial_setup = <symbol>, <amount>, <long|short|off>, <spot|perp>
+initial_setup = <symbol>, <amount>, <long|short|off>, <spot|perp>, <group>
 ```
 
 - `<symbol>`
@@ -301,11 +311,28 @@ initial_setup = <symbol>, <amount>, <long|short|off>, <spot|perp>
 - `<spot|perp>`
   - 아직 spot은 미지원 이지만, **추후 spot/perp 분리를 위해 값은 저장/파싱됩니다.**
   - 지금은 일단 `perp`로 두세요.
+- `<group>`
+  - 카드가 속할 그룹 번호 (0~5)
+  - 예: `0`, `1`, `2` ...
+  - 그룹별로 Execute All / Reverse / Close All / Repeat / Burn이 독립 실행됩니다.
+  - 생략 시 기본값 `0`
 
 주의사항
 - `initial_setup`은 **섹션별로 하나만** 지정 가능합니다.
 - 값이 없으면 프로그램 기본값(기존 로직)에 따릅니다.
 - 잘못된 포맷(콤마 누락 등)인 경우 해당 섹션만 기본값으로 동작합니다.
+
+예시
+```ini
+# 그룹 0에 배치
+initial_setup = BTC, 0.002, long, perp, 0
+
+# 그룹 1에 배치
+initial_setup = ETH, 0.01, short, perp, 1
+
+# DEX 지정 + 그룹 2
+initial_setup = xyz:XYZ100, 0.0002, long, perp, 2
+```
 
 #### 예시
 ```ini
@@ -313,7 +340,7 @@ initial_setup = <symbol>, <amount>, <long|short|off>, <spot|perp>
 [lit]
 builder_code = 0x24a747628494231347f4f6aead2ec14f50bcc8b7
 fee_rate = 35 / 50
-initial_setup = BTC, 0.002, long, perp
+initial_setup = BTC, 0.002, long, perp, 1
 show = True
 
 # 사용 안 할 거래소: show = False
@@ -331,7 +358,7 @@ show = True
 
 ## 사용 방법
 
-버튼 잘 보고 누르면됨
+버튼 잘 보고 누르면 됨
 
 ### 주요 기능
 
@@ -346,6 +373,24 @@ show = True
 - **전체 주문 수행**: 활성화된(Long/Short 선택된) 모든 거래소 동시 주문
 - **롱/숏 전환**: 활성화된 거래소 방향 반전
 - **모든 포지션 종료**: 활성화된 거래소 포지션 시장가 청산
+
+#### 그룹(Group) 기능
+
+여러 거래소를 **그룹 단위로 묶어서** 독립적으로 운영할 수 있습니다.
+
+| 기능 | 설명 |
+|------|------|
+| **그룹 선택 (헤더)** | 0~5 버튼 중 하나 선택. 헤더의 설정(심볼/수량/DEX)과 일괄 동작이 이 그룹에만 적용됨 |
+| **그룹 지정 (카드)** | 각 카드에서 0~5 버튼으로 소속 그룹 변경 |
+| **독립 실행** | Execute All / Reverse / Close All / Repeat / Burn은 **현재 선택된 그룹만** 대상 |
+| **그룹별 캐시** | 그룹 전환 시 repeat/burn 입력값, ticker/qty/dex가 그룹별로 저장/복원됨 |
+
+**사용 예시:**
+- 그룹 0: BTC 헷지용 거래소들
+- 그룹 1: ETH 헷지용 거래소들
+- 그룹 2: 볼륨 파밍용 거래소들
+
+> 💡 그룹 1에서 Repeat 실행 중에 그룹 2로 전환해도, 그룹 1의 Repeat는 계속 실행됩니다.
 
 #### 반복 실행
 - **반복 수행횟수**: 몇 번 실행할지
@@ -448,6 +493,7 @@ A: 폰트 문제입니다. 시스템에 한글 폰트가 설치되어 있는지 
 - ✅ REPEAT / BURN 기능
 - ✅ HIP-3 DEX 지원 (XYZ, FLX, VNTL, HYNA)
 - ✅ 비-HL 거래소 연동
+- ✅ 그룹(Group) 기능
 - 🔜 USDC ↔ USDH 스왑 기능
 - 🔜 지정가 주문 관리
 - 🔜 더 많은 거래소 지원

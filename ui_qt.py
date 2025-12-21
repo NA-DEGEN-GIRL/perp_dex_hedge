@@ -21,7 +21,11 @@ import qasync
 
 from core import ExchangeManager
 from trading_service import TradingService
-from ui_config import set_ui_type, ui_print as print
+#from ui_config import set_ui_type, ui_print as print
+
+GROUP_MIN = 0
+GROUP_MAX = 5
+GROUP_COUNT = GROUP_MAX - GROUP_MIN + 1
 
 # 색상 정의 (미니멀: 3가지만)
 CLR_TEXT = "#e0e0e0"       # 기본 텍스트
@@ -365,6 +369,7 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
     order_type_changed = QtCore.Signal(str, str)
     dex_changed = QtCore.Signal(str, str)
     ticker_changed = QtCore.Signal(str, str)
+    group_changed = QtCore.Signal(str, int)  # (ex_name, group)
 
     def __init__(self, ex_name: str, dex_choices: List[str], is_hl_like: bool = True, parent=None):
         super().__init__(parent)
@@ -432,6 +437,9 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
 
         self.exec_btn.setAutoDefault(False)
         self.exec_btn.setDefault(False)
+
+        self.group_buttons: Dict[int, QtWidgets.QPushButton] = {}
+        self.current_group = 0
 
         BTN_BASE = """
             QPushButton {
@@ -531,6 +539,34 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
                 border-color: #333;
             }
         """
+
+        BTN_GROUP_STYLE = """
+            QPushButton {
+                background-color: #3a3a3a;
+                color: #e0e0e0;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 2px 6px;
+                min-width: 20px;
+                font-size: 10pt;
+            }
+            QPushButton:hover {
+                background-color: #4a4a4a;
+            }
+            QPushButton:checked {
+                background-color: #1b5e20;
+                border: 1px solid #81c784;
+                color: #81c784;
+            }
+        """
+        for g in range(GROUP_COUNT):
+            btn = QtWidgets.QPushButton(str(g))
+            btn.setCheckable(True)
+            btn.setChecked(g == 0)
+            btn.setStyleSheet(BTN_GROUP_STYLE)
+            btn.setFixedWidth(24)
+            btn.clicked.connect(lambda checked, gg=g: self._on_card_group_clicked(gg))
+            self.group_buttons[g] = btn
 
         self.long_btn.setStyleSheet(BTN_LONG)
         self.short_btn.setStyleSheet(BTN_SHORT)
@@ -640,7 +676,11 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         pos_row.addSpacing(20)
         pos_row.addWidget(self.pos_pnl_label)
         pos_row.addStretch()
-        
+
+        pos_row.addWidget(QtWidgets.QLabel("G:"))
+        for g in range(GROUP_COUNT):
+            pos_row.addWidget(self.group_buttons[g])
+
         main_layout.addLayout(pos_row)
 
         # 4. 잔고 행: [잔고] [Perp: xxx USDC] [|] [Spot: xx USDC | xx USDH | ...]
@@ -673,6 +713,19 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         collat_row.addStretch()
         
         main_layout.addLayout(collat_row)
+
+    def _on_card_group_clicked(self, g: int):
+        """[ADD] 카드 그룹 버튼 클릭"""
+        self.current_group = g
+        for gg, btn in self.group_buttons.items():
+            btn.setChecked(gg == g)
+        self.group_changed.emit(self.ex_name, g)
+
+    def set_group(self, g: int):
+        """[ADD] 외부에서 그룹 설정"""
+        self.current_group = g
+        for gg, btn in self.group_buttons.items():
+            btn.setChecked(gg == g)
 
     def _on_market_clicked(self):
         self.market_btn.setChecked(True)
@@ -875,6 +928,7 @@ class HeaderWidget(QtWidgets.QWidget):
     burn_clicked = QtCore.Signal()
     quit_clicked = QtCore.Signal()
     dex_changed = QtCore.Signal(str)
+    group_changed = QtCore.Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -917,6 +971,26 @@ class HeaderWidget(QtWidgets.QWidget):
             }
         """
 
+        BTN_GROUP_STYLE = """
+            QPushButton {
+                background-color: #3a3a3a;
+                color: #e0e0e0;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 4px 8px;
+                min-width: 24px;
+            }
+            QPushButton:hover {
+                background-color: #4a4a4a;
+                border-color: #666;
+            }
+            QPushButton:checked {
+                background-color: #1b5e20;
+                border: 2px solid #81c784;
+                color: #81c784;
+            }
+        """
+
         # ===== 위젯 생성 =====
         
         # Row 1 위젯들
@@ -928,6 +1002,9 @@ class HeaderWidget(QtWidgets.QWidget):
         
         self.total_label = QtWidgets.QLabel("$0.00")
         self.total_label.setStyleSheet(f"color: {CLR_ACCENT};")
+
+        self.group_buttons: Dict[int, QtWidgets.QPushButton] = {}
+        self.current_group = 0
         
         self.allqty_edit = QtWidgets.QLineEdit()
         self.allqty_edit.setFixedWidth(100)
@@ -982,6 +1059,19 @@ class HeaderWidget(QtWidgets.QWidget):
         rows[row_id].addSpacing(20)
         rows[row_id].addWidget(self._label("총 잔고($)", CLR_MUTED))
         rows[row_id].addWidget(self.total_label)
+        rows[row_id].addStretch(20)
+        
+        rows[row_id].addWidget(self._label("그룹", CLR_MUTED))
+        for g in range(GROUP_COUNT):
+            btn = QtWidgets.QPushButton(str(g))
+            btn.setCheckable(True)
+            btn.setChecked(g == 0)
+            btn.setStyleSheet(BTN_GROUP_STYLE)
+            btn.setFixedWidth(32)
+            btn.clicked.connect(lambda checked, gg=g: self._on_group_clicked(gg))
+            self.group_buttons[g] = btn
+            rows[row_id].addWidget(btn)
+        
         rows[row_id].addStretch()
         rows[row_id].addWidget(self.close_all_btn)
         rows[row_id].addWidget(self.quit_btn)
@@ -1044,6 +1134,13 @@ class HeaderWidget(QtWidgets.QWidget):
         
         for row in rows:
             main_layout.addLayout(row)
+
+    def _on_group_clicked(self, g: int):
+        """[ADD] 그룹 버튼 클릭 시 호출"""
+        self.current_group = g
+        for gg, btn in self.group_buttons.items():
+            btn.setChecked(gg == g)
+        self.group_changed.emit(g)
 
     def _label(self, text, color):
         lbl = QtWidgets.QLabel(text)
@@ -1133,10 +1230,35 @@ class UiQtApp(QtWidgets.QMainWindow):
         self._console_redirect_installed = False
 
         # REPEAT / BURN 태스크
-        self._repeat_task: Optional[asyncio.Task] = None
-        self._repeat_cancel = asyncio.Event()
-        self._burn_task: Optional[asyncio.Task] = None
-        self._burn_cancel = asyncio.Event()
+        #self._repeat_task: Optional[asyncio.Task] = None
+        #self._repeat_cancel = asyncio.Event()
+        #self._burn_task: Optional[asyncio.Task] = None
+        #self._burn_cancel = asyncio.Event()
+
+        # 그룹 관련 상태
+        self.current_group = 0
+        self.group_by_ex = {n: 0 for n in names}
+
+        # 그룹별 헤더 캐시
+        self.group_symbol: Dict[int, str] = {g: "BTC" for g in range(GROUP_COUNT)}
+        self.group_qty: Dict[int, str] = {g: "" for g in range(GROUP_COUNT)}
+        self.group_dex: Dict[int, str] = {g: "HL" for g in range(GROUP_COUNT)}
+
+        # 그룹별 repeat/burn 입력값 캐시
+        self.group_repeat_cfg: Dict[int, Dict[str, str]] = {
+            g: {"times": "", "min": "", "max": ""} for g in range(GROUP_COUNT)
+        }
+        self.group_burn_cfg: Dict[int, Dict[str, str]] = {
+            g: {"burn": "", "min": "", "max": ""} for g in range(GROUP_COUNT)
+        }
+
+        # 그룹별 repeat/burn 태스크
+        self.repeat_task_by_group: Dict[int, Optional[asyncio.Task]] = {g: None for g in range(GROUP_COUNT)}
+        self.repeat_cancel_by_group: Dict[int, asyncio.Event] = {g: asyncio.Event() for g in range(GROUP_COUNT)}
+        self.burn_task_by_group: Dict[int, Optional[asyncio.Task]] = {g: None for g in range(GROUP_COUNT)}
+        self.burn_cancel_by_group: Dict[int, asyncio.Event] = {g: asyncio.Event() for g in range(GROUP_COUNT)}
+
+        self._switching_group = False
 
         self._build_main_layout()
         self._connect_header_signals()
@@ -1217,6 +1339,59 @@ class UiQtApp(QtWidgets.QMainWindow):
         self.setStatusBar(QtWidgets.QStatusBar())
         self.statusBar().setSizeGripEnabled(True)
 
+    def _on_header_group(self, g: int):
+        """헤더 그룹 변경"""
+        # 현재 그룹 값 저장
+        cur = self.current_group
+        self.group_symbol[cur] = _normalize_symbol_input(self.header.ticker_edit.text() or "BTC")
+        self.group_qty[cur] = self.header.allqty_edit.text().strip()
+        self.group_dex[cur] = self.header.dex_combo.currentText() or "HL"
+        
+        self.group_repeat_cfg[cur] = {
+            "times": self.header.repeat_times.text().strip(),
+            "min": self.header.repeat_min.text().strip(),
+            "max": self.header.repeat_max.text().strip(),
+        }
+        self.group_burn_cfg[cur] = {
+            "burn": self.header.burn_count.text().strip(),
+            "min": self.header.burn_min.text().strip(),
+            "max": self.header.burn_max.text().strip(),
+        }
+        
+        # 그룹 변경
+        self.current_group = g
+        
+        # 새 그룹 값 복원 (전파하지 않음)
+        self._switching_group = True
+        try:
+            ng = self.current_group
+            self.header.ticker_edit.setText(self.group_symbol.get(ng, "BTC"))
+            self.header.allqty_edit.setText(self.group_qty.get(ng, ""))
+            
+            dex = self.group_dex.get(ng, "HL")
+            idx = self.header.dex_combo.findText(dex, QtCore.Qt.MatchFlag.MatchFixedString)
+            if idx >= 0:
+                self.header.dex_combo.setCurrentIndex(idx)
+            
+            self.header.repeat_times.setText(self.group_repeat_cfg[ng]["times"])
+            self.header.repeat_min.setText(self.group_repeat_cfg[ng]["min"])
+            self.header.repeat_max.setText(self.group_repeat_cfg[ng]["max"])
+            self.header.burn_count.setText(self.group_burn_cfg[ng]["burn"])
+            self.header.burn_min.setText(self.group_burn_cfg[ng]["min"])
+            self.header.burn_max.setText(self.group_burn_cfg[ng]["max"])
+        finally:
+            self._switching_group = False
+
+    def _on_card_group(self, ex_name: str, g: int):
+        """카드 그룹 변경"""
+        self.group_by_ex[ex_name] = g
+
+
+    def _is_group_cancelled(self, g: int) -> bool:
+        """그룹별 취소 여부"""
+        return (self.repeat_cancel_by_group[g].is_set() or 
+                self.burn_cancel_by_group[g].is_set())
+
     def _connect_header_signals(self):
         h = self.header
         h.ticker_changed.connect(self._on_header_ticker)
@@ -1224,10 +1399,11 @@ class UiQtApp(QtWidgets.QMainWindow):
         h.exec_all_clicked.connect(self._on_exec_all)
         h.reverse_clicked.connect(self._on_reverse)
         h.close_all_clicked.connect(self._on_close_all)
-        h.repeat_clicked.connect(self._on_repeat_toggle)  # [수정]
-        h.burn_clicked.connect(self._on_burn_toggle)      # [수정]
+        h.repeat_clicked.connect(self._on_repeat_toggle)
+        h.burn_clicked.connect(self._on_burn_toggle)
         h.quit_clicked.connect(self.close)
         h.dex_changed.connect(self._on_header_dex)
+        h.group_changed.connect(self._on_header_group)
 
     @QtCore.Slot(str)
     def _append_console_text(self, text: str):
@@ -1340,7 +1516,17 @@ class UiQtApp(QtWidgets.QMainWindow):
                     elif raw_side in ("off", "none", "", "null"):
                         setup_side = None
 
-                    # 3) "초기값"일 때만 적용(사용자가 이미 눌러둔 상태 보호)
+                    if setup.get("group") is not None:
+                        try:
+                            init_group = int(setup.get("group", 0))
+                            if init_group < GROUP_MIN: init_group = GROUP_MIN
+                            if init_group > GROUP_MAX: init_group = GROUP_MAX
+                            self.group_by_ex[name] = init_group
+                            card.set_group(init_group)
+                        except:
+                            pass
+
+                    # "초기값"일 때만 적용(사용자가 이미 눌러둔 상태 보호)
                     #    - st.enabled=False & st.side=None 상태면 초기값 적용
                     if (not st.enabled) and (st.side is None) and raw_side:
                         if setup_side is None:
@@ -1368,6 +1554,7 @@ class UiQtApp(QtWidgets.QMainWindow):
                     card.order_type_changed.connect(self._on_otype_change)
                     card.dex_changed.connect(self._on_card_dex)
                     card.ticker_changed.connect(self._on_card_ticker)
+                    card.group_changed.connect(self._on_card_group)
                     
                     self.cards[name] = card
                 
@@ -1455,15 +1642,8 @@ class UiQtApp(QtWidgets.QMainWindow):
         asyncio.get_running_loop().create_task(self._do_exec_all())
     
     def _on_reverse(self):
-        cnt = 0
-        for n in self.mgr.visible_names():
-            if not self.enabled.get(n): continue
-            s = self.side.get(n)
-            new_s = "sell" if s == "buy" else "buy" if s == "sell" else None
-            if new_s:
-                self._set_side(n, new_s)
-                cnt += 1
-        self._log(f"Reversed {cnt} exchanges")
+        """[CHANGED] 현재 그룹만 reverse"""
+        self._reverse_enabled(self.current_group)
 
     def _on_close_all(self):
         asyncio.get_running_loop().create_task(self._do_close_all())
@@ -1504,23 +1684,28 @@ class UiQtApp(QtWidgets.QMainWindow):
                 self._log(f"[{n.upper()}] FAIL: {e}")
             raise e
 
-    async def _do_exec_all(self):
-        # 실행할 거래소 목록 수집
+    async def _do_exec_all(self, g: Optional[int] = None):
+        """[CHANGED] 현재 그룹만 실행"""
+        if g is None:
+            g = self.current_group
+        
         exec_items = []
         for n in self.mgr.visible_names():
+            # [ADD] 그룹 필터
+            if self.group_by_ex.get(n, 0) != g:
+                continue
             if self.enabled.get(n) and self.side.get(n):
                 exec_items.append(n)
 
         if not exec_items:
-            self._log("[EXEC ALL] 실행할 거래소 없음")
+            self._log(f"[EXEC ALL:G{g}] 실행할 거래소 없음")
             return
 
-        self._log(f"[EXEC ALL] {len(exec_items)}개 거래소 주문 시작...")
+        self._log(f"[EXEC ALL:G{g}] {len(exec_items)}개 거래소 주문 시작...")
 
         tasks = [self._do_exec(n, silent=True) for n in exec_items]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # 결과 집계
         success = 0
         failed = 0
         for n, res in zip(exec_items, results):
@@ -1533,11 +1718,18 @@ class UiQtApp(QtWidgets.QMainWindow):
             else:
                 failed += 1
 
-        self._log(f"[EXEC ALL] 완료 (성공: {success}, 실패: {failed})")
+        self._log(f"[EXEC ALL:G{g}] 완료 (성공: {success}, 실패: {failed})")
 
-    async def _do_close_all(self):
+    async def _do_close_all(self, g: Optional[int] = None):
+        """[CHANGED] 현재 그룹만 close"""
+        if g is None:
+            g = self.current_group
+
         close_items = []
         for n in self.mgr.visible_names():
+            if self.group_by_ex.get(n, 0) != g:
+                continue
+            
             if self.enabled.get(n):
                 try:
                     hint = float(self.current_price.replace(",", ""))
@@ -1579,44 +1771,60 @@ class UiQtApp(QtWidgets.QMainWindow):
         self._log(f"[CLOSE ALL] 완료 (성공: {success}, 실패: {failed})")
 
     def _on_repeat_toggle(self):
+        """[CHANGED] 그룹별 독립 repeat 실행/중지"""
         loop = asyncio.get_running_loop()
-        
-        # burn 돌고 있으면 먼저 멈춤
-        if self._burn_task and not self._burn_task.done():
-            self._burn_cancel.set()
-            self._log("[태우기] 중지 요청")
-        
-        # repeat 돌고 있으면 먼저 멈춤
-        if self._repeat_task and not self._repeat_task.done():
-            self._repeat_cancel.set()
-            self._log("[반복] 중지 요청")
-        else:
-            try:
-                times = int(self.header.repeat_times.text() or "0")
-                a = float(self.header.repeat_min.text() or "0")
-                b = float(self.header.repeat_max.text() or "0")
-            except Exception:
-                self._log("[반복] 입력 파싱 실패")
-                return
-            if times <= 0 or a < 0 or b < 0:
-                self._log("[반복] Times>=1, Interval>=0 필요")
-                return
-            if b < a:
-                a, b = b, a
-            self._repeat_cancel.clear()
-            self._repeat_task = loop.create_task(self._repeat_runner(times, a, b))
+        g = self.current_group
+
+        # 이 그룹의 burn이 돌고 있으면 먼저 중지
+        bt = self.burn_task_by_group.get(g)
+        if bt and not bt.done():
+            self.burn_cancel_by_group[g].set()
+            self._log(f"[BURN:G{g}] 중지 요청")
+            return
+
+        # 이 그룹의 repeat 토글
+        rt = self.repeat_task_by_group.get(g)
+        if rt and not rt.done():
+            self.repeat_cancel_by_group[g].set()
+            self._log(f"[REPEAT:G{g}] 중지 요청")
+            return
+
+        # 시작
+        try:
+            times = int(self.header.repeat_times.text() or "0")
+            a = float(self.header.repeat_min.text() or "0")
+            b = float(self.header.repeat_max.text() or "0")
+        except Exception:
+            self._log(f"[REPEAT:G{g}] 입력 파싱 실패")
+            return
+
+        if times <= 0 or a < 0 or b < 0:
+            self._log(f"[REPEAT:G{g}] Times>=1, Interval>=0 필요")
+            return
+        if b < a:
+            a, b = b, a
+
+        # 그룹별 cancel 초기화 및 task 저장
+        self.repeat_cancel_by_group[g].clear()
+        self.repeat_task_by_group[g] = loop.create_task(self._repeat_runner(g, times, a, b))
+        self._log(f"[REPEAT:G{g}] 시작")
 
     def _on_burn_toggle(self):
+        """[CHANGED] 그룹별 독립 burn 실행/중지"""
         loop = asyncio.get_running_loop()
-        
-        # 먼저 기존 repeat/burn 정리
-        if self._repeat_task and not self._repeat_task.done():
-            self._repeat_cancel.set()
-            self._log("[반복] 중지 요청")
+        g = self.current_group
 
-        if self._burn_task and not self._burn_task.done():
-            self._burn_cancel.set()
-            self._log("[태우기] 중지 요청")
+        # 이 그룹의 repeat가 돌고 있으면 먼저 중지
+        rt = self.repeat_task_by_group.get(g)
+        if rt and not rt.done():
+            self.repeat_cancel_by_group[g].set()
+            self._log(f"[REPEAT:G{g}] 중지 요청")
+
+        # burn 토글
+        bt = self.burn_task_by_group.get(g)
+        if bt and not bt.done():
+            self.burn_cancel_by_group[g].set()
+            self._log(f"[BURN:G{g}] 중지 요청")
             return
 
         # 입력값 파싱
@@ -1628,108 +1836,136 @@ class UiQtApp(QtWidgets.QMainWindow):
             burn_min = float(self.header.burn_min.text() or "0")
             burn_max = float(self.header.burn_max.text() or "0")
         except Exception:
-            self._log("[태우기] 입력 파싱 실패")
+            self._log(f"[BURN:G{g}] 입력 파싱 실패")
             return
+
         if base_times <= 0 or rep_min < 0 or rep_max < 0 or burn_min < 0 or burn_max < 0:
-            self._log("[태우기] Times>=1, Interval>=0 필요")
+            self._log(f"[BURN:G{g}] Times>=1, Interval>=0 필요")
             return
+
         if rep_max < rep_min:
             rep_min, rep_max = rep_max, rep_min
         if burn_max < burn_min:
             burn_min, burn_max = burn_max, burn_min
 
-        self._burn_cancel.clear()
-        self._burn_task = loop.create_task(
-            self._burn_runner(burn_times, base_times, rep_min, rep_max, burn_min, burn_max)
+        # 그룹별 cancel 초기화 및 task 저장
+        self.burn_cancel_by_group[g].clear()
+        self.burn_task_by_group[g] = loop.create_task(
+            self._burn_runner(g, burn_times, base_times, rep_min, rep_max, burn_min, burn_max)
         )
+        self._log(f"[BURN:G{g}] 시작")
 
-    async def _repeat_runner(self, times: int, a: float, b: float):
+    async def _repeat_runner(self, g: int, times: int, a: float, b: float):
+        """
+        [CHANGED] 그룹별 독립 repeat runner.
+        - g: 그룹 번호
+        - 최소 간격 0.5초 보장 (rate limit 고려)
+        """
         import random
-        self._log(f"[반복] 시작: {times}회, 간격 {a:.2f}~{b:.2f}s 랜덤")
+        MIN_INTERVAL = 0.5
+
+        self._log(f"[REPEAT:G{g}] 시작: {times}회, 간격 {a:.2f}~{b:.2f}s 랜덤")
         try:
-            i = 1
-            while i <= times:
-                if self._repeat_cancel.is_set() or self._burn_cancel.is_set():
-                    self._log(f"[반복] 취소됨 (진행 {i-1}/{times})")
+            for i in range(1, times + 1):
+                if self._is_group_cancelled(g):
+                    self._log(f"[REPEAT:G{g}] 취소됨 (진행 {i-1}/{times})")
                     break
 
-                self._log(f"[반복] 실행 {i}/{times}")
-                await self._do_exec_all()
+                self._log(f"[REPEAT:G{g}] 실행 {i}/{times}")
+                await self._do_exec_all(g)
 
                 if i >= times:
                     break
 
-                delay = random.uniform(a, b)
-                self._log(f"[반복] 대기 {delay:.2f}s ...")
+                # 최소 간격 보장
+                delay = max(MIN_INTERVAL, random.uniform(a, b))
+                self._log(f"[REPEAT:G{g}] 대기 {delay:.2f}s ...")
                 try:
-                    await asyncio.wait_for(self._wait_cancel_any(), timeout=delay)
+                    await asyncio.wait_for(self._wait_cancel_any(g), timeout=delay)
                 except asyncio.TimeoutError:
                     pass
 
-                if self._repeat_cancel.is_set() or self._burn_cancel.is_set():
-                    self._log(f"[반복] 취소됨 (대기 중)")
+                if self._is_group_cancelled(g):
+                    self._log(f"[REPEAT:G{g}] 취소됨 (대기 중)")
                     break
 
-                i += 1
-
-            self._log("[반복] 완료")
+            self._log(f"[REPEAT:G{g}] 완료")
         finally:
-            self._repeat_task = None
-            self._repeat_cancel.clear()
+            self.repeat_task_by_group[g] = None
+            self.repeat_cancel_by_group[g].clear()
 
-    async def _burn_runner(self, burn_times: int, base_times: int, rep_min: float, rep_max: float, burn_min: float, burn_max: float):
+    async def _burn_runner(self, g: int, burn_times: int, base_times: int,
+                       rep_min: float, rep_max: float, burn_min: float, burn_max: float):
+        """
+        [CHANGED] 그룹별 독립 burn runner.
+        burn_times=1 → repeat(base_times) 한 번만
+        burn_times>=2 → repeat(base_times) → (sleep → reverse → repeat(2*base_times)) × (burn_times-1)
+        burn_times<0  → 무한 루프
+        """
         import random
-        self._log(f"[태우기] 시작: burn_times={burn_times}, base={base_times}")
+
+        self._log(f"[BURN:G{g}] 시작: burn_times={burn_times}, base={base_times}, "
+                f"repeat_interval={rep_min}~{rep_max}, burn_interval={burn_min}~{burn_max}")
         try:
-            # 첫 라운드
-            if self._burn_cancel.is_set():
-                return
-            await self._repeat_runner(base_times, rep_min, rep_max)
-            if self._burn_cancel.is_set():
+            if self._is_group_cancelled(g):
                 return
 
-            # 이후 라운드
+            # 1) 첫 라운드: repeat(base_times)
+            await self._repeat_runner(g, base_times, rep_min, rep_max)
+            if self._is_group_cancelled(g):
+                return
+
             round_idx = 2
             while True:
                 if burn_times > 0 and round_idx > burn_times:
                     break
-                
+
                 delay = random.uniform(burn_min, burn_max)
-                self._log(f"[태우기] interval 대기 {delay:.2f}s ... (round {round_idx}/{burn_times if burn_times>0 else '∞'})")
+                self._log(f"[BURN:G{g}] interval 대기 {delay:.2f}s ... (round {round_idx}/{burn_times if burn_times>0 else '∞'})")
                 try:
-                    await asyncio.wait_for(self._wait_cancel_any(), timeout=delay)
+                    await asyncio.wait_for(self._wait_cancel_any(g), timeout=delay)
                 except asyncio.TimeoutError:
                     pass
-                if self._burn_cancel.is_set():
+                if self._is_group_cancelled(g):
                     break
 
-                # reverse
-                self._reverse_enabled()
-                if self._burn_cancel.is_set():
+                # reverse (그룹만)
+                self._reverse_enabled(g)
+                if self._is_group_cancelled(g):
                     break
 
                 # repeat 2×base_times
-                await self._repeat_runner(2 * base_times, rep_min, rep_max)
-                if self._burn_cancel.is_set():
+                await self._repeat_runner(g, 2 * base_times, rep_min, rep_max)
+                if self._is_group_cancelled(g):
                     break
 
                 round_idx += 1
 
-            self._log("[태우기] 완료")
+            self._log(f"[BURN:G{g}] 완료")
         finally:
-            self._burn_task = None
-            self._burn_cancel.clear()
+            self.burn_task_by_group[g] = None
+            self.burn_cancel_by_group[g].clear()
 
-    async def _wait_cancel_any(self):
-        while not (self._repeat_cancel.is_set() or self._burn_cancel.is_set()):
+    async def _wait_cancel_any(self, g: int):
+        """그룹별 cancel 이벤트 대기"""
+        while not self._is_group_cancelled(g):
             await asyncio.sleep(0.05)
 
-    def _reverse_enabled(self):
-        """활성된 거래소만 LONG↔SHORT 토글"""
+    def _reverse_enabled(self, g: Optional[int] = None):
+        """
+        활성(enabled=True) + 방향 선택된 거래소만 LONG↔SHORT 토글.
+        그룹 지정 시 해당 그룹만 reverse.
+        """
+        if g is None:
+            g = self.current_group
+
         cnt = 0
         for n in self.mgr.visible_names():
+            if self.group_by_ex.get(n, 0) != g:
+                continue
             if not self.enabled.get(n, False):
                 continue
+
             cur = self.side.get(n)
             if cur == "buy":
                 self._set_side(n, "sell")
@@ -1737,7 +1973,8 @@ class UiQtApp(QtWidgets.QMainWindow):
             elif cur == "sell":
                 self._set_side(n, "buy")
                 cnt += 1
-        self._log(f"[ALL] 롱/숏 전환 완료: {cnt}개")
+
+        self._log(f"[G{g}] REVERSE 완료: {cnt}개")
 
     # --- Loops ---
     async def _price_loop(self):
@@ -1934,7 +2171,7 @@ class UiQtApp(QtWidgets.QMainWindow):
         e.accept()
 
 def run_qt_app(mgr):
-    set_ui_type("qt")
+    #set_ui_type("qt")
     # WSL/X11 환경 감지 및 플랫폼 설정
     try:
         release = os.uname().release
