@@ -27,6 +27,68 @@ GROUP_MIN = 0
 GROUP_MAX = 5
 GROUP_COUNT = GROUP_MAX - GROUP_MIN + 1
 
+# 그룹별 색상 팔레트 (선택 시 배경색, 테두리색, 텍스트색)
+GROUP_COLORS = {
+    0: {"bg": "#1b5e20", "border": "#81c784", "text": "#81c784"},  # 초록
+    1: {"bg": "#0d47a1", "border": "#64b5f6", "text": "#64b5f6"},  # 파랑
+    2: {"bg": "#e65100", "border": "#ffb74d", "text": "#ffb74d"},  # 주황
+    3: {"bg": "#6a1b9a", "border": "#ce93d8", "text": "#ce93d8"},  # 보라
+    4: {"bg": "#00838f", "border": "#4dd0e1", "text": "#4dd0e1"},  # 청록
+    5: {"bg": "#c62828", "border": "#ef9a9a", "text": "#ef9a9a"},  # 빨강
+}
+
+def _get_group_btn_style(g: int, is_card: bool = False) -> str:
+    """
+    그룹 버튼의 스타일시트 생성.
+    - g: 그룹 번호 (0~5)
+    - is_card: 카드용(작은 사이즈) 여부
+    """
+    colors = GROUP_COLORS.get(g, GROUP_COLORS[0])
+    
+    if is_card:
+        # 카드용 (작은 버튼)
+        return f"""
+            QPushButton {{
+                background-color: #3a3a3a;
+                color: #e0e0e0;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 2px 6px;
+                min-width: 20px;
+                font-size: 10pt;
+            }}
+            QPushButton:hover {{
+                background-color: #4a4a4a;
+                border-color: {colors['border']};
+            }}
+            QPushButton:checked {{
+                background-color: {colors['bg']};
+                border: 1px solid {colors['border']};
+                color: {colors['text']};
+            }}
+        """
+    else:
+        # 헤더용 (일반 버튼)
+        return f"""
+            QPushButton {{
+                background-color: #3a3a3a;
+                color: #e0e0e0;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 4px 8px;
+                min-width: 24px;
+            }}
+            QPushButton:hover {{
+                background-color: #4a4a4a;
+                border-color: {colors['border']};
+            }}
+            QPushButton:checked {{
+                background-color: {colors['bg']};
+                border: 2px solid {colors['border']};
+                color: {colors['text']};
+            }}
+        """
+
 # 색상 정의 (미니멀: 3가지만)
 CLR_TEXT = "#e0e0e0"       # 기본 텍스트
 CLR_MUTED = "#888888"      # 보조 텍스트 (라벨)
@@ -539,31 +601,12 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
                 border-color: #333;
             }
         """
-
-        BTN_GROUP_STYLE = """
-            QPushButton {
-                background-color: #3a3a3a;
-                color: #e0e0e0;
-                border: 1px solid #555;
-                border-radius: 3px;
-                padding: 2px 6px;
-                min-width: 20px;
-                font-size: 10pt;
-            }
-            QPushButton:hover {
-                background-color: #4a4a4a;
-            }
-            QPushButton:checked {
-                background-color: #1b5e20;
-                border: 1px solid #81c784;
-                color: #81c784;
-            }
-        """
+        
         for g in range(GROUP_COUNT):
             btn = QtWidgets.QPushButton(str(g))
             btn.setCheckable(True)
             btn.setChecked(g == 0)
-            btn.setStyleSheet(BTN_GROUP_STYLE)
+            btn.setStyleSheet(_get_group_btn_style(g, is_card=True))  # [CHANGED]
             btn.setFixedWidth(24)
             btn.clicked.connect(lambda checked, gg=g: self._on_card_group_clicked(gg))
             self.group_buttons[g] = btn
@@ -677,7 +720,7 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         pos_row.addWidget(self.pos_pnl_label)
         pos_row.addStretch()
 
-        pos_row.addWidget(QtWidgets.QLabel("G:"))
+        pos_row.addWidget(QtWidgets.QLabel("그룹"))
         for g in range(GROUP_COUNT):
             pos_row.addWidget(self.group_buttons[g])
 
@@ -750,8 +793,8 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         self.market_btn.clicked.connect(self._on_market_clicked)
         self.limit_btn.clicked.connect(self._on_limit_clicked)
 
-        self.ticker_edit.textChanged.connect(
-            lambda text: self.ticker_changed.emit(self.ex_name, text)
+        self.ticker_edit.editingFinished.connect(
+            lambda: self.ticker_changed.emit(self.ex_name, self.ticker_edit.text())
         )
 
         if self._is_hl_like and self.dex_combo:
@@ -1066,7 +1109,7 @@ class HeaderWidget(QtWidgets.QWidget):
             btn = QtWidgets.QPushButton(str(g))
             btn.setCheckable(True)
             btn.setChecked(g == 0)
-            btn.setStyleSheet(BTN_GROUP_STYLE)
+            btn.setStyleSheet(_get_group_btn_style(g, is_card=False))  # [CHANGED]
             btn.setFixedWidth(32)
             btn.clicked.connect(lambda checked, gg=g: self._on_group_clicked(gg))
             self.group_buttons[g] = btn
@@ -1148,7 +1191,9 @@ class HeaderWidget(QtWidgets.QWidget):
         return lbl
 
     def _connect_signals(self):
-        self.ticker_edit.textChanged.connect(self.ticker_changed)
+        self.ticker_edit.editingFinished.connect(
+            lambda: self.ticker_changed.emit(self.ticker_edit.text())
+        )
         self.allqty_edit.textChanged.connect(self.allqty_changed)
         self.exec_all_btn.clicked.connect(self.exec_all_clicked)
         self.reverse_btn.clicked.connect(self.reverse_clicked)
@@ -1564,11 +1609,13 @@ class UiQtApp(QtWidgets.QMainWindow):
             # 마지막에 stretch 추가
             self.cards_layout.addStretch(1)
         
-        # All Qty 동기화
+        # All Qty 동기화: 현재 그룹만
         aq = self.header.allqty_edit.text()
         if aq:
-            for c in self.cards.values():
-                c.set_qty(aq)
+            g = self.current_group
+            for n, c in self.cards.items():
+                if self.group_by_ex.get(n, 0) == g:
+                    c.set_qty(aq)
         
         # HL-like만 fee 업데이트
         for n in visible_names:
@@ -1577,26 +1624,58 @@ class UiQtApp(QtWidgets.QMainWindow):
 
     # --- Handlers ---
     def _on_header_ticker(self, t):
+        """[CHANGED] 현재 그룹의 카드에만 ticker 전파"""
+        if self._switching_group:
+            return
+        
         s = _normalize_symbol_input(t)
         self.symbol = s
-        for n in self.mgr.all_names():
+        g = self.current_group
+        
+        for n in self.mgr.visible_names():
+            # [ADD] 그룹 필터: 현재 그룹만
+            if self.group_by_ex.get(n, 0) != g:
+                continue
+            
             self.symbol_by_ex[n] = s
             self.exchange_state[n].symbol = s
-        for c in self.cards.values(): c.set_ticker(s)
+            if n in self.cards:
+                self.cards[n].set_ticker(s)
 
     def _on_allqty(self, t):
-        for c in self.cards.values(): c.set_qty(t)
+        """[CHANGED] 현재 그룹의 카드에만 수량 전파"""
+        if self._switching_group:
+            return
+        
+        g = self.current_group
+        
+        for n in self.mgr.visible_names():
+            # [ADD] 그룹 필터: 현재 그룹만
+            if self.group_by_ex.get(n, 0) != g:
+                continue
+            
+            if n in self.cards:
+                self.cards[n].set_qty(t)
 
     def _on_header_dex(self, d):
+        """[CHANGED] 현재 그룹의 HL-like 카드에만 DEX 전파"""
+        if self._switching_group:
+            return
+        
         self.header_dex = d
-        for n in self.mgr.all_names():
+        g = self.current_group
+        
+        for n in self.mgr.visible_names():
+            # [ADD] 그룹 필터: 현재 그룹만
+            if self.group_by_ex.get(n, 0) != g:
+                continue
+            
             if self.mgr.is_hl_like(n):
                 self.dex_by_ex[n] = d
                 self.exchange_state[n].dex = d
-        for n, c in self.cards.items():
-            if self.mgr.is_hl_like(n):
-                c.set_dex(d)
-                self._update_fee(n)
+                if n in self.cards:
+                    self.cards[n].set_dex(d)
+                    self._update_fee(n)
             
     def _on_card_ticker(self, n, t):
         s = _normalize_symbol_input(t or self.symbol)
@@ -1982,7 +2061,8 @@ class UiQtApp(QtWidgets.QMainWindow):
             try:
                 # 간단화: 첫 번째 HL 거래소 or visible 첫번째
                 ex = self.mgr.first_hl_exchange()
-                coin = _normalize_symbol_input(self.header.ticker_edit.text() or "BTC")
+                # header.ticker_edit.text() 대신 확정된 self.symbol 사용
+                coin = _normalize_symbol_input(self.symbol or "BTC")
                 if ex:
                     sym = _compose_symbol(self.header_dex, coin)
                     p = await ex.get_mark_price(sym)
