@@ -2,7 +2,7 @@
 
 > 여러 Perp DEX를 하나의 화면에서 동시에 거래할 수 있는 프로그램입니다.
 
-![스크린샷](screenshot_v2.png)
+![스크린샷](screenshot.png)
 
 GitHub: https://github.com/NA-DEGEN-GIRL/perp_dex_hedge
 
