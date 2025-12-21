@@ -7,7 +7,7 @@ import math
 import urwid
 from urwid.widget.pile import PileWarning  # urwid 레이아웃 경고 제거용
 from ui_scroll import ScrollBar, ScrollableListBox, hook_global_mouse_events
-from ui_config import set_ui_type
+#from ui_config import set_ui_type
 
 from core import ExchangeManager
 from trading_service import TradingService
@@ -526,7 +526,7 @@ class CustomFrame(urwid.Frame):
 
 class UrwidApp:
     def __init__(self, manager: ExchangeManager):
-        set_ui_type("urwid")
+        #set_ui_type("urwid")
         self.mgr = manager
 
         # 상태
@@ -2083,7 +2083,18 @@ class UrwidApp:
                         logger.info(f"[UI] Price update for {name} failed: {px_e}")
                         self.card_price_text[name].set_text(("pnl_neg", "Price: Error???"))
 
-                pos_str, col_str, col_val, _ = await self.service.fetch_status(name, sym, need_balance=need_collat, need_position=need_pos)
+                if (need_pos or need_collat or is_ws):
+                    pos_str, col_str, col_val, _ = await self.service.fetch_status(
+                        name,
+                        sym,
+                        need_balance=need_collat or is_ws,
+                        need_position=need_pos or is_ws,
+                    )
+                else:
+                    # CHANGED: 아무 것도 갱신하지 않을 때는 요청 자체를 안 보냄
+                    # (필요하면 이전 표시값을 유지하거나 그냥 continue 해도 됨)
+                    await asyncio.sleep(RATE.GAP_FOR_INF)
+                    continue
 
                 if need_collat or is_ws:
                     self.collateral[name] = float(col_val)
@@ -2118,8 +2129,26 @@ class UrwidApp:
                 if lock.locked():
                     lock.release()
     
+    
+    def _warn_if_too_many_hl(self, g: int):
+        """
+        CHANGED: 현재 그룹에 활성화된 HL 카드가 너무 많으면 경고.
+        """
+        hl_count = 0
+        for n in self.mgr.visible_names():
+            if self.group_by_ex.get(n, 0) != g:
+                continue
+            if not self.enabled.get(n, False):
+                continue
+            if self.mgr.is_hl_like(n):
+                hl_count += 1
+
+        if hl_count >= 5:
+            self._log(f"[WARN:G{g}] HL 거래소 {hl_count}개 활성화 - Rate Limit 주의!")
+    
     # --------- 버튼 핸들러 ----------
     def _on_exec_all(self, btn):
+        self._warn_if_too_many_hl(self.current_group)
         asyncio.get_event_loop().create_task(self._exec_all())
 
     def _on_reverse(self, btn):
@@ -2298,7 +2327,12 @@ class UrwidApp:
                 await asyncio.sleep(1.0)
 
     async def _exec_all(self, g: Optional[int] = None):
-        # CHANGED: runner에서 넘긴 그룹을 우선 사용(그룹 전환해도 실행은 고정)
+        """
+        [CHANGED] 주문 실행 로직을 다시 단순화(합치기).
+        - HL / non-HL 구분 없이, 대상 카드만 모아서 asyncio.gather로 한 번에 실행
+        - group 필터링/취소는 그대로 유지
+        - 딜레이/백오프는 제거(문제 생기면 나중에 다시 다듬기)
+        """
         if g is None:
             g = self.current_group
 
@@ -2306,34 +2340,113 @@ class UrwidApp:
             self._log(f"[ALL:G{g}] 취소됨")
             return
 
-        self._log(f"[ALL:G{g}] 동시 주문 시작")
+        self._log(f"[ALL:G{g}] EXECUTE ALL 시작")
+
         tasks = []
 
         for n in self.mgr.visible_names():
+            # 그룹 필터
             if self.group_by_ex.get(n, 0) != g:
                 continue
+
             if self._is_group_cancelled(g):
                 self._log(f"[ALL:G{g}] 취소됨(준비 중)")
-                break
+                return
 
-            if not self.mgr.get_exchange(n):
+            ex = self.mgr.get_exchange(n)
+            if not ex:
                 continue
+
             if not self.enabled.get(n, False):
                 self._log(f"[ALL:G{g}] {n.upper()} 건너뜀: 비활성")
                 continue
+
             if not self.side.get(n):
                 self._log(f"[ALL:G{g}] {n.upper()} 건너뜀: 방향 미선택")
                 continue
 
+            # 실제 실행
             tasks.append(self._exec_one(n, g))
 
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-            self._log(f"[ALL:G{g}] 완료")
-        else:
+        if not tasks:
             self._log(f"[ALL:G{g}] 실행할 거래소가 없습니다.")
+            return
+
+        # [CHANGED] 병렬 실행(단순)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # [CHANGED] 결과 요약(선택)
+        ok = 0
+        fail = 0
+        for r in results:
+            if isinstance(r, Exception):
+                fail += 1
+            else:
+                ok += 1
+        self._log(f"[ALL:G{g}] 완료: ok={ok} fail={fail}")
+
+    # 문제가 생길시 아래 사용
+    async def _exec_hl_with_delay(self, ex_name: str, orders: list, g: int):
+        """
+        CHANGED: HL 거래소 주문들을 순차 실행 + 딜레이.
+        Rate limit 429 발생 시 지수 백오프.
+        
+        Args:
+            ex_name: 거래소 이름
+            orders: [(sym, amount, side, otype, price), ...]
+            g: 그룹 번호
+        """
+        HL_ORDER_DELAY = 0.15  # 주문 간 최소 간격 (초)
+        MAX_RETRY = 3
+
+        for (sym, amount, side, otype, price) in orders:
+            if self._is_group_cancelled(g):
+                return
+
+            for attempt in range(1, MAX_RETRY + 1):
+                if self._is_group_cancelled(g):
+                    return
+
+                try:
+                    self._log(f"[G{g}] [{ex_name.upper()}] {side.upper()} {amount} {sym} @ {otype}")
+
+                    order = await self.service.execute_order(
+                        exchange_name=ex_name,
+                        symbol=sym,
+                        amount=amount,
+                        order_type=otype,
+                        side=side,
+                        price=price,
+                    )
+                    self._log(f"[G{g}] [{ex_name.upper()}] 주문 성공: #{order['id']}")
+                    break
+
+                except Exception as e:
+                    err_str = str(e).lower()
+
+                    # CHANGED: Rate limit 감지 (429 또는 "rate limit" 문자열)
+                    if "429" in err_str or ("rate" in err_str and "limit" in err_str):
+                        backoff = 2 ** attempt  # 2, 4, 8초
+                        self._log(f"[G{g}] [{ex_name.upper()}] Rate limit! 대기 {backoff}s...")
+                        await asyncio.sleep(backoff)
+                    else:
+                        self._log(f"[G{g}] [{ex_name.upper()}] 주문 실패: {e}")
+
+                    if attempt >= MAX_RETRY:
+                        self._log(f"[G{g}] [{ex_name.upper()}] 재시도 한도 초과, 다음 주문으로...")
+                        break
+
+                    await asyncio.sleep(1.0)
+
+            # CHANGED: 다음 주문 전 딜레이 (Rate Limit 보호)
+            await asyncio.sleep(HL_ORDER_DELAY)
 
     async def _repeat_runner(self, g: int, times: int, a: float, b: float):
+        """
+        CHANGED: HL rate limit 고려해 최소 간격 0.5초 보장.
+        """
+        MIN_INTERVAL = 0.5  # HL rate limit 고려 최소 간격
+
         self._log(f"[REPEAT:G{g}] 시작: {times}회, 간격 {a:.2f}~{b:.2f}s 랜덤")
         try:
             for i in range(1, times + 1):
@@ -2347,7 +2460,8 @@ class UrwidApp:
                 if i >= times:
                     break
 
-                delay = random.uniform(a, b)
+                # CHANGED: 최소 간격 보장
+                delay = max(MIN_INTERVAL, random.uniform(a, b))
                 self._log(f"[REPEAT:G{g}] 대기 {delay:.2f}s ...")
                 try:
                     await asyncio.wait_for(self._wait_cancel_any(g), timeout=delay)
@@ -2360,7 +2474,6 @@ class UrwidApp:
 
             self._log(f"[REPEAT:G{g}] 완료")
         finally:
-            # CHANGED: 그룹 task 종료 처리
             self.repeat_task_by_group[g] = None
             self.repeat_cancel_by_group[g].clear()
 
@@ -3183,8 +3296,6 @@ class UrwidApp:
         
         hook_global_mouse_events(self.loop, self)
 
-        self._install_console_redirect()
-        
         async def _bootstrap():
             try:
                 await self.mgr.initialize_all()
@@ -3253,6 +3364,10 @@ class UrwidApp:
             urwid.connect_signal(self.allqty_edit, "change", lambda _, new: self._apply_to_all_qty(new))
 
             self._request_redraw()
+
+            # 초기화 완료 후 Console 리디렉션 설치
+            # 이제부터 print()는 Console 박스로 캡처됨
+            self._install_console_redirect()
 
         loop.run_until_complete(_bootstrap())
         self.loop.set_alarm_in(0, self._set_initial_focus)

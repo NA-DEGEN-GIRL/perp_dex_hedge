@@ -136,7 +136,7 @@ class ExchangeManager:
             show = config.get(exchange_name, "show", fallback="True").strip().lower() == "true"
             
             exchange_platform = config.get(exchange_name, "exchange", fallback='hyperliquid')
-            hl_like = (exchange_platform in ("hyperliquid", "superstack","treadfi.hyperliquid"))
+            hl_like = (exchange_platform in ("hyperliquid", "superstack", "treadfi.hyperliquid"))
 
             # FrontendMarket 플래그 로딩
             fm_raw = config.get(exchange_name, "FrontendMarket", fallback="False")
