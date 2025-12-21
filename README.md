@@ -88,9 +88,12 @@ pip install -r requirements.in
 #### .env 파일 (API 키 설정)
 ```bash
 # 예제 파일 복사
+# cp 명령어를 못쓰겠으면 뒤에 .example 확장자를 지우고 편집해서 쓰면됨
 cp .env.example .env
+cp config.ini.example config.ini
 
 # .env 파일 편집 (사용할 거래소만 남기고 나머지 삭제)
+# config.ini 파일 편집
 ```
 
 #### .env 작성 규칙 (중요!)
