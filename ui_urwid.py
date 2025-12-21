@@ -93,6 +93,184 @@ CARD_HEIGHT = 5
 LOGS_ROWS = 6
 SWITCHER_ROWS = 5
 
+class UrwidStdoutCapture:
+    """
+    sys.stdout/stderr + OS 레벨 fd 1/2를 모두 캡처해서 urwid 로그 박스로 리디렉션.
+    - Python print() 및 logging 출력
+    - C 확장/ctypes가 직접 fd 1/2에 쓰는 출력
+    모두 캡처합니다.
+    """
+    def __init__(self, callback, stream_name: str = "stdout"):
+        self.callback = callback
+        self.stream_name = stream_name  # "stdout" or "stderr"
+        self._fd = 1 if stream_name == "stdout" else 2
+        self._original_fd = None
+        self._pipe_read = None
+        self._pipe_write = None
+        self._reader_thread = None
+        self._running = False
+        self._original_stream = None
+
+    def install(self):
+        """
+        1) 원본 fd를 복제해 백업
+        2) 파이프 생성 → fd 1/2를 파이프 쓰기 끝으로 교체
+        3) 백그라운드 스레드에서 파이프 읽기 → callback 호출
+        4) sys.stdout/stderr도 래퍼로 교체
+        """
+        import threading
+
+        # 원본 저장
+        self._original_stream = sys.stdout if self._fd == 1 else sys.stderr
+        self._original_fd = os.dup(self._fd)
+
+        # 파이프 생성
+        self._pipe_read, self._pipe_write = os.pipe()
+
+        # fd 1/2를 파이프 쓰기 끝으로 교체
+        os.dup2(self._pipe_write, self._fd)
+        os.close(self._pipe_write)
+        self._pipe_write = None
+
+        # sys.stdout/stderr도 래퍼로 교체
+        wrapper = _StreamWrapper(self._original_fd, self.callback)
+        if self._fd == 1:
+            sys.stdout = wrapper
+        else:
+            sys.stderr = wrapper
+
+        # 백그라운드 스레드: 파이프에서 읽어 callback 호출
+        self._running = True
+        def reader():
+            try:
+                while self._running:
+                    try:
+                        data = os.read(self._pipe_read, 4096)
+                        if not data:
+                            break
+                        text = data.decode("utf-8", errors="replace")
+                        # 원본에도 기록(파일 로깅 유지)
+                        try:
+                            os.write(self._original_fd, data)
+                        except Exception:
+                            pass
+                        # UI 콜백
+                        if text.strip():
+                            try:
+                                self.callback(text)
+                            except Exception:
+                                pass
+                    except Exception:
+                        break
+            finally:
+                try:
+                    os.close(self._pipe_read)
+                except Exception:
+                    pass
+
+        self._reader_thread = threading.Thread(target=reader, daemon=True)
+        self._reader_thread.start()
+
+    def uninstall(self):
+        """원래 fd/stream 복구"""
+        self._running = False
+
+        # fd 복구
+        if self._original_fd is not None:
+            try:
+                os.dup2(self._original_fd, self._fd)
+                os.close(self._original_fd)
+            except Exception:
+                pass
+            self._original_fd = None
+
+        # stream 복구
+        if self._original_stream is not None:
+            if self._fd == 1:
+                sys.stdout = self._original_stream
+            else:
+                sys.stderr = self._original_stream
+            self._original_stream = None
+
+        # 스레드 종료 대기
+        if self._reader_thread and self._reader_thread.is_alive():
+            try:
+                self._reader_thread.join(timeout=0.5)
+            except Exception:
+                pass
+
+    # Python 호환용 메서드들
+    def write(self, text: str):
+        # fd가 이미 파이프로 교체되어 있으므로, 여기선 원본+콜백 직접 호출
+        if text:
+            try:
+                data = text.encode("utf-8", errors="replace")
+                os.write(self._fd, data)
+            except Exception:
+                pass
+
+    def flush(self):
+        pass
+
+    def isatty(self):
+        return False
+
+class _StreamWrapper:
+    """
+    sys.stdout/stderr 대체용 래퍼.
+    CHANGED: urwid 화면을 보호하기 위해 원본 터미널에는 출력하지 않음.
+             대신 Console 박스(callback)에만 추가.
+             파일 로깅(logging.FileHandler 등)은 별도로 동작하므로 영향 없음.
+    """
+    def __init__(self, original_stream, callback):
+        self._original = original_stream
+        self.callback = callback
+
+    def write(self, text: str):
+        if not text:
+            return
+        # CHANGED: 원본 터미널에는 쓰지 않음 (urwid 화면 보호)
+        # self._original.write(text)  ← 이 줄을 주석 처리/삭제
+
+        # UI 콜백 (Console 박스에 추가)
+        if text.strip():
+            try:
+                self.callback(text)
+            except Exception:
+                pass
+
+    def flush(self):
+        # CHANGED: 원본 flush도 호출하지 않음 (필요 시 유지 가능)
+        pass
+
+    def isatty(self):
+        # urwid가 isatty()를 체크할 수 있으므로, 원본의 값을 반환
+        try:
+            return self._original.isatty()
+        except Exception:
+            return False
+
+    def fileno(self):
+        # logging 등에서 fileno()를 호출할 수 있으므로 원본 값 반환
+        try:
+            return self._original.fileno()
+        except Exception:
+            return -1
+
+    @property
+    def encoding(self):
+        try:
+            return self._original.encoding
+        except Exception:
+            return "utf-8"
+
+    @property
+    def errors(self):
+        try:
+            return self._original.errors
+        except Exception:
+            return "replace"
+    
 class ConfirmEdit(urwid.Edit):
     """
     Enter 또는 포커스 이탈 시 on_confirm 콜백을 호출하는 Edit.
@@ -478,8 +656,66 @@ class UrwidApp:
         self.burn_task_by_group: Dict[int, Optional[asyncio.Task]] = {g: None for g in range(GROUP_COUNT)}
         self.burn_cancel_by_group: Dict[int, asyncio.Event] = {g: asyncio.Event() for g in range(GROUP_COUNT)}
 
+        self.console_list = urwid.SimpleListWalker([])
+        self.console_listbox: ScrollableListBox | None = None
+        self.console_scroll: ScrollBar | None = None
+        self._console_follow = True  # 자동 스크롤
+        self._stdout_orig = None
+        self._stderr_orig = None
+        self._console_redirect_installed = False
+
         # [ADD] meta.initial_setup를 상태 dict에 1회 반영
         self._seed_initial_setup_defaults()
+
+    def _console_log(self, text: str):
+        """
+        print() 등에서 캡처된 텍스트를 Console 박스에 추가.
+        """
+        # 줄바꿈으로 분리해서 각각 추가
+        for line in text.replace("\r\n", "\n").split("\n"):
+            if line.strip():
+                self.console_list.append(urwid.Text(("info", line.rstrip())))
+
+        # 자동 스크롤
+        if self._console_follow and self.console_listbox:
+            try:
+                total = len(self.console_list)
+                if total > 0:
+                    self.console_listbox.set_focus(total - 1, coming_from='below')
+            except Exception:
+                pass
+
+        self._request_redraw()
+
+    def _install_console_redirect(self):
+        """
+        sys.stdout/stderr를 래핑해서 print() 출력을 Console 박스로 리디렉션.
+        OS fd(1/2)는 건드리지 않음 → urwid 렌더링 정상 유지.
+        """
+        if self._console_redirect_installed:
+            return
+
+        self._stdout_orig = sys.stdout
+        self._stderr_orig = sys.stderr
+
+        sys.stdout = _StreamWrapper(self._stdout_orig, self._console_log)
+        sys.stderr = _StreamWrapper(self._stderr_orig, self._console_log)
+
+        self._console_redirect_installed = True
+
+    def _uninstall_console_redirect(self):
+        """
+        원래 stdout/stderr로 복구.
+        """
+        if self._stdout_orig is not None:
+            sys.stdout = self._stdout_orig
+            self._stdout_orig = None
+
+        if self._stderr_orig is not None:
+            sys.stderr = self._stderr_orig
+            self._stderr_orig = None
+
+        self._console_redirect_installed = False
 
     # [ADD] initial_setup 파싱/적용 유틸
     def _parse_initial_setup(self, raw, is_hl_like: bool) -> dict:
@@ -1694,15 +1930,36 @@ class UrwidApp:
         )
         logs_frame = urwid.LineBox(logs_columns, title="Logs")  # [FIX] LineBox는 한 번만
 
+
+        # 3) [ADD] Console(print 캡처 로그) 박스 생성
+        self.console_scroll = ScrollBar(width=1)
+        self.console_listbox = ScrollableListBox(
+            self.console_list,
+            scrollbar=self.console_scroll,
+            enable_selection=False,
+            page_overlap=1
+        )
+        self.console_scroll.attach(self.console_listbox)
+        console_columns = urwid.Columns(
+            [
+                ('weight', 1, self.console_listbox),
+                ('fixed', self.console_scroll.width, self.console_scroll)
+            ],
+            dividechars=0
+        )
+        console_frame = urwid.LineBox(console_columns, title="Console")
+
         # [선택] 기존과 같은 4줄 표시를 원하시면 'fixed, 6'로 넣으십시오(테두리 2줄 포함)
         # footer 구성은 기존 구조를 따르되 logs_frame만 넣도록 변경
         switcher = self._build_switcher()
+
+        CONSOLE_ROWS = 6  # Console 박스 높이(테두리 포함)
         self.footer = urwid.Pile([
-            ('fixed', SWITCHER_ROWS, switcher),
-            ('fixed', LOGS_ROWS, logs_frame),  # 내부 표시 4줄(6 - 테두리 2)
+            ('fixed', self._switcher_rows, switcher),
+            ('fixed', LOGS_ROWS, logs_frame),
+            ('fixed', CONSOLE_ROWS, console_frame),  # [ADD]
         ])
 
-        # 본문은 기존 body_with_scroll 사용
         frame = CustomFrame(
             header=urwid.LineBox(self.header),
             body=body_with_scroll,
@@ -2925,6 +3182,8 @@ class UrwidApp:
         )
         
         hook_global_mouse_events(self.loop, self)
+
+        self._install_console_redirect()
         
         async def _bootstrap():
             try:
@@ -3002,6 +3261,9 @@ class UrwidApp:
             with open(os.devnull, "w") as devnull, contextlib.redirect_stderr(devnull):
                 self.loop.run()
         finally:
+            # [ADD] Console 리디렉션 해제
+            self._uninstall_console_redirect()
+
             # 마우스 트래킹/커서/색 복구
             try:
                 # SGR mouse off, 커서 보이기, 스타일 리셋

@@ -6,7 +6,7 @@ import os
 import logging
 from logging.handlers import RotatingFileHandler
 from decimal import Decimal, ROUND_HALF_UP #, ROUND_UP, ROUND_DOWN
-from ui_config import ui_print as print
+#from ui_config import ui_print as print
 
 STABLES = ["USDC", "USDH", "USDT0", "USDE"]
 STABLES_DISPLAY = ["USDC", "USDH", "USDT", "USDE"]
