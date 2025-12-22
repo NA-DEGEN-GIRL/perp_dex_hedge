@@ -231,7 +231,6 @@ def _apply_app_style(app: QtWidgets.QApplication) -> None:
         color: white;
     }}
     QComboBox::drop-down {{
-        border: 0px;
         width: 20px;
     }}
     /* [추가] 콤보박스 펼쳤을 때 나오는 리스트 디자인 */
@@ -394,33 +393,9 @@ class SearchableComboBox(QtWidgets.QComboBox):
                 border: 1px solid #555;
                 border-radius: 3px;
                 padding: 4px 8px;
-                padding-right: 28px;
             }
             QComboBox:focus {
                 border-color: #81c784;
-            }
-            QComboBox::drop-down {
-                subcontrol-origin: padding;
-                subcontrol-position: center right;
-                width: 24px;
-                border-left: 1px solid #555;
-                background-color: #3a3a3a;
-                border-top-right-radius: 3px;
-                border-bottom-right-radius: 3px;
-            }
-            QComboBox::drop-down:hover {
-                background-color: #4a4a4a;
-            }
-            QComboBox::down-arrow {
-                width: 0;
-                height: 0;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 6px solid #e0e0e0;
-            }
-            QComboBox::down-arrow:on {
-                border-top: none;
-                border-bottom: 6px solid #81c784;
             }
             QComboBox QAbstractItemView {
                 background-color: #2d2d2d;
@@ -449,6 +424,7 @@ class SearchableComboBox(QtWidgets.QComboBox):
         completer.setCaseSensitivity(QtCore.Qt.CaseSensitivity.CaseInsensitive)
         completer.setFilterMode(QtCore.Qt.MatchFlag.MatchContains)
         completer.setCompletionMode(QtWidgets.QCompleter.CompletionMode.PopupCompletion)
+        
         
         # 팝업 스타일
         popup = completer.popup()
