@@ -359,6 +359,170 @@ class ExchangeState:
 
 
 # ---------------------------------------------------------------------------
+# 검색 가능한 콤보박스 (Symbol 선택용)
+# ---------------------------------------------------------------------------
+
+class SearchableComboBox(QtWidgets.QComboBox):
+    """
+    검색 가능한 콤보박스 (QComboBox + QCompleter 기반)
+    - 직접 입력 + 실시간 검색 + 드롭다운
+    
+    Signals:
+        text_confirmed(str): Enter/포커스이탈 시 확정된 텍스트
+    """
+    text_confirmed = QtCore.Signal(str)
+    
+    def __init__(self, items: list = None, parent=None):
+        super().__init__(parent)
+        
+        # 편집 가능 + 삽입 금지
+        self.setEditable(True)
+        self.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
+        
+        # 아이템 추가
+        if items:
+            self.addItems(items)
+        
+        # Completer 설정 (substring 검색)
+        self.setCompleter(self._create_completer())
+        
+        # 스타일
+        self.setStyleSheet("""
+            QComboBox {
+                background-color: #2d2d2d;
+                color: #e0e0e0;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 4px 8px;
+                padding-right: 28px;
+            }
+            QComboBox:focus {
+                border-color: #81c784;
+            }
+            QComboBox::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: center right;
+                width: 24px;
+                border-left: 1px solid #555;
+                background-color: #3a3a3a;
+                border-top-right-radius: 3px;
+                border-bottom-right-radius: 3px;
+            }
+            QComboBox::drop-down:hover {
+                background-color: #4a4a4a;
+            }
+            QComboBox::down-arrow {
+                width: 0;
+                height: 0;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 6px solid #e0e0e0;
+            }
+            QComboBox::down-arrow:on {
+                border-top: none;
+                border-bottom: 6px solid #81c784;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #2d2d2d;
+                color: #e0e0e0;
+                border: 1px solid #555;
+                selection-background-color: #1b5e20;
+                selection-color: #81c784;
+                outline: none;
+            }
+            QComboBox QAbstractItemView::item {
+                padding: 6px 10px;
+                min-height: 24px;
+            }
+            QComboBox QAbstractItemView::item:hover {
+                background-color: #3a3a3a;
+            }
+        """)
+        
+        # 시그널 연결
+        self.lineEdit().editingFinished.connect(self._on_editing_finished)
+        self.activated.connect(self._on_activated)
+    
+    def _create_completer(self) -> QtWidgets.QCompleter:
+        """Substring 검색이 가능한 Completer 생성"""
+        completer = QtWidgets.QCompleter(self.model(), self)
+        completer.setCaseSensitivity(QtCore.Qt.CaseSensitivity.CaseInsensitive)
+        completer.setFilterMode(QtCore.Qt.MatchFlag.MatchContains)
+        completer.setCompletionMode(QtWidgets.QCompleter.CompletionMode.PopupCompletion)
+        
+        # 팝업 스타일
+        popup = completer.popup()
+        popup.setStyleSheet("""
+            QListView {
+                background-color: #2d2d2d;
+                color: #e0e0e0;
+                border: 1px solid #555;
+                outline: none;
+            }
+            QListView::item {
+                padding: 6px 10px;
+            }
+            QListView::item:hover {
+                background-color: #3a3a3a;
+            }
+            QListView::item:selected {
+                background-color: #1b5e20;
+                color: #81c784;
+            }
+        """)
+        
+        return completer
+    
+    def _on_editing_finished(self):
+        """Enter/포커스이탈 시 확정"""
+        text = self.currentText().strip().upper()
+        if text:
+            self.setEditText(text)
+            self.text_confirmed.emit(text)
+    
+    def _on_activated(self, index: int):
+        """드롭다운에서 항목 선택 시 확정"""
+        text = self.itemText(index).strip().upper()
+        if text:
+            self.text_confirmed.emit(text)
+    
+    def set_items(self, items: list):
+        """목록 설정"""
+        current_text = self.currentText()
+        self.clear()
+        if items:
+            self.addItems(items)
+        # Completer 모델도 갱신
+        self.completer().setModel(self.model())
+        # 기존 텍스트 복원
+        if current_text:
+            self.setEditText(current_text)
+    
+    def text(self) -> str:
+        """현재 텍스트"""
+        return self.currentText().strip().upper()
+    
+    def setText(self, text: str):
+        """텍스트 설정 (외부에서 호출용)"""
+        self.setEditText(text)
+    
+    def keyPressEvent(self, event: QtGui.QKeyEvent):
+        """Enter 키 처리"""
+        if event.key() in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter):
+            completer = self.completer()
+            if completer and completer.popup().isVisible():
+                current = completer.popup().currentIndex()
+                if current.isValid():
+                    text = current.data()
+                    self.setCurrentText(text)
+                    completer.popup().hide()
+                    self.text_confirmed.emit(text.upper())
+                    return
+            self._on_editing_finished()
+            return
+        super().keyPressEvent(event)
+
+# ---------------------------------------------------------------------------
 # 커스텀 콤보박스 (클릭 시 닫힘 문제 해결)
 # ---------------------------------------------------------------------------
 
@@ -459,7 +623,8 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         self.collat_spot_label = QtWidgets.QLabel("")
         
         # 입력 위젯
-        self.ticker_edit = QtWidgets.QLineEdit()
+        #self.ticker_edit = QtWidgets.QLineEdit()
+        self.ticker_edit = SearchableComboBox()
         self.qty_edit = QtWidgets.QLineEdit()
         self.price_edit = QtWidgets.QLineEdit()
 
@@ -793,8 +958,12 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         self.market_btn.clicked.connect(self._on_market_clicked)
         self.limit_btn.clicked.connect(self._on_limit_clicked)
 
-        self.ticker_edit.editingFinished.connect(
-            lambda: self.ticker_changed.emit(self.ex_name, self.ticker_edit.text())
+        #self.ticker_edit.editingFinished.connect(
+        #    lambda: self.ticker_changed.emit(self.ex_name, self.ticker_edit.text())
+        #)
+        # [CHANGED] SearchableComboBox의 text_confirmed 시그널 사용
+        self.ticker_edit.text_confirmed.connect(
+            lambda text: self.ticker_changed.emit(self.ex_name, text)
         )
 
         if self._is_hl_like and self.dex_combo:
@@ -806,7 +975,19 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
             self.dex_combo.popupClosed.connect(lambda: self.exec_btn.setEnabled(True))
         
     def set_ticker(self, t): 
-        if self.ticker_edit.text() != t: self.ticker_edit.setText(t)
+        """ticker 설정"""
+        current = self.ticker_edit.currentText()
+        if current != t:
+            self.ticker_edit.setEditText(t)
+        #if self.ticker_edit.text() != t: self.ticker_edit.setText(t)
+
+    def set_symbol_list(self, symbols: list):
+        """
+        심볼 자동완성 목록 설정.
+        symbols: ["BTC", "ETH", "SOL", ...] 형태
+        """
+        self.ticker_edit.set_items(symbols)
+
     def set_qty(self, q):
         if self.qty_edit.text() != q: self.qty_edit.setText(q)
     def get_qty(self): return self.qty_edit.text().strip()
@@ -1232,6 +1413,13 @@ class UiQtApp(QtWidgets.QMainWindow):
         # State
         names = self.mgr.all_names()
         self.symbol = "BTC"
+        # 형식: {
+        #     "hl_ex": {"perp": {"hl": [...], "xyz": [...]}, "spot": [...]},
+        #     "non_hl_ex": {"perp": [...], "spot": [...]},
+        #     ...
+        # }
+        self._symbol_cache_by_ex: Dict[str, Dict[str, any]] = {}
+
         self.current_price = "..."
         self.enabled = {n: False for n in names}
         self.side = {n: None for n in names}
@@ -1307,6 +1495,83 @@ class UiQtApp(QtWidgets.QMainWindow):
 
         self._build_main_layout()
         self._connect_header_signals()
+
+    def _update_card_symbols(self, card_name: str, dex: str = "HL", market_type: str = "perp"):
+        """
+        카드의 심볼 목록을 DEX/마켓타입에 맞게 업데이트.
+        
+        캐시 구조 (거래소별):
+            HL-like:  {"perp": {"hl": [...], "xyz": [...]}, "spot": [...] or None}
+            비-HL:    {"perp": [...], "spot": [...] or None}
+        
+        Args:
+            card_name: 거래소 이름
+            dex: DEX 이름 (HL-like만 해당)
+            market_type: "perp" 또는 "spot"
+        """
+        if card_name not in self.cards:
+            return
+        
+        card = self.cards[card_name]
+        is_hl = self.mgr.is_hl_like(card_name)
+        
+        # 해당 거래소의 캐시 가져오기
+        ex_cache = self._symbol_cache_by_ex.get(card_name, {})
+        if not ex_cache:
+            return
+        
+        symbols = []
+        
+        if market_type == "spot":
+            # spot은 HL/비-HL 모두 단순 리스트 (또는 None/없음)
+            spot_data = ex_cache.get("spot")
+            if spot_data and isinstance(spot_data, list):
+                symbols = spot_data
+        else:
+            # perp
+            perp_data = ex_cache.get("perp", {})
+            
+            if is_hl:
+                # HL-like: perp는 dict {"hl": [...], "xyz": [...], ...}
+                if isinstance(perp_data, dict):
+                    dex_key = dex.lower() if dex and dex != "HL" else "hl"
+                    symbols = perp_data.get(dex_key, [])
+                    # 해당 DEX 목록 없으면 HL 기본 목록 사용
+                    if not symbols:
+                        symbols = perp_data.get("hl", [])
+            else:
+                # 비-HL: perp는 단순 리스트
+                if isinstance(perp_data, list):
+                    symbols = perp_data
+        
+        card.set_symbol_list(symbols)
+
+    async def refresh_symbol_list(self):
+        """
+        모든 거래소에서 심볼 목록을 가져와 캐시 업데이트.
+        
+        각 거래소의 get_available_symbols() 반환 형식:
+            HL-like:  {"perp": {"hl": [...], "xyz": [...]}, "spot": [...] or None}
+            비-HL:    {"perp": [...], "spot": [...] or None}
+        """
+        for name in self.mgr.all_names():
+            try:
+                ex = self.mgr.get_exchange(name)
+                if not ex:
+                    continue
+                
+                if hasattr(ex, "get_available_symbols"):
+                    data = await ex.get_available_symbols()
+                    if data:
+                        self._symbol_cache_by_ex[name] = data
+                        
+                        # 해당 거래소 카드가 있으면 즉시 적용
+                        if name in self.cards:
+                            dex = self.dex_by_ex.get(name, "HL")
+                            self._update_card_symbols(name, dex)
+                            
+            except Exception as e:
+                logger.debug(f"[UI] Symbol list refresh failed for {name}: {e}")
 
     def install_console_redirect(self):
         if self._console_redirect_installed: return
@@ -1468,6 +1733,7 @@ class UiQtApp(QtWidgets.QMainWindow):
     async def async_init(self):
         try: await self.mgr.initialize_all()
         except Exception as e: self._log(f"Init Error: {e}")
+        
 
         # DEX list
         try:
@@ -1479,9 +1745,13 @@ class UiQtApp(QtWidgets.QMainWindow):
             self.dex_names = dexs
         except: self.dex_names = ["HL"]
 
+
         self.header.set_dex_choices(self.dex_names, "HL")
         self._build_switches()
         self._rebuild_cards()
+
+        # [ADD] 심볼 목록 초기화 (비동기로 백그라운드에서)
+        asyncio.get_running_loop().create_task(self.refresh_symbol_list())
 
         loop = asyncio.get_running_loop()
         self._price_task = loop.create_task(self._price_loop())
@@ -1686,6 +1956,7 @@ class UiQtApp(QtWidgets.QMainWindow):
         self.dex_by_ex[n] = d
         self.exchange_state[n].dex = d
         self._update_fee(n)
+        self._update_card_symbols(n, d)
 
     def _on_long(self, n): self._set_side(n, "buy")
     def _on_short(self, n): self._set_side(n, "sell")
