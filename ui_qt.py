@@ -360,6 +360,19 @@ class ExchangeState:
 # ---------------------------------------------------------------------------
 # 검색 가능한 콤보박스 (Symbol 선택용)
 # ---------------------------------------------------------------------------
+def _extract_base_symbol(sym: str) -> str:
+    """
+    심볼에서 base 부분만 추출.
+    예: "BTC-USDC" → "BTC", "ETH-USD" → "ETH", "SOL" → "SOL"
+    """
+    if not sym:
+        return ""
+    s = sym.strip().upper()
+    # "-" 또는 "/" 로 분리 (BTC-USDC, BTC/USDC 등)
+    for sep in ("-", "/", "_"):
+        if sep in s:
+            return s.split(sep)[0]
+    return s
 
 class SearchableComboBox(QtWidgets.QComboBox):
     """
@@ -451,15 +464,19 @@ class SearchableComboBox(QtWidgets.QComboBox):
     
     def _on_editing_finished(self):
         """Enter/포커스이탈 시 확정"""
-        text = self.currentText().strip().upper()
+        raw = self.currentText().strip().upper()
+        # BTC-USDC → BTC 변환
+        text = _extract_base_symbol(raw)
         if text:
             self.setEditText(text)
             self.text_confirmed.emit(text)
     
     def _on_activated(self, index: int):
         """드롭다운에서 항목 선택 시 확정"""
-        text = self.itemText(index).strip().upper()
+        raw = self.itemText(index).strip().upper()
+        text = _extract_base_symbol(raw)
         if text:
+            self.setEditText(text)
             self.text_confirmed.emit(text)
     
     def set_items(self, items: list):
@@ -489,7 +506,9 @@ class SearchableComboBox(QtWidgets.QComboBox):
             if completer and completer.popup().isVisible():
                 current = completer.popup().currentIndex()
                 if current.isValid():
-                    text = current.data()
+                    raw = current.data()
+                    # [CHANGED] BTC-USDC → BTC 변환
+                    text = _extract_base_symbol(raw)
                     self.setCurrentText(text)
                     completer.popup().hide()
                     self.text_confirmed.emit(text.upper())
@@ -1848,6 +1867,10 @@ class UiQtApp(QtWidgets.QMainWindow):
                     card.group_changed.connect(self._on_card_group)
                     
                     self.cards[name] = card
+
+                    if name in self._symbol_cache_by_ex:
+                        dex = self.dex_by_ex.get(name, "HL")
+                        self._update_card_symbols(name, dex)
                 
                 # 카드를 레이아웃에 추가
                 self.cards_layout.addWidget(self.cards[name])
