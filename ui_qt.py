@@ -620,7 +620,19 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         # 입력 위젯
         #self.ticker_edit = QtWidgets.QLineEdit()
         self.ticker_edit = SearchableComboBox()
+
+        # [CHANGED] 수량 입력 + 내부 USD 라벨 오버레이
         self.qty_edit = QtWidgets.QLineEdit()
+        
+        # USD 가치 라벨 (qty_edit 내부 오버레이)
+        self.qty_value_label = QtWidgets.QLabel("", self.qty_edit)
+        self.qty_value_label.setStyleSheet(f"color: {CLR_MUTED}; background: transparent;")
+        self.qty_value_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+        self.qty_value_label.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        
+        # 수량 변경 시 USD 가치 업데이트
+        self.qty_edit.textChanged.connect(self._update_qty_value)
+
         self.price_edit = QtWidgets.QLineEdit()
 
         # Type: DexComboBox 사용
@@ -853,7 +865,7 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
             add_field("심볼:", self.ticker_edit, stretch=3)
 
         add_field("수량:", self.qty_edit, stretch=2)
-        
+                
         # 주문 타입 버튼 (각 비율 1)
         input_row.addWidget(self.market_btn, stretch=1)
         input_row.addWidget(self.limit_btn, stretch=1)
@@ -916,6 +928,34 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         collat_row.addStretch()
         
         main_layout.addLayout(collat_row)
+
+    def _update_qty_value(self):
+        """수량 변경 시 USD 가치 업데이트 (입력칸 내부 오버레이)"""
+        try:
+            qty_text = self.qty_edit.text().strip()
+            if not qty_text:
+                self.qty_value_label.setText("")
+                return
+            
+            qty = float(qty_text)
+            if self._current_price and self._current_price > 0:
+                usd_value = qty * self._current_price
+                self.qty_value_label.setText(f"≈{usd_value:,.1f}$  ")  # 오른쪽 여백
+            else:
+                self.qty_value_label.setText("")
+        except ValueError:
+            self.qty_value_label.setText("")
+
+    def resizeEvent(self, event):
+        """[ADD] 리사이즈 시 USD 라벨 위치 조정"""
+        super().resizeEvent(event)
+        # qty_edit 내부에서 오른쪽 전체 영역 차지
+        if hasattr(self, 'qty_value_label'):
+            self.qty_value_label.setGeometry(
+                0, 0,
+                self.qty_edit.width(),
+                self.qty_edit.height()
+            )
 
     def _on_card_group_clicked(self, g: int):
         """[ADD] 카드 그룹 버튼 클릭"""
@@ -994,6 +1034,7 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
             self._current_price = float(str(px).replace(",", ""))
         except:
             self._current_price = None
+        self._update_qty_value()
 
     def set_quote_label(self, txt): self.quote_label.setText(txt or "")
     
