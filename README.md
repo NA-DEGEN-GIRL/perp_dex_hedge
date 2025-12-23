@@ -2,7 +2,7 @@
 
 > 여러 Perp DEX를 하나의 화면에서 동시에 거래할 수 있는 프로그램입니다.
 
-![스크린샷](screenshot_v2.png)
+![스크린샷](screenshot_v3.png)
 
 GitHub: https://github.com/NA-DEGEN-GIRL/perp_dex_hedge
 
@@ -497,7 +497,8 @@ A: 폰트 문제입니다. 시스템에 한글 폰트가 설치되어 있는지 
 - ✅ HIP-3 DEX 지원 (XYZ, FLX, VNTL, HYNA)
 - ✅ 비-HL 거래소 연동
 - ✅ 그룹(Group) 기능
-- 🔜 USDC ↔ USDH 스왑 기능
+- ✅ Spot 지원 (edgeX는 api 미공개로 미지원)
+- 🔜 상세 주문 화면 추가
 - 🔜 지정가 주문 관리
 - 🔜 더 많은 거래소 지원
 
