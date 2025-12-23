@@ -387,6 +387,8 @@ class SearchableComboBox(QtWidgets.QComboBox):
     def __init__(self, items: list = None, parent=None):
         super().__init__(parent)
         
+        self._is_spot = False  # Spot 모드 여부
+
         # 편집 가능 + 삽입 금지
         self.setEditable(True)
         self.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
@@ -462,11 +464,25 @@ class SearchableComboBox(QtWidgets.QComboBox):
         
         return completer
     
+    def set_spot_mode(self, is_spot: bool):
+        """[ADD] Spot 모드 설정 - Spot일 때는 심볼 변환하지 않음"""
+        self._is_spot = is_spot
+
+    def _normalize_symbol(self, raw: str) -> str:
+        """[ADD] 심볼 정규화 - Spot은 그대로, Perp는 base만 추출"""
+        if not raw:
+            return ""
+        s = raw.strip().upper()
+        if self._is_spot:
+            return s  # Spot: 그대로 (예: "HYPE/USDC")
+        else:
+            return _extract_base_symbol(s)  # Perp: base만 (예: "BTC-USDC" → "BTC")
+
     def _on_editing_finished(self):
         """Enter/포커스이탈 시 확정"""
         raw = self.currentText().strip().upper()
         # BTC-USDC → BTC 변환
-        text = _extract_base_symbol(raw)
+        text = self._normalize_symbol(raw)
         if text:
             self.setEditText(text)
             self.text_confirmed.emit(text)
@@ -474,7 +490,7 @@ class SearchableComboBox(QtWidgets.QComboBox):
     def _on_activated(self, index: int):
         """드롭다운에서 항목 선택 시 확정"""
         raw = self.itemText(index).strip().upper()
-        text = _extract_base_symbol(raw)
+        text = self._normalize_symbol(raw)
         if text:
             self.setEditText(text)
             self.text_confirmed.emit(text)
@@ -507,8 +523,7 @@ class SearchableComboBox(QtWidgets.QComboBox):
                 current = completer.popup().currentIndex()
                 if current.isValid():
                     raw = current.data()
-                    # [CHANGED] BTC-USDC → BTC 변환
-                    text = _extract_base_symbol(raw)
+                    text = self._normalize_symbol(raw)
                     self.setCurrentText(text)
                     completer.popup().hide()
                     self.text_confirmed.emit(text.upper())
@@ -591,6 +606,7 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
     dex_changed = QtCore.Signal(str, str)
     ticker_changed = QtCore.Signal(str, str)
     group_changed = QtCore.Signal(str, int)  # (ex_name, group)
+    market_type_changed = QtCore.Signal(str, str)  # (ex_name, "perp" or "spot")
 
     def __init__(self, ex_name: str, dex_choices: List[str], is_hl_like: bool = True, parent=None):
         super().__init__(parent)
@@ -662,6 +678,40 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         """
         self.market_btn.setStyleSheet(BTN_ORDER_TYPE)
         self.limit_btn.setStyleSheet(BTN_ORDER_TYPE)
+
+        # Perp/Spot 선택 버튼
+        self.perp_btn = QtWidgets.QPushButton("Perp")
+        self.spot_btn = QtWidgets.QPushButton("Spot")
+        self.perp_btn.setCheckable(True)
+        self.spot_btn.setCheckable(True)
+        self.perp_btn.setChecked(True)  # 기본값: Perp
+        self._has_spot = False  # 초기값, 나중에 set_has_spot으로 변경
+
+        BTN_MARKET_TYPE = """
+            QPushButton {
+                background-color: #3a3a3a;
+                color: #e0e0e0;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 8px 12px;
+            }
+            QPushButton:hover {
+                background-color: #4a4a4a;
+                border-color: #666;
+            }
+            QPushButton:checked {
+                background-color: #1b3146;
+                border: 2px solid #64b5f6;
+                color: #64b5f6;
+            }
+            QPushButton:disabled {
+                background-color: #2a2a2a;
+                color: #555;
+                border-color: #333;
+            }
+        """
+        self.perp_btn.setStyleSheet(BTN_MARKET_TYPE)
+        self.spot_btn.setStyleSheet(BTN_MARKET_TYPE)
 
         # 버튼
         self.long_btn = QtWidgets.QPushButton("Long")
@@ -841,6 +891,10 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
             header_row.addWidget(QtWidgets.QWidget(), stretch=2)
         
         header_row.addStretch(4)
+
+        # Perp/Spot 버튼
+        header_row.addWidget(self.perp_btn, stretch=1)
+        header_row.addWidget(self.spot_btn, stretch=1)
         
         for b in (self.long_btn, self.short_btn, self.off_btn, self.exec_btn):
             header_row.addWidget(b, stretch=1)
@@ -957,6 +1011,56 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
                 self.qty_edit.height()
             )
 
+    def _on_perp_clicked(self):
+        """Perp 버튼 클릭"""
+        self.perp_btn.setChecked(True)
+        self.spot_btn.setChecked(False)
+        # DEX 콤보 활성화 (HL-like만)
+        if self.dex_combo:
+            self.dex_combo.setEnabled(True)
+        self.ticker_edit.set_spot_mode(False)
+        self.market_type_changed.emit(self.ex_name, "perp")
+
+    def _on_spot_clicked(self):
+        """Spot 버튼 클릭"""
+        if not self._has_spot:
+            # Spot 없으면 클릭 무시하고 Perp 유지
+            self.spot_btn.setChecked(False)
+            self.perp_btn.setChecked(True)
+            return
+        self.perp_btn.setChecked(False)
+        self.spot_btn.setChecked(True)
+        # DEX 콤보 비활성화 (Spot은 DEX 선택 무시)
+        if self.dex_combo:
+            self.dex_combo.setEnabled(False)
+        self.ticker_edit.set_spot_mode(True)
+        self.market_type_changed.emit(self.ex_name, "spot")
+
+    def set_has_spot(self, has_spot: bool):
+        """Spot 지원 여부 설정 - 비활성화/활성화"""
+        self._has_spot = has_spot
+        self.spot_btn.setEnabled(has_spot)
+        
+        # Spot 지원 안 하면 Perp로 강제 전환
+        if not has_spot and self.spot_btn.isChecked():
+            self.perp_btn.setChecked(True)
+            self.spot_btn.setChecked(False)
+            if self.dex_combo:
+                self.dex_combo.setEnabled(True)
+
+    def set_market_type(self, market_type: str):
+        """외부에서 market type 설정"""
+        is_perp = (market_type.lower() != "spot")
+        self.perp_btn.setChecked(is_perp)
+        self.spot_btn.setChecked(not is_perp)
+        # DEX 콤보 상태 업데이트
+        if self.dex_combo:
+            self.dex_combo.setEnabled(is_perp)
+
+    def get_market_type(self) -> str:
+        """현재 market type 반환"""
+        return "spot" if self.spot_btn.isChecked() else "perp"
+
     def _on_card_group_clicked(self, g: int):
         """[ADD] 카드 그룹 버튼 클릭"""
         self.current_group = g
@@ -992,6 +1096,9 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         
         self.market_btn.clicked.connect(self._on_market_clicked)
         self.limit_btn.clicked.connect(self._on_limit_clicked)
+
+        self.perp_btn.clicked.connect(self._on_perp_clicked)
+        self.spot_btn.clicked.connect(self._on_spot_clicked)
 
         #self.ticker_edit.editingFinished.connect(
         #    lambda: self.ticker_changed.emit(self.ex_name, self.ticker_edit.text())
@@ -1125,9 +1232,9 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         # Spot 잔고 - 간격 넓히고 깔끔하게
         spot_data = collateral.get("spot") if collateral else {}
         spot_nonzero = {k: v for k, v in spot_data.items() if v and float(v) != 0}
-        has_spot = len(spot_nonzero) > 0
+        has_spot_collateral = len(spot_nonzero) > 0
 
-        if has_spot:
+        if has_spot_collateral:
             spot_parts = []
             for k, v in spot_data.items():
                 if v != 0:
@@ -1143,10 +1250,10 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         
         # Spot 위젯들 보이기/숨기기
         if self.spot_sep_label:
-            self.spot_sep_label.setVisible(has_spot)
+            self.spot_sep_label.setVisible(has_spot_collateral)
         if self.spot_title_label:
-            self.spot_title_label.setVisible(has_spot)
-        self.collat_spot_label.setVisible(has_spot)
+            self.spot_title_label.setVisible(has_spot_collateral)
+        self.collat_spot_label.setVisible(has_spot_collateral)
 
     def set_order_type(self, otype):
         otype = (otype or "market").lower()
@@ -1466,6 +1573,7 @@ class UiQtApp(QtWidgets.QMainWindow):
         self.dex_names = ["HL"]
         self.header_dex = "HL"
         self.exchange_state = {n: ExchangeState(symbol="BTC") for n in names}
+        self.market_type_by_ex = {n: "perp" for n in names}
 
         # Tasks state
         self._stopping = False
@@ -1604,7 +1712,8 @@ class UiQtApp(QtWidgets.QMainWindow):
                         # 해당 거래소 카드가 있으면 즉시 적용
                         if name in self.cards:
                             dex = self.dex_by_ex.get(name, "HL")
-                            self._update_card_symbols(name, dex)
+                            market_type = self.market_type_by_ex.get(name, "perp")
+                            self._update_card_symbols(name, dex, market_type)
                             
             except Exception as e:
                 logger.debug(f"[UI] Symbol list refresh failed for {name}: {e}")
@@ -1732,6 +1841,13 @@ class UiQtApp(QtWidgets.QMainWindow):
         """카드 그룹 변경"""
         self.group_by_ex[ex_name] = g
 
+    def _on_market_type_change(self, n: str, market_type: str):
+        """카드의 Perp/Spot 변경 처리"""
+        self.market_type_by_ex[n] = market_type
+        
+        # 심볼 목록 업데이트
+        dex = self.dex_by_ex.get(n, "HL")
+        self._update_card_symbols(n, dex, market_type)
 
     def _is_group_cancelled(self, g: int) -> bool:
         """그룹별 취소 여부"""
@@ -1906,8 +2022,26 @@ class UiQtApp(QtWidgets.QMainWindow):
                     card.dex_changed.connect(self._on_card_dex)
                     card.ticker_changed.connect(self._on_card_ticker)
                     card.group_changed.connect(self._on_card_group)
+                    card.market_type_changed.connect(self._on_market_type_change)
                     
                     self.cards[name] = card
+                    '''
+                    if name in self._symbol_cache_by_ex:
+                        dex = self.dex_by_ex.get(name, "HL")
+                        market_type = self.market_type_by_ex.get(name, "perp")
+                        self._update_card_symbols(name, dex, market_type)
+                        
+                        # has_spot 설정
+                        ex_cache = self._symbol_cache_by_ex[name]
+                        spot_data = ex_cache.get("spot")
+                        has_spot = bool(spot_data and isinstance(spot_data, list) and len(spot_data) > 0)
+                        card.set_has_spot(has_spot)
+                    else:
+                    '''
+                    # exchange instance에서 확인, get_available_symbols가 준비 안됐을수도 있기때문.
+                    ex = self.mgr.get_exchange(name)
+                    if ex and hasattr(ex, "has_spot"):
+                        card.set_has_spot(ex.has_spot)
 
                     if name in self._symbol_cache_by_ex:
                         dex = self.dex_by_ex.get(name, "HL")
@@ -2063,7 +2197,8 @@ class UiQtApp(QtWidgets.QMainWindow):
             if not silent:
                 self._log(f"[{n.upper()}] {side} {qty} {sym} @ {otype}")
 
-            res = await self.service.execute_order(n, sym, qty, otype, side, price)
+            is_spot = self.market_type_by_ex.get(n, "perp") == "spot"
+            res = await self.service.execute_order(n, sym, qty, otype, side, price, is_spot=is_spot)
 
             if not silent:
                 self._log(f"[{n.upper()}] OK: {res['id']}")
@@ -2450,7 +2585,8 @@ class UiQtApp(QtWidgets.QMainWindow):
                     # 가격 업데이트
                     if need_price or is_ws:
                         try:
-                            p = await self.service.fetch_price(n, sym)
+                            is_spot = self.market_type_by_ex.get(n, "perp") == "spot"
+                            p = await self.service.fetch_price(n, sym, is_spot=is_spot)
                             c.set_price_label(p)
                             self._last_price_at[n] = now
                         except Exception:

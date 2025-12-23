@@ -233,9 +233,9 @@ class TradingService:
 
         return None, "none", None
 
-    def _to_native_symbol(self, exchange_name: str, coin: str) -> str:
+    def _to_native_symbol(self, exchange_name: str, coin: str, is_spot: bool = False) -> str:
         exchange_platform = self.manager.get_exchange_platform(exchange_name)
-        return symbol_create(exchange_platform, coin)
+        return symbol_create(exchange_platform, coin, is_spot=is_spot)
         
     def _extract_order_id(self, res) -> Optional[str]:
         if isinstance(res, list):
@@ -280,7 +280,7 @@ class TradingService:
             return _find(sts[0], "oid")
         return None
     
-    async def fetch_price(self, exchange_name: str, symbol: str) -> str:
+    async def fetch_price(self, exchange_name: str, symbol: str, is_spot: bool=False) -> Optional[float]:
         """
         가격 조회:
         - HL: WS 캐시 우선 사용
@@ -291,7 +291,7 @@ class TradingService:
             return "N/A"
         
         try:
-            native = self._to_native_symbol(exchange_name, symbol)
+            native = self._to_native_symbol(exchange_name, symbol, is_spot=is_spot)
             px = await ex.get_mark_price(native)
             return self.format_price_simple(float(px))
 
@@ -422,6 +422,7 @@ class TradingService:
         price: Optional[float] = None,
         reduce_only: bool = False,  # NEW: reduceOnly 플래그
         client_id: Optional[str] = None,
+        is_spot: bool = False,
     ) -> dict:
         logger.info(f"[EXECUTE] start: ex={exchange_name} sym={symbol} side={side} amt={amount} type={order_type}")
         print(f"[EXECUTE] start: ex={exchange_name} sym={symbol} side={side} amt={amount} type={order_type}")
@@ -429,7 +430,7 @@ class TradingService:
         if not ex:
             raise RuntimeError(f"{exchange_name} not configured")
         
-        native = self._to_native_symbol(exchange_name, symbol)
+        native = self._to_native_symbol(exchange_name, symbol, is_spot=is_spot)
         if order_type == "limit":
             if price is None:
                 raise RuntimeError(f"{exchange_name} limit order requires price")
