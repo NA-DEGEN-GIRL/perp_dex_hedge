@@ -983,6 +983,53 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         
         main_layout.addLayout(collat_row)
 
+    def _auto_select_symbol(self, symbols: list):
+        """
+        심볼 목록에서 자동 선택.
+        1. 현재 심볼이 목록에 있으면 유지
+        2. 없으면 BTC → ETH 순서로 검색
+        3. 둘 다 없으면 첫 번째 선택
+        
+        Args:
+            symbols: 새로 적용될 심볼 목록
+        
+        Returns:
+            선택된 심볼 (없으면 None)
+        """
+        if not symbols:
+            return None
+        
+        # 현재 심볼에서 base 부분만 추출 (BTC/USDC → BTC, BTC-USDC → BTC)
+        current_raw = self.ticker_edit.currentText().strip().upper()
+        current = _extract_base_symbol(current_raw)
+
+        def find_match(target: str) -> str | None:
+            """target에 대해 exact 매칭 우선, contains 매칭 fallback"""
+            if not target:
+                return None
+            contains_match = None
+            for sym in symbols:
+                sym_base = _extract_base_symbol(sym.upper())
+                if sym_base == target:
+                    return sym  # exact 매칭 즉시 반환
+                if contains_match is None and target in sym_base:
+                    contains_match = sym  # 첫 번째 contains 매칭 저장
+            return contains_match
+        
+        # 1. 현재 심볼 검색
+        result = find_match(current)
+        if result:
+            return result
+        
+        # 2. BTC → ETH 순서로 검색
+        for base in ["BTC", "ETH"]:
+            result = find_match(base)
+            if result:
+                return result
+        
+        # 3. 첫 번째 선택
+        return symbols[0]
+
     def _update_qty_value(self):
         """수량 변경 시 USD 가치 업데이트 (입력칸 내부 오버레이)"""
         try:
@@ -1903,6 +1950,35 @@ class UiQtApp(QtWidgets.QMainWindow):
         # 심볼 목록 업데이트
         dex = self.dex_by_ex.get(n, "HL")
         self._update_card_symbols(n, dex, market_type)
+
+        # 심볼 자동 선택
+        if n in self.cards:
+            card = self.cards[n]
+            ex_cache = self._symbol_cache_by_ex.get(n, {})
+            
+            # 새 목록 가져오기
+            if market_type == "spot":
+                symbols = ex_cache.get("spot", [])
+            else:
+                perp_data = ex_cache.get("perp", {})
+                if self.mgr.is_hl_like(n) and isinstance(perp_data, dict):
+                    dex_key = dex.lower() if dex and dex != "HL" else "hl"
+                    symbols = perp_data.get(dex_key, perp_data.get("hl", []))
+                elif isinstance(perp_data, list):
+                    symbols = perp_data
+                else:
+                    symbols = []
+            
+            # 자동 선택 및 적용
+            if symbols:
+                selected = card._auto_select_symbol(symbols)
+                if selected:
+                    # 심볼 정규화 후 설정
+                    normalized = card.ticker_edit._normalize_symbol(selected)
+                    card.ticker_edit.setEditText(normalized)
+                    # 상태 업데이트
+                    self.symbol_by_ex[n] = normalized
+                    self.exchange_state[n].symbol = normalized
 
     def _is_group_cancelled(self, g: int) -> bool:
         """그룹별 취소 여부"""
