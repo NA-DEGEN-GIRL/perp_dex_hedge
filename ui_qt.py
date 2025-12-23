@@ -1019,6 +1019,7 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         if self.dex_combo:
             self.dex_combo.setEnabled(True)
         self.ticker_edit.set_spot_mode(False)
+        self._adjust_pos_label_width(is_spot=False)  # [ADD]
         self.market_type_changed.emit(self.ex_name, "perp")
 
     def _on_spot_clicked(self):
@@ -1034,6 +1035,7 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         if self.dex_combo:
             self.dex_combo.setEnabled(False)
         self.ticker_edit.set_spot_mode(True)
+        self._adjust_pos_label_width(is_spot=True)  # [ADD]
         self.market_type_changed.emit(self.ex_name, "spot")
 
     def set_has_spot(self, has_spot: bool):
@@ -1149,6 +1151,15 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         if self.fee_label:
             self.fee_label.setText(txt)
     
+    def _adjust_pos_label_width(self, is_spot: bool):
+        """[ADD] 포지션 라벨 너비를 모드에 따라 조정"""
+        if is_spot:
+            # Spot: 더 긴 텍스트 (수량 + $ + 주문가능)
+            self.pos_side_label.setFixedWidth(300)
+        else:
+            # Perp: LONG/SHORT만
+            self.pos_side_label.setFixedWidth(80)
+
     def set_status_info(self, json_data: dict):
         """
         json_data format:
@@ -1161,7 +1172,14 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
                 "size": 0.002,
                 "side": "short",  # "long" or "short"
                 "unrealized_pnl": 1.2
-            }  # or None
+            },  # or None
+            "coin_balance": {  # Spot일 때만 존재
+                "coin": "HYPE",
+                "available": 90.0,
+                "locked": 10.0,
+                "staked": 0.0,
+                "total": 100.0
+            }
         }
         """
         CLR_LONG = "#81c784"
@@ -1170,6 +1188,40 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         CLR_PNL_POS = "#4caf50"
         CLR_PNL_NEG = "#f44336"
         
+        coin_balance = json_data.get("coin_balance") if json_data else None
+        if coin_balance:
+            coin = coin_balance.get("coin", "")
+            total = coin_balance.get("total", 0)
+            available = coin_balance.get("available", 0)
+            
+            # 포지션 행: Spot은 코인 잔고 표시
+            #self.pos_side_label.setText("")
+            #self.pos_side_label.setStyleSheet(f"color: {CLR_MUTED};")
+            
+            # 수량 + USD 가치 표시
+            size_text = f"{_format_size(total)} <span style='color: {CLR_COLLATERAL};'>{coin}</span>"
+            if self._current_price and self._current_price > 0:
+                usd_value = total * self._current_price
+                size_text += f" <span style='color: {CLR_MUTED};'>(≈{usd_value:,.1f}$)</span>"
+            
+            # total != available 이면 주문가능 수량 표시
+            if total != available and total > 0:
+                size_text += f" <span style='color: {CLR_MUTED};'>[주문가능: {_format_size(available)}]</span>"
+            
+            self.pos_side_label.setText(f"{size_text}")
+            self.pos_side_label.setTextFormat(QtCore.Qt.TextFormat.RichText)
+            self.pos_side_label.setStyleSheet(f"color: {CLR_NEUTRAL};")
+            
+            # PnL: Spot은 미표시
+            #self.pos_pnl_label.setText("")
+            #self.pos_pnl_label.setStyleSheet(f"color: {CLR_MUTED};")
+            
+            # 잔고 행: 기존 perp/spot collateral 처리
+            collateral = json_data.get("collateral") if json_data else None
+            self._render_collateral(collateral, CLR_NEUTRAL)
+            return
+        
+        # === Perp 모드 (기존 코드) ===
         # 포지션 처리
         position = json_data.get("position") if json_data else None
         if position and position.get("size", 0) != 0:
@@ -1213,8 +1265,11 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         
         # 잔고 처리
         collateral = json_data.get("collateral") if json_data else None
-        
-        # Perp 잔고 - key도 muted 색상으로
+        self._render_collateral(collateral, CLR_NEUTRAL)
+
+    def _render_collateral(self, collateral: dict, CLR_NEUTRAL: str):
+        """[ADD] 잔고 렌더링 헬퍼 (Perp/Spot 공용)"""
+        # Perp 잔고
         perp_data = collateral.get("perp") if collateral else None
         if perp_data and any(v != 0 for v in perp_data.values()):
             perp_parts = []
@@ -1229,7 +1284,7 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
             self.collat_perp_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
             self.collat_perp_label.setStyleSheet(f"color: {CLR_MUTED};")
         
-        # Spot 잔고 - 간격 넓히고 깔끔하게
+        # Spot 잔고
         spot_data = collateral.get("spot") if collateral else {}
         spot_nonzero = {k: v for k, v in spot_data.items() if v and float(v) != 0}
         has_spot_collateral = len(spot_nonzero) > 0
@@ -2608,10 +2663,12 @@ class UiQtApp(QtWidgets.QMainWindow):
                     # 포지션/잔고 업데이트
                     if need_pos or need_collat or is_ws:
                         try:
+                            is_spot = self.market_type_by_ex.get(n, "perp") == "spot"
                             pos, col, col_val, json_data = await self.service.fetch_status(
                                 n, sym, 
                                 need_balance=need_collat or is_ws, 
-                                need_position=need_pos or is_ws
+                                need_position=need_pos or is_ws,
+                                is_spot=is_spot
                             )
                             
                             c.set_status_info(json_data)

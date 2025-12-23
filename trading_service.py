@@ -299,94 +299,146 @@ class TradingService:
             logger.info("[PRICE] %s fetch_price failed: %s", exchange_name, e)
             print("[PRICE] %s fetch_price failed: %s", exchange_name, e)
             return "Error"
-
+    
+    async def _fetch_collateral(self, exchange_name: str, ex, symbol: str) -> Tuple[float, dict]:
+        """
+        [ADD] 공통 collateral 조회 헬퍼.
+        
+        Returns:
+            (col_val, collateral_dict)
+            - col_val: perp total collateral 값
+            - collateral_dict: {"perp": {...}, "spot": {...}}
+        """
+        collateral = {"perp": {}, "spot": {}}
+        
+        try:
+            perp_quote = ex.get_perp_quote(symbol)
+        except Exception:
+            perp_quote = "USD"
+        
+        try:
+            c = await ex.get_collateral()
+            col_val = float(c.get("total_collateral") or 0.0)
+            collateral["perp"][perp_quote] = col_val
+            
+            self._last_collateral[exchange_name] = col_val
+            self._last_balance_at[exchange_name] = time.monotonic()
+            
+            # spot collateral
+            if "spot" in c:
+                spot_map = c.get("spot", {})
+                for i, stable in enumerate(STABLES):
+                    val = float(spot_map.get(stable, 0) or 0.0)
+                    stable_display = STABLES_DISPLAY[i]
+                    collateral["spot"][stable_display] = val
+            
+            return col_val, collateral
+            
+        except Exception as e:
+            logger.info(f"[{exchange_name}] _fetch_collateral error: {e}")
+            col_val = self._last_collateral.get(exchange_name, 0.0)
+            collateral["perp"][perp_quote] = col_val
+            return col_val, collateral
+        
     async def fetch_status(
         self,
         exchange_name: str,
         symbol: str,
         need_balance: bool = True,  # [변경] balance 스킵 가능
         need_position: bool = True,    # 포지션 갱신 여부
+        is_spot: bool = False,
     ) -> Tuple[str, str, float, dict]:
         """
-        - HL 카드의 collateral을 'HL+모든 DEX 합산 AV'로 표기
-        - USDH는 항상 함께 표기(0일 때도)
-        - 데이터 미수신 시 직전 캐시 유지로 깜빡임 방지
-        - 마지막 dict는 새로운 ui_qt를 위함
+        - is_spot=True: 선택된 코인의 spot 잔고 조회
+        - is_spot=False: 기존 perp 포지션/담보 조회
         """
-        
-        try:
-            meta = self.manager.get_meta(exchange_name) or {}
-            ex = self.manager.get_exchange(exchange_name)
-            is_hl_like = self.manager.is_hl_like(exchange_name)
-            json_data = {
-                'position': None,
-                'collateral': {
-                    'perp': {},
-                    'spot': {}
-                }
-            }
-        except Exception as e:
-            print('fetch_status: initializetion error',{e})
-            json_data = {'position': None, 'collateral': {'perp': {}, 'spot': {}}}
-
-        try:
-            perp_quote = ex.get_perp_quote(symbol)
-        except Exception as e:
-            perp_quote = 'USD'
-            print('fetch_status: perp_quote error',{e})
-        
+        ex = self.manager.get_exchange(exchange_name)
         if not ex:
-            return "📊 포지션: N/A", "💰 잔고: N/A", 0.0, json_data
+            default_json = {"position": None, "collateral": {"perp": {}, "spot": {}}}
+            return "📊 포지션: N/A", "💰 잔고: N/A", 0.0, default_json
+
+        is_ws = hasattr(ex, "fetch_by_ws") and getattr(ex, "fetch_by_ws", False)
         
-        # 직전 캐시 불러오기 (없으면 기본값)
-        default_json = {'position': None, 'collateral': {'perp': {}, 'spot': {}}}
-        last_pos_str, last_col_str, last_col_val, last_json_data = self._last_status.get(
+        # 직전 캐시 불러오기
+        default_json = {"position": None, "collateral": {"perp": {}, "spot": {}}}
+        last = self._last_status.get(
             exchange_name,
             ("📊 포지션: N/A", "💰 잔고: N/A", self._last_collateral.get(exchange_name, 0.0), default_json),
         )
 
-        try:
-            col_val = self._last_collateral.get(exchange_name, 0.0)
-            json_data['collateral']['perp'] = {perp_quote: col_val}
+        # === 공통: collateral 조회 ===
+        json_data = {
+            "position": None,
+            "collateral": {"perp": {}, "spot": {}},
+            "coin_balance": None,
+        }
+        
+        col_val = self._last_collateral.get(exchange_name, 0.0)
+        
+        if need_balance or is_ws:
+            col_val, json_data["collateral"] = await self._fetch_collateral(exchange_name, ex, symbol)
+
+        # === Spot 모드 ===
+        if is_spot:
+            coin = symbol.split("/")[0] if "/" in symbol else symbol
+            coin_upper = coin.upper()
             
-            is_ws = hasattr(ex,"fetch_by_ws") and getattr(ex,"fetch_by_ws",False)
-            has_spot = False
-            stables = []
-
             if need_balance or is_ws:
-                c = await ex.get_collateral()
-                col_val = float(c.get("total_collateral") or 0.0)
-                json_data['collateral']['perp'][perp_quote] = col_val
-                self._last_collateral[exchange_name] = col_val
-                self._last_balance_at[exchange_name] = time.monotonic()
-                # {'available_collateral': 1816.099087, 'total_collateral': 1816.099087, 'spot': {'USDH': 0.0, 'USDC': 0.0, 'USDT': 0.0}}
-                has_spot = "spot" in c
-                if has_spot:
-                    json_data['collateral']['spot'] = {}
-                    spot_map = c.get("spot", {})
-
-                    for i, stable in enumerate(STABLES_DISPLAY):
-                        val = float(spot_map.get(stable, 0) or 0.0)
-                        stable_display = STABLES_DISPLAY[i]
-                        json_data['collateral']['spot'][stable_display] = val
-                        stables.append(val)
+                try:
+                    if hasattr(ex, "get_spot_balance"):
+                        spot_balance = await ex.get_spot_balance(coin_upper)
+                    else:
+                        print(f"{exchange_name} get_spot_balance 없음")
+                        spot_balance = {}
                     
-            if has_spot:
-                spot_parts = [f"{amt:,.1f} {stable}" for stable, amt in zip(STABLES_DISPLAY, stables)]
-                spot_str = ", ".join(spot_parts) if spot_parts else "—"
-                col_str = (
-                    f"💰 잔고: [red]PERP[/] {col_val:,.1f} USDC | "
-                    f"[cyan]SPOT[/] {spot_str}"
-                )
+                    coin_data = spot_balance.get(coin_upper, {})
+                    available = float(coin_data.get("available", 0))
+                    total = float(coin_data.get("total", 0))
+                    
+                    json_data["coin_balance"] = {
+                        "coin": coin_upper,
+                        "available": available,
+                        "locked": float(coin_data.get("locked", 0)),
+                        "total": total,
+                    }
+                    
+                    result = ("📊 포지션: -", f"💰 {coin_upper}: {total}", col_val, json_data)
+                    self._last_status[exchange_name] = result
+                    return result
+                    
+                except Exception as e:
+                    logger.info(f"[{exchange_name}] spot fetch_status error: {e}")
+                    print(f"[{exchange_name}] spot fetch_status error: {e}")
+                    return "📊 포지션: -", "💰 잔고: Error", 0.0, json_data
             else:
-                col_str = f"💰 잔고: {col_val:,.1f} USDC"
+                return last
 
-            pos_str = last_pos_str
-            if need_position  or is_ws:
+        # === Perp 모드 ===
+        try:
+            perp_quote = ex.get_perp_quote(symbol)
+        except Exception:
+            perp_quote = "USD"
+        
+        # col_str 생성
+        spot_data = json_data["collateral"].get("spot", {})
+        has_spot = any(v != 0 for v in spot_data.values())
+        
+        if has_spot:
+            spot_parts = [f"{v:,.1f} {k}" for k, v in spot_data.items() if v != 0]
+            spot_str = ", ".join(spot_parts) if spot_parts else "—"
+            col_str = f"💰 잔고: [red]PERP[/] {col_val:,.1f} {perp_quote} | [cyan]SPOT[/] {spot_str}"
+        else:
+            col_str = f"💰 잔고: {col_val:,.1f} {perp_quote}"
+
+        # 포지션 조회
+        pos_str = last[0]
+        if need_position or is_ws:
+            try:
                 native = self._to_native_symbol(exchange_name, symbol)
                 pos = await ex.get_position(native)
-                json_data['position'] = None
+                json_data["position"] = None
                 pos_str = "📊 포지션: N/A"
+                
                 if pos and float(pos.get("size") or 0.0) != 0.0:
                     side_raw = str(pos.get("side") or "").lower()
                     side = "LONG" if side_raw == "long" else "SHORT"
@@ -397,20 +449,17 @@ class TradingService:
                     pos_str = f"📊 [{side_color}]{side}[/] {size:.5f} PnL: [{pnl_color}]{pnl:,.1f}[/]"
                     
                     json_data["position"] = {
-                        'side': side,
-                        'size': size,
-                        'unrealized_pnl': pnl
+                        "side": side,
+                        "size": size,
+                        "unrealized_pnl": pnl,
                     }
+            except Exception as e:
+                logger.info(f"[{exchange_name}] position fetch error: {e}")
+                print(f"[{exchange_name}] position fetch error: {e}")
 
-            
-            self._last_status[exchange_name] = (pos_str, col_str, col_val, json_data)
-            return pos_str, col_str, col_val, json_data
-        
-        except Exception as e:
-            logger.info(f"[{exchange_name}] non-HL fetch_status error: {e}")
-            print(f"[{exchange_name}] non-HL fetch_status error: {e}")
-            json_data = {'position':None, 'collateral':None}
-            return last_pos_str, last_col_str, last_col_val, last_json_data
+        result = (pos_str, col_str, col_val, json_data)
+        self._last_status[exchange_name] = result
+        return result
     
     async def execute_order(
         self,
