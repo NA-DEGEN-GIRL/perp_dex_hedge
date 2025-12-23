@@ -1066,7 +1066,8 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         if self.dex_combo:
             self.dex_combo.setEnabled(True)
         self.ticker_edit.set_spot_mode(False)
-        self._adjust_pos_label_width(is_spot=False)  # [ADD]
+        self._adjust_pos_label_width(is_spot=False)
+        self.clear_position_display()
         self.market_type_changed.emit(self.ex_name, "perp")
 
     def _on_spot_clicked(self):
@@ -1082,7 +1083,8 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         if self.dex_combo:
             self.dex_combo.setEnabled(False)
         self.ticker_edit.set_spot_mode(True)
-        self._adjust_pos_label_width(is_spot=True)  # [ADD]
+        self._adjust_pos_label_width(is_spot=True)
+        self.clear_position_display()
         self.market_type_changed.emit(self.ex_name, "spot")
 
     def set_has_spot(self, has_spot: bool):
@@ -1207,6 +1209,16 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
             # Perp: LONG/SHORT만
             self.pos_side_label.setFixedWidth(80)
 
+    def clear_position_display(self):
+        """[ADD] 포지션 표시 초기화 (로딩 상태)"""
+        self.pos_side_label.setText("")
+        self.pos_side_label.setStyleSheet(f"color: {CLR_MUTED};")
+        self.pos_size_label.setText("")
+        self.pos_size_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        self.pos_size_label.setStyleSheet(f"color: {CLR_MUTED};")
+        self.pos_pnl_label.setText("")
+        self.pos_pnl_label.setStyleSheet(f"color: {CLR_MUTED};")
+
     def set_status_info(self, json_data: dict):
         """
         json_data format:
@@ -1224,7 +1236,7 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
                 "coin": "HYPE",
                 "available": 90.0,
                 "locked": 10.0,
-                "staked": 0.0,
+                #"staked": 0.0,
                 "total": 100.0
             }
         }
@@ -1259,9 +1271,13 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
             self.pos_side_label.setTextFormat(QtCore.Qt.TextFormat.RichText)
             self.pos_side_label.setStyleSheet(f"color: {CLR_NEUTRAL};")
             
-            # PnL: Spot은 미표시
-            #self.pos_pnl_label.setText("")
-            #self.pos_pnl_label.setStyleSheet(f"color: {CLR_MUTED};")
+            # [ADD] Spot 모드: Perp용 라벨 초기화 (이전 상태 제거)
+            self.pos_size_label.setText("")
+            self.pos_size_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+            self.pos_size_label.setStyleSheet(f"color: {CLR_MUTED};")
+            
+            self.pos_pnl_label.setText("")
+            self.pos_pnl_label.setStyleSheet(f"color: {CLR_MUTED};")
             
             # 잔고 행: 기존 perp/spot collateral 처리
             collateral = json_data.get("collateral") if json_data else None
