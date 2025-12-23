@@ -1,7 +1,7 @@
 # 안쓸애들은 show = False를 입력하면됨, .env에서 안쓰는애들 입력값은 지우기
 
 # treadfi는 builder code 설정 필요없음
-[treadfi_hl] # xyz(o), flx(x), vntl(x), hyna(x)
+[treadfi_hl] # xyz(o), flx(o), vntl(o), hyna(o)
 exchange = treadfi.hyperliquid
 fee_rate = 20 # 코드에선 안쓰임. 출력용도
 show = False
@@ -44,7 +44,7 @@ hyna_fee_rate = 25 / 25
 FrontendMarket = True
 show = False
 
-[supercexy] # xyz(o), flx(x) vntl(x), hyna(x)
+[supercexy] # xyz(o), flx(o) vntl(o), hyna(o)
 builder_code = 0x0000000bfbf4c62c43c2e71ef0093f382bf7a7b4
 fee_rate = 14 / 14
 FrontendMarket = True
@@ -62,7 +62,7 @@ fee_rate = 33 / 33
 FrontendMarket = True
 show = False
 
-[superstack] # xyz(o), flx(x) vntl(x), hyna(x)
+[superstack] # xyz(o), flx(o) vntl(o), hyna(o)
 builder_code = 0xcdb943570bcb48a6f1d3228d0175598fea19e87b
 fee_rate = 4 / 11
 FrontendMarket = True
