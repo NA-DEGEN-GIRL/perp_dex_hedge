@@ -1246,6 +1246,10 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         CLR_NEUTRAL = "#e0e0e0"
         CLR_PNL_POS = "#4caf50"
         CLR_PNL_NEG = "#f44336"
+
+        # [ADD] json_data가 없거나 비어있으면 포지션만 초기화하고 collateral은 유지
+        if not json_data:
+            return
         
         coin_balance = json_data.get("coin_balance") if json_data else None
         if coin_balance:
@@ -1280,8 +1284,9 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
             self.pos_pnl_label.setStyleSheet(f"color: {CLR_MUTED};")
             
             # 잔고 행: 기존 perp/spot collateral 처리
-            collateral = json_data.get("collateral") if json_data else None
-            self._render_collateral(collateral, CLR_NEUTRAL)
+            collateral = json_data.get("collateral")
+            if collateral and (collateral.get("perp") or collateral.get("spot")):
+                self._render_collateral(collateral, CLR_NEUTRAL)
             return
         
         # === Perp 모드 (기존 코드) ===
@@ -1327,8 +1332,9 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
             self.pos_pnl_label.setStyleSheet(f"color: {CLR_MUTED};")
         
         # 잔고 처리
-        collateral = json_data.get("collateral") if json_data else None
-        self._render_collateral(collateral, CLR_NEUTRAL)
+        collateral = json_data.get("collateral")
+        if collateral and (collateral.get("perp") or collateral.get("spot")):
+            self._render_collateral(collateral, CLR_NEUTRAL)
 
     def _render_collateral(self, collateral: dict, CLR_NEUTRAL: str):
         """[ADD] 잔고 렌더링 헬퍼 (Perp/Spot 공용)"""
