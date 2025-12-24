@@ -32,6 +32,7 @@ show = False
 
 [liquid] # spot(x), xyz(o), flx(o) vntl(o), hyna(o)
 builder_code = 0x6D4E7F472e6A491B98CBEeD327417e310Ae8ce48
+spot_rate = 0 / 0
 fee_rate = 50 / 50
 show = False
 
