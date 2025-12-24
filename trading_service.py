@@ -239,9 +239,9 @@ class TradingService:
 
         return None, "none", None
 
-    def _to_native_symbol(self, exchange_name: str, coin: str, is_spot: bool = False) -> str:
+    def _to_native_symbol(self, exchange_name: str, coin: str, is_spot: bool = False, quote = None) -> str:
         exchange_platform = self.manager.get_exchange_platform(exchange_name)
-        return symbol_create(exchange_platform, coin, is_spot=is_spot)
+        return symbol_create(exchange_platform, coin, is_spot=is_spot, quote=quote)
         
     def _extract_order_id(self, res) -> Optional[str]:
         if isinstance(res, list):
@@ -485,7 +485,12 @@ class TradingService:
         if not ex:
             raise RuntimeError(f"{exchange_name} not configured")
         
-        native = self._to_native_symbol(exchange_name, symbol, is_spot=is_spot)
+        if hasattr(ex,'get_perp_quote'):
+            quote = ex.get_perp_quote(symbol) # for tread.fi exception
+        else:
+            quote = None
+
+        native = self._to_native_symbol(exchange_name, symbol, is_spot=is_spot, quote=quote)
         if order_type == "limit":
             if price is None:
                 raise RuntimeError(f"{exchange_name} limit order requires price")
@@ -515,7 +520,11 @@ class TradingService:
         # get position 때문에 mpdex를 쓰는 hl의 경우는 hl쪽으로
         #if not is_hl_like:
         try:
-            native = self._to_native_symbol(exchange_name, symbol)
+            if hasattr(ex,'get_perp_quote'):
+                quote = ex.get_perp_quote(symbol) # for tread.fi exception
+            else:
+                quote = None
+            native = self._to_native_symbol(exchange_name, symbol, is_spot=False, quote=quote)
             pos = await ex.get_position(native)
             if not pos or float(pos.get("size") or 0.0) == 0.0:
                 logger.info("[CLOSE] %s non-HL: no position", exchange_name)
