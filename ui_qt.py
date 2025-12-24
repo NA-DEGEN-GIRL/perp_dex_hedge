@@ -2363,6 +2363,17 @@ class UiQtApp(QtWidgets.QMainWindow):
                     
                     st = self.exchange_state[name]
                     card.set_ticker(setup.get("symbol",st.symbol))
+
+                    if is_hl_like:
+                        init_dex = setup.get("dex", "HL").upper()
+                        self.dex_by_ex[name] = init_dex
+                        st.dex = init_dex
+                        card.set_dex(init_dex)
+                    
+                    init_symbol = setup.get("symbol", st.symbol)
+                    self.symbol_by_ex[name] = init_symbol
+                    st.symbol = init_symbol
+
                     setup_qty = setup.get("amount",None)
                     if setup_qty:
                         card.set_qty(setup_qty)
