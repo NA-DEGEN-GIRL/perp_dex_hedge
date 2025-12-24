@@ -324,7 +324,7 @@ class ExchangeManager:
                 try:
                     return SimpleNamespace(
                         wallet_address = wallet_address,
-                        wallet_private_key = None,
+                        wallet_private_key = os.getenv(f"{u_name}_WALLET_PRIVATE_KEY", None),
                         agent_api_address = os.getenv(f"{u_name}_AGENT_API_KEY"),
                         agent_api_private_key = os.getenv(f"{u_name}_AGENT_PRIVATE_KEY") or \
                             os.getenv(f"{u_name}_PRIVATE_KEY"), # legacy support
@@ -357,6 +357,7 @@ class ExchangeManager:
                     trading_wallet_address = os.getenv(f"{u_name}_TRADING_WALLET_ADDRESS"),
                     account_name = os.getenv(f"{u_name}_ACCOUNT_NAME"),
                     fetch_by_ws = True,
+                    trading_wallet_private_key = os.getenv("f{u_name}_TRADING_WALLET_PRIVATE_KEY", None),
                     options = {"builder_fee_pair":fee_pair}
                 )
             

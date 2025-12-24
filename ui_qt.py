@@ -2594,13 +2594,21 @@ class UiQtApp(QtWidgets.QMainWindow):
             if direction == "to_perp":
                 if hasattr(ex, "transfer_to_perp"):
                     result = await ex.transfer_to_perp(amount)
-                    self._log(f"[{n.upper()}] Spot → Perp 전송 완료: {amount} {coin}")
+                    status =  result.get('status','error')
+                    if status == 'ok':
+                        self._log(f"[{n.upper()}] Spot → Perp 전송 완료: {amount} {coin}")
+                    else:
+                        self._log(f"[{n.upper()}] Spot → Perp 에러 : {str(result)}")
                 else:
                     self._log(f"[{n.upper()}] transfer_to_perp 미지원")
             elif direction == "to_spot":
                 if hasattr(ex, "transfer_to_spot"):
                     result = await ex.transfer_to_spot(amount)
-                    self._log(f"[{n.upper()}] Perp → Spot 전송 완료: {amount} {coin}")
+                    status =  result.get('status','error')
+                    if status == 'ok':
+                        self._log(f"[{n.upper()}] Perp → Spot 전송 완료: {amount} {coin}")
+                    else:
+                        self._log(f"[{n.upper()}] Perp → Spot 에러 : {str(result)}")
                 else:
                     self._log(f"[{n.upper()}] transfer_to_spot 미지원")
             else:

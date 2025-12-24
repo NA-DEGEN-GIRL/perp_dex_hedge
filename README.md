@@ -34,9 +34,10 @@ GitHub: https://github.com/NA-DEGEN-GIRL/perp_dex_hedge
 ### Hyperliquid 기반
 - MASS, Lit, Dexari, Liquid, BasedOne, Supercexy, Bullpen, Dreamcash, HyEna
 - 특수 케이스: Superstack, Tread.fi (with Hyperliquid)
+- **Spot 지원**: Lit, Dexari, Liquid, BasedOne, Supercexy 등 (거래소별 상이)
 
 ### 비-Hyperliquid 거래소
-- Lighter, EdgeX, Paradex, GRVT, Backpack, Variational, Pacifica
+- Lighter (Spot 지원 ✓), EdgeX, Paradex, GRVT, Backpack (Spot 지원 ✓), Variational, Pacifica
 
 ---
 
@@ -214,6 +215,54 @@ python update_rates.py
 ### .env 파일 (거래소별 API 키)
 
 사용할 거래소만 설정하고 **나머지는 삭제**하세요.
+
+#### ⚠️ Perp ↔ Spot 자산 이동 기능 (지갑 프라이빗 키 필요)
+
+일부 거래소에서는 **Perp 계정과 Spot 계정 사이에 담보(USDC 등)를 이동**하는 기능을 지원합니다.  
+**Hyperliquid** 거래소들은 이 기능을 사용하려면 **지갑의 프라이빗 키**가 추가로 필요합니다.  
+**다슬기들은 이 기능은 따로 사용하지 않는걸 추천합니다. 실수로 프라이빗키 노출할 것 같음.**  
+**Lighter**의 경우는 지갑의 프라이빗 키가 따로 필요없으니 신경 안써도 됩니다.
+
+**왜 프라이빗 키가 필요한가?**
+- Hyperliquid(HL) 기반 거래소의 경우, Perp ↔ Spot 간 자산 이동은 **L1 레벨의 서명**이 필요합니다
+- 일반 거래(주문/취소)는 Agent API 키로 가능하지만, 자산 이동은 **실제 지갑 서명**이 필요합니다
+- 따라서 이 기능을 사용하려면 `*_WALLET_PRIVATE_KEY` 환경변수를 설정해야 합니다
+
+**설정 방법:**
+
+```env
+# Hyperliquid 기반 거래소 (Lit, Dexari, Liquid, HyEna, Supercexy, BasedOne 등)
+# 기본 설정 (거래만 가능)
+LIT_WALLET_ADDRESS=0x...
+LIT_AGENT_API_KEY=0x...
+LIT_AGENT_PRIVATE_KEY=0x...
+
+# Perp ↔ Spot 자산 이동을 사용하려면 아래 추가
+LIT_WALLET_PRIVATE_KEY=0x...  # 지갑 프라이빗 키
+
+# Tread.fi의 경우, 살짝 다름
+TREADFI_HL_LOGIN_WALLET_ADDRESS=...
+TREADFI_HL_TRADING_WALLET_ADDRESS=...
+TREADFI_HL_ACCOUNT_NAME=...
+TREADFI_HL_TRADING_WALLET_PRIVATE_KEY=0x...  # 거래 지갑 프라이빗 키
+```
+
+**지원 거래소:**
+
+| 거래소 | 환경변수 | 비고 |
+|--------|----------|------|
+| Lit | `LIT_WALLET_PRIVATE_KEY` | |
+| Dexari | `DEXARI_WALLET_PRIVATE_KEY` | |
+| Liquid | `LIQUID_WALLET_PRIVATE_KEY` | |
+| HyEna | `HYENA_WALLET_PRIVATE_KEY` | |
+| Supercexy | `SUPERCEXY_WALLET_PRIVATE_KEY` | |
+| BasedOne | `BASEDONE_WALLET_PRIVATE_KEY` | |
+| Tread.fi | `TREADFI_HL_TRADING_WALLET_PRIVATE_KEY` | 거래 지갑 키 |
+
+**주의사항:**
+- 🔐 프라이빗 키는 절대 공유하지 마세요
+- 💡 자산 이동 기능이 필요 없다면 `*_WALLET_PRIVATE_KEY`는 설정하지 않아도 됩니다
+- ⚠️ 프라이빗 키 설정 시 보안에 각별히 주의하세요
 
 #### Hyperliquid 기반 거래소 (공통 형식)
 ```env
@@ -424,6 +473,19 @@ show = True
 3. **Long/Short 선택**: 방향 선택 (미선택 = 비활성)
 4. **Market/Limit**: 시장가 또는 지정가
 5. **주문 실행**: 해당 거래소만 주문
+
+#### Perp ↔ Spot 자산 이동
+
+잔고 행에서 Perp와 Spot 사이에 담보(USDC 등)를 이동할 수 있습니다.
+
+| 버튼 | 설명 |
+|------|------|
+| ◀ | Spot → Perp 방향 선택 |
+| ▶ | Perp → Spot 방향 선택 |
+| MAX | 선택한 방향의 최대 수량 입력 |
+| 전송 | 실제 전송 실행 |
+
+> ⚠️ 이 기능을 사용하려면 `.env`에 `*_WALLET_PRIVATE_KEY` 설정이 필요합니다 (위 설명 참조)
 
 #### 전체 동작
 - **전체 주문 수행**: 활성화된(Long/Short 선택된) 모든 거래소 동시 주문
