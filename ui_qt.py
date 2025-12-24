@@ -2813,7 +2813,8 @@ class UiQtApp(QtWidgets.QMainWindow):
             order_type = (self.order_type.get(n) or "market").lower()
             
             # TradingService에서 fee 가져오기
-            fee = self.service.get_display_builder_fee(n, dex_key, order_type)
+            is_spot = self.market_type_by_ex.get(n, "perp") == "spot"
+            fee = self.service.get_display_builder_fee(n, dex_key, order_type, is_spot)
             
             if isinstance(fee, int):
                 card.set_fee_label(f"Builder Fee: {fee}")

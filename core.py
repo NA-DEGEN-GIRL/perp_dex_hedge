@@ -200,17 +200,24 @@ class ExchangeManager:
     
     def _get_fee_rate(self, exchange_name):
         fee_dict = {}
-
+        
         if config.has_option(exchange_name, "fee_rate"):
             fee_pair = _parse_fee_pair(config.get(exchange_name, "fee_rate"))
         else:
             fee_pair = (0,0)
         fee_dict["base"] = fee_pair
+
+        # spot fee
+        if config.has_option(exchange_name, "spot_rate"):
+            spot_fee_pair = _parse_fee_pair(config.get(exchange_name, "spot_rate"))
+        else:
+            spot_fee_pair = fee_dict["base"]
+        fee_dict["spot"] = spot_fee_pair # 없으면 base로 fallback
             
         if config.has_option(exchange_name, "dex_fee_rate"):
             dex_fee_pair_default = _parse_fee_pair(config.get(exchange_name, "dex_fee_rate"))
         else:
-            dex_fee_pair_default = fee_pair # 없으면 base로 fallback
+            dex_fee_pair_default = fee_dict["base"] # 없으면 base로 fallback
         fee_dict["dex"] = dex_fee_pair_default
 
         for k, v in config.items(exchange_name):

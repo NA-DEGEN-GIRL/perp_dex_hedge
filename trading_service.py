@@ -157,7 +157,7 @@ class TradingService:
         out = ip_g if fp is None else f"{ip_g}.{fp}"
         return f"-{out}" if neg else out
 
-    def get_display_builder_fee(self, exchange_name: str, dex: Optional[str], order_type: str) -> Optional[int]:
+    def get_display_builder_fee(self, exchange_name: str, dex: Optional[str], order_type: str, is_spot: bool = False) -> Optional[int]:
         """
         HL 카드 우상단 'FEE:' 표기를 위한 표시용 수수료 선택.
         - dex: 'xyz' | 'flx' | 'vntl' | None(HL)
@@ -168,13 +168,13 @@ class TradingService:
             ex = self.manager.get_exchange(exchange_name)
             if not ex:
                 return None
-            fee_int, _src, _pair = self._pick_fee_with_reason(ex, dex, order_type)
+            fee_int, _src, _pair = self._pick_fee_with_reason(ex, dex, order_type, is_spot)
             return int(fee_int) if fee_int is not None else None
         except Exception:
             return None
 
     def _pick_fee_with_reason(
-        self, ex, dex: Optional[str], order_type: str
+        self, ex, dex: Optional[str], order_type: str, is_spot: bool = False
     ) -> tuple[Optional[int], str, Optional[tuple[int, int]]]:
         """
         반환: (feeInt 또는 None, source 설명 문자열, 선택된 (limit,market) 페어 또는 None)
@@ -205,6 +205,12 @@ class TradingService:
             #    pass
             #logger.info(opt.get("dex") or {})
 
+            if is_spot:
+                spot_fee_pair = opt.get("spot")
+                if isinstance(spot_fee_pair, (list, tuple)) and len(spot_fee_pair) >= 2:
+                    return int(spot_fee_pair[idx]), "spot", (int(spot_fee_pair[0]), int(spot_fee_pair[1]))
+                return None, "spot", None
+            
             # 메인 HL: fee_rate만 사용
             if not dex:
                 base_pair = opt.get("base")

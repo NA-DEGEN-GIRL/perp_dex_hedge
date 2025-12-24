@@ -35,7 +35,7 @@ builder_code = 0x6D4E7F472e6A491B98CBEeD327417e310Ae8ce48
 fee_rate = 50 / 50
 show = False
 
-[based] # xyz(o), flx(o) vntl(o), hyna(o)
+[based] # spot(o), xyz(o), flx(o) vntl(o), hyna(o)
 builder_code = 0x1924b8561eef20e70ede628a296175d358be80e5
 spot_rate = 100 / 100
 fee_rate = 25 / 25
