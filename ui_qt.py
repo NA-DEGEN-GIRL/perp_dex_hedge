@@ -607,6 +607,7 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
     ticker_changed = QtCore.Signal(str, str)
     group_changed = QtCore.Signal(str, int)  # (ex_name, group)
     market_type_changed = QtCore.Signal(str, str)  # (ex_name, "perp" or "spot")
+    transfer_execute = QtCore.Signal(str, dict)  # [ADD] (ex_name, transfer_info)
 
     def __init__(self, ex_name: str, dex_choices: List[str], is_hl_like: bool = True, parent=None):
         super().__init__(parent)
@@ -861,8 +862,229 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         self.spot_sep_label = None
         self.spot_title_label = None
         
+        # Collateral 전송 위젯
+        self._has_transfer = False  # transfer 기능 지원 여부
+        self._perp_collateral_coin = "USDC"  # Perp collateral 코인
+        self._perp_collateral_amount = 0.0  # Perp collateral 수량
+        self._spot_collateral_amount = 0.0  # Spot collateral 수량 (해당 코인)
+        
+        self.transfer_to_perp_btn = QtWidgets.QPushButton("◀")
+        self.transfer_to_spot_btn = QtWidgets.QPushButton("▶")
+        self.transfer_amount_edit = QtWidgets.QLineEdit()
+        self.transfer_max_btn = QtWidgets.QPushButton("MAX")
+        self.transfer_exec_btn = QtWidgets.QPushButton("전송")
+        
+        # 전송 방향 상태: None(미선택), "to_perp", "to_spot"
+        self._transfer_direction: Optional[str] = None
+        
+        self._setup_transfer_widgets()
+
         self._build_layout()
         self._connect_signals()
+
+    def _setup_transfer_widgets(self):
+        """Collateral 전송 위젯 초기 설정"""
+        # 버튼 스타일
+        BTN_TRANSFER = """
+            QPushButton {
+                background-color: #3a3a3a;
+                color: #e0e0e0;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 2px 8px;
+                min-width: 24px;
+                font-size: 12pt;
+            }
+            QPushButton:hover {
+                background-color: #4a4a4a;
+                border-color: #888;
+            }
+            QPushButton:checked {
+                background-color: #1b5e20;
+                border: 2px solid #81c784;
+                color: #81c784;
+            }
+            QPushButton:disabled {
+                background-color: #2a2a2a;
+                color: #555;
+                border-color: #333;
+            }
+        """
+
+        BTN_TRANSFER_EXEC = f"""
+            QPushButton {{
+                background-color: #3a3a3a;
+                color: #90caf9;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 2px 12px;
+                font-size: {UI_FONT_SIZE}pt;
+            }}
+            QPushButton:hover {{
+                background-color: #4a4a4a;
+                border-color: #90caf9;
+            }}
+            QPushButton:pressed {{
+                background-color: #1b3a5c;
+            }}
+            QPushButton:disabled {{
+                background-color: #2a2a2a;
+                color: #555;
+                border-color: #333;
+            }}
+        """
+        
+        self.transfer_to_perp_btn.setStyleSheet(BTN_TRANSFER)
+        self.transfer_to_spot_btn.setStyleSheet(BTN_TRANSFER)
+        self.transfer_exec_btn.setStyleSheet(BTN_TRANSFER_EXEC)
+        
+        self.transfer_to_perp_btn.setCheckable(True)
+        self.transfer_to_spot_btn.setCheckable(True)
+        self.transfer_to_perp_btn.setChecked(False)
+        self.transfer_to_spot_btn.setChecked(False)
+        
+        # [CHANGED] 수량 입력 필드 설정 (내부 MAX 버튼 포함)
+        self.transfer_amount_edit.setFixedWidth(200)
+        self.transfer_amount_edit.setPlaceholderText("전송수량")
+        self.transfer_amount_edit.setStyleSheet("""
+            QLineEdit {
+                background-color: #2d2d2d;
+                color: #e0e0e0;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 2px 40px 2px 6px;
+            }
+        """)
+        
+        # MAX 버튼을 QLineEdit 내부에 오버레이로 배치
+        self.transfer_max_btn.setParent(self.transfer_amount_edit)
+        self.transfer_max_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: #404040;
+                color: #aaa;
+                border: none;
+                border-radius: 3px;
+                padding: 2px 6px;
+                font-size: {UI_FONT_SIZE}pt;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: #505050;
+                color: #e0e0e0;
+            }}
+            QPushButton:pressed {{
+                background-color: #1b5e20;
+                color: #81c784;
+            }}
+        """)
+        self.transfer_max_btn.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        
+        # 시그널 연결
+        self.transfer_to_perp_btn.clicked.connect(self._on_transfer_to_perp_clicked)
+        self.transfer_to_spot_btn.clicked.connect(self._on_transfer_to_spot_clicked)
+        self.transfer_max_btn.clicked.connect(self._on_transfer_max_clicked)
+        self.transfer_exec_btn.clicked.connect(self._on_transfer_exec_clicked)
+
+        # 초기에는 숨김
+        self._set_transfer_visible(False)
+
+    def _update_transfer_max_btn_pos(self):
+        """[ADD] MAX 버튼을 QLineEdit 내부 오른쪽에 배치"""
+        if not hasattr(self, 'transfer_max_btn') or not hasattr(self, 'transfer_amount_edit'):
+            return
+        
+        # 버튼 크기 계산
+        btn_width = self.transfer_max_btn.sizeHint().width()
+        btn_height = self.transfer_amount_edit.height() - 4  # 약간의 여백
+        
+        # 오른쪽 정렬 위치 계산
+        x = self.transfer_amount_edit.width() - btn_width - 2
+        y = (self.transfer_amount_edit.height() - btn_height) // 2
+        
+        self.transfer_max_btn.setGeometry(x, y, btn_width, btn_height)
+
+    def _set_transfer_visible(self, visible: bool):
+        """[ADD] 전송 위젯 표시/숨김"""
+        self.transfer_to_perp_btn.setVisible(visible)
+        self.transfer_to_spot_btn.setVisible(visible)
+        self.transfer_amount_edit.setVisible(visible)
+        self.transfer_max_btn.setVisible(visible)
+        self.transfer_exec_btn.setVisible(visible)
+
+    def set_has_transfer(self, has_transfer: bool):
+        """[ADD] 전송 기능 지원 여부 설정"""
+        self._has_transfer = has_transfer
+        self._set_transfer_visible(has_transfer)
+
+    def set_collateral_info(self, perp_coin: str, perp_amount: float, spot_amount: float):
+        """[ADD] Collateral 정보 업데이트 (MAX 계산용)"""
+        self._perp_collateral_coin = perp_coin
+        self._perp_collateral_amount = perp_amount
+        self._spot_collateral_amount = spot_amount
+
+    def _on_transfer_to_perp_clicked(self):
+        """[ADD] ◀ 버튼 클릭 (Spot → Perp)"""
+        if self.transfer_to_perp_btn.isChecked():
+            self._transfer_direction = "to_perp"
+            self.transfer_to_spot_btn.setChecked(False)
+        else:
+            self._transfer_direction = None
+
+    def _on_transfer_to_spot_clicked(self):
+        """[ADD] ▶ 버튼 클릭 (Perp → Spot)"""
+        if self.transfer_to_spot_btn.isChecked():
+            self._transfer_direction = "to_spot"
+            self.transfer_to_perp_btn.setChecked(False)
+        else:
+            self._transfer_direction = None
+
+    def _on_transfer_max_clicked(self):
+        """[ADD] MAX 버튼 클릭 - 방향에 따라 최대값 설정"""
+        if self._transfer_direction == "to_perp":
+            # Spot → Perp: Spot의 해당 코인 잔고
+            max_val = self._spot_collateral_amount
+        elif self._transfer_direction == "to_spot":
+            # Perp → Spot: Perp collateral 잔고
+            max_val = self._perp_collateral_amount
+        else:
+            # 방향 미선택: 아무것도 안 함
+            return
+        
+        # 소수점 1자리까지 버림
+        truncated = int(max_val * 10) / 10.0
+        self.transfer_amount_edit.setText(f"{truncated:.1f}")
+
+    def get_transfer_info(self) -> Optional[dict]:
+        """
+        [ADD] 현재 전송 설정 반환.
+        Returns:
+            {"direction": "to_perp" or "to_spot", "amount": float, "coin": str}
+            또는 None (방향 미선택 또는 수량 없음)
+        """
+        if not self._transfer_direction:
+            return None
+        
+        try:
+            amount = float(self.transfer_amount_edit.text().strip())
+            if amount <= 0:
+                return None
+        except ValueError:
+            return None
+        
+        return {
+            "direction": self._transfer_direction,
+            "amount": amount,
+            "coin": self._perp_collateral_coin
+        }
+
+    def _on_transfer_exec_clicked(self):
+        """[ADD] 전송 버튼 클릭"""
+        info = self.get_transfer_info()
+        if info:
+            self.transfer_execute.emit(self.ex_name, info)
+        else:
+            # 방향 미선택 또는 수량 없음
+            print(f"[{self.ex_name}] 전송 방향을 선택하고 수량을 입력하세요")
 
     def _build_layout(self) -> None:
         main_layout = QtWidgets.QVBoxLayout(self)
@@ -966,14 +1188,15 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         collat_row.addWidget(perp_lbl)
         collat_row.addWidget(self.collat_perp_label)
         
-        collat_row.addSpacing(15)
         
-        self.spot_sep_label = QtWidgets.QLabel("|")
-        self.spot_sep_label.setStyleSheet("color: #444;")
-        collat_row.addWidget(self.spot_sep_label)
-        
-        collat_row.addSpacing(15)
-        
+        # 전송 컨트롤:  [수량+MAX] [◀][▶] [전송]
+        collat_row.addSpacing(10)
+        collat_row.addWidget(self.transfer_amount_edit)  # MAX 버튼은 내부에 포함됨
+        collat_row.addWidget(self.transfer_to_perp_btn)
+        collat_row.addWidget(self.transfer_to_spot_btn)
+        collat_row.addWidget(self.transfer_exec_btn)
+        collat_row.addSpacing(10)
+
         self.spot_title_label = QtWidgets.QLabel("Spot:")
         self.spot_title_label.setStyleSheet(f"color: {CLR_MUTED};")
         collat_row.addWidget(self.spot_title_label)
@@ -1047,6 +1270,11 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         except ValueError:
             self.qty_value_label.setText("")
 
+    def showEvent(self, event):
+        """[ADD] 위젯 표시 시 오버레이 위치 초기화"""
+        super().showEvent(event)
+        self._update_transfer_max_btn_pos()
+
     def resizeEvent(self, event):
         """[ADD] 리사이즈 시 USD 라벨 위치 조정"""
         super().resizeEvent(event)
@@ -1057,6 +1285,7 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
                 self.qty_edit.width(),
                 self.qty_edit.height()
             )
+        self._update_transfer_max_btn_pos()
 
     def _on_perp_clicked(self):
         """Perp 버튼 클릭"""
@@ -1340,11 +1569,18 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         """[ADD] 잔고 렌더링 헬퍼 (Perp/Spot 공용)"""
         # Perp 잔고
         perp_data = collateral.get("perp") if collateral else None
+        perp_coin = ""
+        perp_amount = 0.0
+
         if perp_data and any(v != 0 for v in perp_data.values()):
             perp_parts = []
             for k, v in perp_data.items():
                 if v != 0:
                     perp_parts.append(f"{_format_collateral(v)} <span style='color:{CLR_COLLATERAL};'>{k}</span>")
+                    # 첫 번째 perp collateral 정보 저장
+                    if perp_amount == 0:
+                        perp_coin = k
+                        perp_amount = float(v)
             self.collat_perp_label.setText(", ".join(perp_parts) if perp_parts else "")
             self.collat_perp_label.setTextFormat(QtCore.Qt.TextFormat.RichText)
             self.collat_perp_label.setStyleSheet(f"color: {CLR_NEUTRAL};")
@@ -1357,6 +1593,9 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         spot_data = collateral.get("spot") if collateral else {}
         spot_nonzero = {k: v for k, v in spot_data.items() if v and float(v) != 0}
         has_spot_collateral = len(spot_nonzero) > 0
+
+        # [ADD] Spot에서 perp_coin과 같은 코인의 잔고 찾기
+        spot_amount = float(spot_data.get(perp_coin, 0) or 0)
 
         if has_spot_collateral:
             spot_parts = []
@@ -1372,6 +1611,9 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         else:
             self.collat_spot_label.setText("")
         
+        # 전송용 collateral 정보 업데이트
+        self.set_collateral_info(perp_coin, perp_amount, spot_amount)
+
         # Spot 위젯들 보이기/숨기기
         if self.spot_sep_label:
             self.spot_sep_label.setVisible(has_spot_collateral)
@@ -2176,6 +2418,7 @@ class UiQtApp(QtWidgets.QMainWindow):
                     card.ticker_changed.connect(self._on_card_ticker)
                     card.group_changed.connect(self._on_card_group)
                     card.market_type_changed.connect(self._on_market_type_change)
+                    card.transfer_execute.connect(self._on_transfer_execute)
                     
                     self.cards[name] = card
                     '''
@@ -2195,6 +2438,11 @@ class UiQtApp(QtWidgets.QMainWindow):
                     ex = self.mgr.get_exchange(name)
                     if ex and hasattr(ex, "has_spot"):
                         card.set_has_spot(ex.has_spot)
+
+                    if ex and hasattr(ex, "transfer_to_perp") and hasattr(ex, "transfer_to_spot"):
+                        card.set_has_transfer(True)
+                    else:
+                        card.set_has_transfer(False)
 
                     if name in self._symbol_cache_by_ex:
                         dex = self.dex_by_ex.get(name, "HL")
@@ -2324,6 +2572,42 @@ class UiQtApp(QtWidgets.QMainWindow):
 
     def _on_close_all(self):
         asyncio.get_running_loop().create_task(self._do_close_all())
+
+    def _on_transfer_execute(self, n: str, info: dict):
+        """[ADD] 전송 실행 핸들러"""
+        asyncio.get_running_loop().create_task(self._do_transfer(n, info))
+
+    async def _do_transfer(self, n: str, info: dict):
+        """[ADD] 실제 전송 실행"""
+        direction = info.get("direction")
+        amount = info.get("amount")
+        coin = info.get("coin", "USDC")
+        
+        self._log(f"[{n.upper()}] 전송 시작: {direction} {amount} {coin}")
+        
+        try:
+            ex = self.mgr.get_exchange(n)
+            if not ex:
+                self._log(f"[{n.upper()}] 거래소 없음")
+                return
+            
+            if direction == "to_perp":
+                if hasattr(ex, "transfer_to_perp"):
+                    result = await ex.transfer_to_perp(amount)
+                    self._log(f"[{n.upper()}] Spot → Perp 전송 완료: {amount} {coin}")
+                else:
+                    self._log(f"[{n.upper()}] transfer_to_perp 미지원")
+            elif direction == "to_spot":
+                if hasattr(ex, "transfer_to_spot"):
+                    result = await ex.transfer_to_spot(amount)
+                    self._log(f"[{n.upper()}] Perp → Spot 전송 완료: {amount} {coin}")
+                else:
+                    self._log(f"[{n.upper()}] transfer_to_spot 미지원")
+            else:
+                self._log(f"[{n.upper()}] 알 수 없는 방향: {direction}")
+                
+        except Exception as e:
+            self._log(f"[{n.upper()}] 전송 실패: {e}")
 
     # --- Actions ---
     async def _do_exec(self, n, silent=False) -> bool:
