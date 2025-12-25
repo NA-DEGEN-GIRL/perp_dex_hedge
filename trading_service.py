@@ -308,23 +308,23 @@ class TradingService:
     
     async def _fetch_collateral(self, exchange_name: str, ex, symbol: str) -> Tuple[float, dict]:
         """
-        [ADD] 공통 collateral 조회 헬퍼.
+        공통 collateral 조회 헬퍼.
         
         Returns:
             (col_val, collateral_dict)
-            - col_val: perp total collateral 값
+            - col_val: perp available collateral 값
             - collateral_dict: {"perp": {...}, "spot": {...}}
         """
         collateral = {"perp": {}, "spot": {}}
         
         try:
-            perp_quote = ex.get_perp_quote(symbol)
+            perp_quote = ex.get_perp_quote(symbol,is_basic_coll=True)
         except Exception:
             perp_quote = "USD"
         
         try:
             c = await ex.get_collateral()
-            col_val = float(c.get("total_collateral") or 0.0)
+            col_val = float(c.get("available_collateral") or 0.0)
             collateral["perp"][perp_quote] = col_val
             
             self._last_collateral[exchange_name] = col_val
