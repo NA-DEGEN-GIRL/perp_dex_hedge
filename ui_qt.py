@@ -1452,9 +1452,22 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         """
         json_data format:
         {
-            "collateral": {
+            # old"collateral": {
                 "perp": {"USDC": 12.1},  # or None
                 "spot": {"USDT": 10.2, "USDC": 15.0, ...}  # or None
+            },
+            "collateral": {
+                "perp": {"USDC": {
+                    "total":12.1,
+                    "available":10.0
+                }
+                },  # or None
+                "spot": {"USDT": {
+                    "total":10.1,
+                    "available":8.0
+                }, # or None
+                "USDC": {}, ...
+                }  # or None
             },
             "position": {
                 "size": 0.002,
@@ -2972,8 +2985,12 @@ class UiQtApp(QtWidgets.QMainWindow):
                         self.current_price = f"{p:,.2f}"
                         self.header.set_price(self.current_price)
                 
-                # Total Collateral
-                tot = sum(self.collateral.values())
+                # [CHANGED] Total Collateral: 선택된(enabled) 거래소만 합산
+                tot = sum(
+                    self.collateral.get(n, 0.0)
+                    for n in self.mgr.visible_names()
+                    if self.enabled.get(n, False)
+                )
                 self.header.set_total(tot)
             except: pass
             await asyncio.sleep(RATE["GAP_FOR_INF"])
@@ -3065,7 +3082,7 @@ class UiQtApp(QtWidgets.QMainWindow):
                     if need_pos or need_collat or is_ws:
                         try:
                             is_spot = self.market_type_by_ex.get(n, "perp") == "spot"
-                            pos, col, col_val, json_data = await self.service.fetch_status(
+                            pos, col, total_col_val, json_data = await self.service.fetch_status(
                                 n, sym, 
                                 need_balance=need_collat or is_ws, 
                                 need_position=need_pos or is_ws,
@@ -3075,8 +3092,8 @@ class UiQtApp(QtWidgets.QMainWindow):
                             c.set_status_info(json_data)
                             
                             if need_collat or is_ws:
-                                if col_val:
-                                    self.collateral[n] = float(col_val)
+                                if total_col_val: # perp + spot available
+                                    self.collateral[n] = float(total_col_val)
                                 self._last_balance_at[n] = now
                             
                             if need_pos or is_ws:

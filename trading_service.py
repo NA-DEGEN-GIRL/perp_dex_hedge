@@ -316,6 +316,7 @@ class TradingService:
             - collateral_dict: {"perp": {...}, "spot": {...}}
         """
         collateral = {"perp": {}, "spot": {}}
+        total_col_val_incl_spot = 0.0
         
         try:
             perp_quote = ex.get_perp_quote(symbol,is_basic_coll=True)
@@ -324,27 +325,31 @@ class TradingService:
         
         try:
             c = await ex.get_collateral()
-            col_val = float(c.get("available_collateral") or 0.0)
-            collateral["perp"][perp_quote] = col_val
-            
-            self._last_collateral[exchange_name] = col_val
+            total_col_val_perp = float(c.get("total_collateral") or 0.0)
+            available_col_val = float(c.get("available_collateral") or 0.0)
+
+            collateral["perp"][perp_quote] = available_col_val # available 만 출력
+            total_col_val_incl_spot += total_col_val_perp
+            self._last_collateral[exchange_name] = total_col_val_perp
             self._last_balance_at[exchange_name] = time.monotonic()
             
             # spot collateral
             if "spot" in c:
                 spot_map = c.get("spot", {})
-                for i, stable in enumerate(STABLES):
+                for i, stable in enumerate(STABLES): # this is only for hyperliquid..., need ex.STABLES
                     val = float(spot_map.get(stable, 0) or 0.0)
                     stable_display = STABLES_DISPLAY[i]
                     collateral["spot"][stable_display] = val
+                    total_col_val_incl_spot += val
+                    
             
-            return col_val, collateral
+            return total_col_val_perp, collateral, total_col_val_incl_spot
             
         except Exception as e:
             logger.info(f"[{exchange_name}] _fetch_collateral error: {e}")
-            col_val = self._last_collateral.get(exchange_name, 0.0)
-            collateral["perp"][perp_quote] = col_val
-            return col_val, collateral
+            total_col_val_perp = self._last_collateral.get(exchange_name, 0.0)
+            collateral["perp"][perp_quote] = total_col_val_perp
+            return total_col_val_perp, collateral, total_col_val_incl_spot
         
     async def fetch_status(
         self,
@@ -357,7 +362,10 @@ class TradingService:
         """
         - is_spot=True: 선택된 코인의 spot 잔고 조회
         - is_spot=False: 기존 perp 포지션/담보 조회
+        return
+        col_val = total_collateral including spot available values
         """
+        total_col_val_incl_spot = 0.0
         ex = self.manager.get_exchange(exchange_name)
         if not ex:
             default_json = {"position": None, "collateral": {"perp": {}, "spot": {}}}
@@ -379,10 +387,10 @@ class TradingService:
             "coin_balance": None,
         }
         
-        col_val = self._last_collateral.get(exchange_name, 0.0)
+        col_val_perp_available = self._last_collateral.get(exchange_name, 0.0)
         
         if need_balance or is_ws:
-            col_val, json_data["collateral"] = await self._fetch_collateral(exchange_name, ex, symbol)
+            col_val_perp_available, json_data["collateral"], total_col_val_incl_spot = await self._fetch_collateral(exchange_name, ex, symbol)
 
         # === Spot 모드 ===
         if is_spot:
@@ -408,7 +416,7 @@ class TradingService:
                         "total": total,
                     }
                     
-                    result = ("📊 포지션: -", f"💰 {coin_upper}: {total}", col_val, json_data)
+                    result = ("📊 포지션: -", f"💰 {coin_upper}: {total}", col_val_perp_available, json_data)
                     self._last_status[exchange_name] = result
                     return result
                     
@@ -432,9 +440,9 @@ class TradingService:
         if has_spot:
             spot_parts = [f"{v:,.1f} {k}" for k, v in spot_data.items() if v != 0]
             spot_str = ", ".join(spot_parts) if spot_parts else "—"
-            col_str = f"💰 잔고: [red]PERP[/] {col_val:,.1f} {perp_quote} | [cyan]SPOT[/] {spot_str}"
+            col_str = f"💰 잔고: [red]PERP[/] {col_val_perp_available:,.1f} {perp_quote} | [cyan]SPOT[/] {spot_str}"
         else:
-            col_str = f"💰 잔고: {col_val:,.1f} {perp_quote}"
+            col_str = f"💰 잔고: {col_val_perp_available:,.1f} {perp_quote}"
 
         # 포지션 조회
         pos_str = last[0]
@@ -463,7 +471,7 @@ class TradingService:
                 logger.info(f"[{exchange_name}] position fetch error: {e}")
                 print(f"[{exchange_name}] position fetch error: {e}")
 
-        result = (pos_str, col_str, col_val, json_data)
+        result = (pos_str, col_str, total_col_val_incl_spot, json_data)
         self._last_status[exchange_name] = result
         return result
     
