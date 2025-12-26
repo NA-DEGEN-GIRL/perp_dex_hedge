@@ -312,8 +312,10 @@ def _normalize_symbol_input(sym: str) -> str:
     s = sym.strip()
     return s.split(":", 1)[1].upper() if ":" in s else s.upper()
 
-def _compose_symbol(dex: str, coin: str) -> str:
+def _compose_symbol(dex: str, coin: str, is_spot: bool = False) -> str:
     c = (coin or "").upper()
+    if is_spot:
+        return c
     return f"{dex.lower()}:{c}" if dex and dex != "HL" else c
 
 def _strip_bracket_markup(s: str) -> str:
@@ -2658,15 +2660,16 @@ class UiQtApp(QtWidgets.QMainWindow):
             side = self.side[n]
 
             is_hl_like = self.mgr.is_hl_like(n)
+            is_spot = self.market_type_by_ex.get(n, "perp") == "spot"
+
             if is_hl_like:
-                sym = _compose_symbol(self.dex_by_ex[n], self.symbol_by_ex[n])
+                sym = _compose_symbol(self.dex_by_ex[n], self.symbol_by_ex[n], is_spot)
             else:
                 sym = self.symbol_by_ex[n].upper()
 
             if not silent:
                 self._log(f"[{n.upper()}] {side} {qty} {sym} @ {otype}")
-
-            is_spot = self.market_type_by_ex.get(n, "perp") == "spot"
+            
             res = await self.service.execute_order(n, sym, qty, otype, side, price, is_spot=is_spot)
 
             if not silent:
@@ -2731,8 +2734,9 @@ class UiQtApp(QtWidgets.QMainWindow):
                     hint = None
 
                 is_hl_like = self.mgr.is_hl_like(n)
+                is_spot = self.market_type_by_ex.get(n, "perp") == "spot"
                 if is_hl_like:
-                    sym = _compose_symbol(self.dex_by_ex[n], self.symbol_by_ex[n])
+                    sym = _compose_symbol(self.dex_by_ex[n], self.symbol_by_ex[n], is_spot)
                 else:
                     sym = self.symbol_by_ex[n].upper()
 
@@ -3046,10 +3050,11 @@ class UiQtApp(QtWidgets.QMainWindow):
                         continue
                     is_ws = hasattr(ex, "fetch_by_ws") and getattr(ex, "fetch_by_ws", False)
                     is_hl_like = self.mgr.is_hl_like(n)
+                    is_spot = self.market_type_by_ex.get(n, "perp") == "spot"
                     
                     # [수정] 비-HL은 DEX 무시, HL-like만 DEX 적용
                     if is_hl_like:
-                        sym = _compose_symbol(self.dex_by_ex[n], self.symbol_by_ex[n])
+                        sym = _compose_symbol(self.dex_by_ex[n], self.symbol_by_ex[n],is_spot)
                     else:
                         sym = self.symbol_by_ex[n].upper()
 
@@ -3058,7 +3063,6 @@ class UiQtApp(QtWidgets.QMainWindow):
                     # 가격 업데이트
                     if need_price or is_ws:
                         try:
-                            is_spot = self.market_type_by_ex.get(n, "perp") == "spot"
                             p = await self.service.fetch_price(n, sym, is_spot=is_spot)
                             c.set_price_label(p)
                             self._last_price_at[n] = now

@@ -336,7 +336,8 @@ class TradingService:
             # spot collateral
             if "spot" in c:
                 spot_map = c.get("spot", {})
-                for i, stable in enumerate(STABLES): # this is only for hyperliquid..., need ex.STABLES
+                # this is only for hyperliquid..., need ex.STABLES
+                for i, stable in enumerate(STABLES): 
                     val = float(spot_map.get(stable, 0) or 0.0)
                     stable_display = STABLES_DISPLAY[i]
                     collateral["spot"][stable_display] = val
