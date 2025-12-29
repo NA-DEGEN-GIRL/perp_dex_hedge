@@ -457,14 +457,31 @@ def _normalize_symbol_input(sym: str) -> str:
             return coin.upper()
         return s.upper()
 
-def _compose_symbol(dex: str, coin: str) -> str:
+def _compose_symbol(dex: str, coin: str, is_spot: bool = False) -> str:
     """
     dex가 'HL'이면 coin(upper)만, HIP-3이면 'dex:COIN'으로 합성.
+    is_spot=True일 때는 dex를 무시하고 coin만 반환.
     """
     coin_u = (coin or "").upper()
+    if is_spot:
+        return coin_u  # Spot은 DEX 무시
     if dex and dex != "HL":
         return f"{dex.lower()}:{coin_u}"
     return coin_u
+
+def _extract_base_symbol(sym: str) -> str:
+    """심볼에서 base 부분만 추출. 예: "BTC-USDC" → "BTC", "HYPE/USDC" → "HYPE", "dex:BTC" → "BTC" """
+    if not sym:
+        return ""
+    s = sym.strip().upper()
+    # dex: prefix 제거
+    if ":" in s:
+        s = s.split(":")[-1]
+    # 구분자로 분리
+    for sep in ("-", "/", "_"):
+        if sep in s:
+            return s.split(sep)[0]
+    return s
 
 class CustomFrame(urwid.Frame):
     """Tab/Shift+Tab을 앱 핸들러로만 보내고 기본 동작 차단"""
@@ -626,7 +643,36 @@ class UrwidApp:
         # [ADD] 거래소별 초기값(카드 입력값) 상태 저장용
         self.qty_by_ex: Dict[str, str] = {name: "" for name in self.mgr.all_names()}
         self._seeded_side_done: Dict[str, bool] = {name: False for name in self.mgr.all_names()}
-        self.trade_type_by_ex: Dict[str, str] = {name: "perp" for name in self.mgr.all_names()}  # 아직 기능 X, 저장만
+        self.trade_type_by_ex: Dict[str, str] = {name: "perp" for name in self.mgr.all_names()}  # perp/spot 상태
+
+        # [ADD] Perp/Spot 및 Transfer 관련 상태
+        self._has_spot_by_ex: Dict[str, bool] = {name: False for name in self.mgr.all_names()}
+        self._has_transfer_by_ex: Dict[str, bool] = {name: False for name in self.mgr.all_names()}
+        self.perp_collateral_by_ex: Dict[str, Dict[str, float]] = {name: {} for name in self.mgr.all_names()}
+        self.spot_collateral_by_ex: Dict[str, Dict[str, float]] = {name: {} for name in self.mgr.all_names()}
+        self._transfer_direction_by_ex: Dict[str, Optional[str]] = {name: None for name in self.mgr.all_names()}  # "to_perp" or "to_spot"
+
+        # [ADD] Perp/Spot 버튼 위젯
+        self.perp_btn: Dict[str, urwid.Button] = {}
+        self.spot_btn: Dict[str, urwid.Button] = {}
+        self.perp_btn_wrap: Dict[str, urwid.AttrMap] = {}
+        self.spot_btn_wrap: Dict[str, urwid.AttrMap] = {}
+
+        # [ADD] Transfer 위젯
+        self.transfer_to_perp_btn: Dict[str, urwid.Button] = {}
+        self.transfer_to_spot_btn: Dict[str, urwid.Button] = {}
+        self.transfer_to_perp_wrap: Dict[str, urwid.AttrMap] = {}
+        self.transfer_to_spot_wrap: Dict[str, urwid.AttrMap] = {}
+        self.transfer_amount_edit: Dict[str, urwid.Edit] = {}
+        self.transfer_exec_btn: Dict[str, urwid.Button] = {}
+        self.transfer_row_widget: Dict[str, urwid.Widget] = {}
+
+        # [ADD] 심볼 캐시 및 힌트 표시
+        # 형식: {"ex_name": {"perp": {"hl": [...], "xyz": [...]}, "spot": [...]}, ...}
+        self._symbol_cache_by_ex: Dict[str, Dict[str, any]] = {}
+        self.symbol_hint_container: Dict[str, urwid.WidgetPlaceholder] = {}  # 카드별 심볼 힌트 컨테이너
+        self._symbol_hint_matches: Dict[str, List[str]] = {}  # 카드별 현재 힌트 매칭 목록
+        self._focused_ticker_card: Optional[str] = None  # 현재 포커스된 ticker의 카드 이름
 
         # CHANGED: 그룹 전환 중(change 시그널에 의한 전파 방지) 플래그
         self._switching_group: bool = False
@@ -882,6 +928,7 @@ class UrwidApp:
         """
         HL-like 카드에서 현재 DEX/주문타입에 맞는 feeInt를 표시.
         비‑HL은 표기하지 않음.
+        Spot 모드일 때는 is_spot=True로 전달.
         """
 
         try:
@@ -891,7 +938,8 @@ class UrwidApp:
             dex = self.dex_by_ex.get(name, "HL")
             dex_key = None if dex == "HL" else dex.lower()
             order_type = (self.order_type.get(name) or "market").lower()
-            fee = self.service.get_display_builder_fee(name, dex_key, order_type)
+            is_spot = self.trade_type_by_ex.get(name, "perp") == "spot"  # [ADD]
+            fee = self.service.get_display_builder_fee(name, dex_key, order_type, is_spot)
             lbl = f"Builder Fee: {fee}" if isinstance(fee, int) else "Builder Fee: -"
             w = self.fee_text.get(name)
             if w:
@@ -965,6 +1013,144 @@ class UrwidApp:
 
         # 3) 결합: ' | ' 구분자 뒤에 collateral 파트 연결
         return pos_parts + [(None, "\n")] + col_parts
+
+    def _format_size(self, value: float) -> str:
+        """사이즈 포맷팅 - 값 크기에 따라 적절한 소수점 자릿수 사용"""
+        abs_val = abs(value)
+        if abs_val == 0:
+            return "0"
+        elif abs_val >= 10:
+            result = f"{value:,.2f}"
+        elif abs_val >= 1:
+            result = f"{value:,.3f}"
+        elif abs_val >= 0.1:
+            result = f"{value:,.4f}"
+        elif abs_val >= 0.01:
+            result = f"{value:,.5f}"
+        else:
+            result = f"{value:,.6f}"
+
+        if '.' in result:
+            result = result.rstrip('0').rstrip('.')
+        return result
+
+    def _format_collateral(self, value: float) -> str:
+        """잔고 포맷팅 - 소수점 1자리"""
+        return f"{value:,.1f}"
+
+    def _format_status_info(self, ex_name: str, json_data: dict) -> list:
+        """
+        json_data를 urwid 마크업 리스트로 변환 (ui_qt.py의 set_status_info와 동일한 로직).
+
+        json_data format:
+        {
+            "collateral": {
+                "perp": {"USDC": 12.1, ...},
+                "spot": {"USDT": 10.2, "USDC": 15.0, ...}
+            },
+            "position": {
+                "size": 0.002,
+                "side": "short",
+                "unrealized_pnl": 1.2
+            },
+            "coin_balance": {  # Spot일 때만
+                "coin": "HYPE",
+                "available": 90.0,
+                "total": 100.0
+            }
+        }
+        """
+        if not json_data:
+            return [("info", "📊 Position: N/A | 💰 Collateral: N/A")]
+
+        parts = []
+        price = self.card_last_price.get(ex_name)
+
+        # === Spot 모드: coin_balance 처리 ===
+        coin_balance = json_data.get("coin_balance")
+        if coin_balance:
+            coin = coin_balance.get("coin", "")
+            total = coin_balance.get("total", 0)
+            available = coin_balance.get("available", 0)
+
+            # 코인 잔고 표시
+            parts.append(("info", "📊 "))
+            parts.append(("collateral_coin", f"{self._format_size(total)} {coin}"))
+
+            # USD 가치
+            if price and price > 0:
+                usd_value = total * price
+                parts.append(("info", f" (≈{usd_value:,.1f}$)"))
+
+            # 주문가능 수량 (total != available일 때)
+            if total != available and total > 0:
+                parts.append(("info", f" [주문가능: {self._format_size(available)}]"))
+
+        else:
+            # === Perp 모드: position 처리 ===
+            position = json_data.get("position")
+            if position and position.get("size", 0) != 0:
+                side = position.get("side", "").upper()
+                size = abs(position.get("size", 0))
+                pnl = position.get("unrealized_pnl", 0)
+
+                parts.append(("info", "📊 "))
+
+                # 방향 표시
+                if side == "LONG":
+                    parts.append(("long_col", "LONG"))
+                elif side == "SHORT":
+                    parts.append(("short_col", "SHORT"))
+
+                # 사이즈 표시
+                parts.append(("info", f" {self._format_size(size)}"))
+
+                # USD 가치
+                if price and price > 0:
+                    usd_value = size * price
+                    parts.append(("info", f" ({usd_value:,.1f}$)"))
+
+                # PnL 표시
+                parts.append(("info", " | PnL: "))
+                pnl_sign = "+" if pnl >= 0 else ""
+                pnl_attr = "pnl_pos" if pnl >= 0 else "pnl_neg"
+                parts.append((pnl_attr, f"{pnl_sign}{pnl:,.1f}"))
+            else:
+                parts.append(("info", "📊 No Position"))
+
+        # === Collateral 처리 ===
+        collateral = json_data.get("collateral", {})
+        perp_col = collateral.get("perp", {})
+        spot_col = collateral.get("spot", {})
+
+        parts.append(("info", "\n💰 "))
+
+        # Perp collateral
+        if perp_col:
+            perp_parts = []
+            for coin, val in perp_col.items():
+                if val and val != 0:
+                    perp_parts.append(f"{self._format_collateral(val)} {coin}")
+            if perp_parts:
+                parts.append(("info", "Perp: "))
+                parts.append(("collateral_coin", " | ".join(perp_parts)))
+
+        # Spot collateral
+        if spot_col:
+            spot_parts = []
+            for coin, val in spot_col.items():
+                if val and val != 0:
+                    spot_parts.append(f"{self._format_collateral(val)} {coin}")
+            if spot_parts:
+                if perp_col:
+                    parts.append(("info", " | "))
+                parts.append(("info", "Spot: "))
+                parts.append(("spot_collateral", " | ".join(spot_parts)))
+
+        if not perp_col and not spot_col:
+            parts.append(("info", "N/A"))
+
+        return parts
 
     def _inject_usdc_value_into_pos(self, ex_name: str, pos_str: str) -> str:
         """
@@ -1122,11 +1308,19 @@ class UrwidApp:
     def _update_card_dex_styles(self, name: str):
         """
         카드의 dex 버튼 스타일을 현재 self.dex_by_ex[name]에 맞게 갱신.
+        Spot 모드일 때는 비활성화 스타일 적용.
         """
         cur = self.dex_by_ex.get(name, "HL")
         row_btns = self.dex_btns_by_ex.get(name, {})
+        is_spot = self.trade_type_by_ex.get(name, "perp") == "spot"
+
         for d, w in row_btns.items():
-            w.set_attr_map({None: "btn_dex_on" if d == cur else "btn_dex"})
+            if is_spot:
+                # Spot 모드: 모든 DEX 버튼 비활성화 스타일
+                w.set_attr_map({None: "btn_dex_disabled"})
+            else:
+                # Perp 모드: 선택된 DEX만 활성화
+                w.set_attr_map({None: "btn_dex_on" if d == cur else "btn_dex"})
 
     def _build_card_dex_row(self, name: str) -> urwid.Widget:
         """
@@ -1165,7 +1359,12 @@ class UrwidApp:
     def _on_card_dex_select(self, name: str, dex: str):
         """
         해당 카드만 dex 설정을 변경.
+        Spot 모드일 때는 무시.
         """
+        # Spot 모드일 때는 DEX 선택 무시
+        if self.trade_type_by_ex.get(name, "perp") == "spot":
+            return
+
         self.dex_by_ex[name] = dex
         self._update_card_dex_styles(name)
         self._update_card_fee(name)
@@ -1619,11 +1818,15 @@ class UrwidApp:
             self.qty_by_ex[n] = (new or "").strip()
         urwid.connect_signal(qty.base_widget, "change", on_qty_changed)
 
-        # [CHANGED] T: change 시에는 로컬 캐시만 업데이트 (symbol_by_ex 확정 X)
+        # [ADD] 심볼 힌트 컨테이너 생성 (클릭 가능한 버튼으로 동적 변경)
+        hint_placeholder = urwid.WidgetPlaceholder(urwid.Text(""))
+        self.symbol_hint_container[name] = hint_placeholder
+
+        # [CHANGED] T: change 시에는 로컬 캐시만 업데이트 + 힌트 표시
         def on_card_ticker_cache_only(edit, new, n=name):
-            # 입력 중에는 아무것도 하지 않음 (또는 로컬 임시 변수에만 저장)
-            # symbol_by_ex에 반영하지 않음 → status_loop가 중간값을 읽지 않음
-            pass
+            # 입력 중에는 symbol_by_ex에 반영하지 않음 → status_loop가 중간값을 읽지 않음
+            # 단, 힌트는 업데이트
+            self._update_symbol_hint(n, new or "")
 
         # [CHANGED] T: confirm(Enter/포커스이탈) 시에만 symbol_by_ex에 확정 반영
         def on_card_ticker_confirm(edit, new, n=name):
@@ -1684,6 +1887,38 @@ class UrwidApp:
         self.off_btn[name],   self.off_btn_wrap[name]    = off_b,   off_wrap
         self.ex_btn[name],    self.ex_btn_wrap[name]     = ex_b,    ex_wrap
 
+        # [ADD] Perp/Spot 버튼
+        def on_perp(btn, n=name):
+            self.trade_type_by_ex[n] = "perp"
+            self._refresh_perp_spot_style(n)
+            self._update_card_dex_styles(n)  # [ADD] DEX 버튼 활성화
+            self._update_card_fee(n)  # [ADD] Fee 업데이트
+            self._clear_position_display(n)
+            self._apply_auto_symbol(n, "perp")  # 자동 심볼 선택
+        def on_spot(btn, n=name):
+            if not self._has_spot_by_ex.get(n, False):
+                return  # spot 미지원 시 무시
+            self.trade_type_by_ex[n] = "spot"
+            self._refresh_perp_spot_style(n)
+            self._update_card_dex_styles(n)  # [ADD] DEX 버튼 비활성화
+            self._update_card_fee(n)  # [ADD] Fee 업데이트
+            self._clear_position_display(n)
+            self._apply_auto_symbol(n, "spot")  # 자동 심볼 선택
+
+        perp_b = urwid.Button("Perp", on_press=on_perp)
+        spot_b = urwid.Button("Spot", on_press=on_spot)
+
+        # 초기 상태에 따른 스타일
+        init_trade_type = self.trade_type_by_ex.get(name, "perp")
+        perp_style = "btn_perp_on" if init_trade_type == "perp" else "btn_perp"
+        spot_style = "btn_spot_on" if init_trade_type == "spot" else "btn_spot"
+
+        perp_wrap = urwid.AttrMap(perp_b, perp_style, "btn_focus")
+        spot_wrap = urwid.AttrMap(spot_b, spot_style, "btn_focus")
+
+        self.perp_btn[name], self.perp_btn_wrap[name] = perp_b, perp_wrap
+        self.spot_btn[name], self.spot_btn_wrap[name] = spot_b, spot_wrap
+
         # 상태
         info = urwid.Text(("info", "📊 Position: N/A | 💰 Collateral: N/A"))
         self.info_text[name] = info
@@ -1700,6 +1935,8 @@ class UrwidApp:
                 (14, price),
                 (8,  g_edit),
                 (7,  type_wrap),
+                (5,  perp_wrap),  # [ADD] Perp
+                (5,  spot_wrap),  # [ADD] Spot
                 (5,  long_wrap),
                 (5,  short_wrap),
                 (7,  off_wrap),
@@ -1712,6 +1949,9 @@ class UrwidApp:
         price_line = urwid.Text(("info", "Price: ..."))
         self.card_price_text[name] = price_line
 
+        # [ADD] Transfer 행 생성
+        transfer_row = self._build_transfer_row(name)
+
         if is_hl_like:
             quote_line = urwid.Text(("quote_color", ""))
             self.card_quote_text[name] = quote_line
@@ -1723,15 +1963,18 @@ class UrwidApp:
                 ],
                 dividechars=1,
             )
-            card = urwid.Pile([controls, price_and_dex, info])
+            card = urwid.Pile([controls, hint_placeholder, price_and_dex, info, transfer_row])
         else:
-            card = urwid.Pile([controls, price_line, info])
+            card = urwid.Pile([controls, hint_placeholder, price_line, info, transfer_row])
 
         # 초기 FEE 표기 1회 갱신(해당 카드가 HL-like일 경우)
         if is_hl_like:
             self._update_card_fee(name)
 
         self._refresh_side(name)
+
+        # [ADD] 초기 Spot 지원 여부에 따라 스타일 설정
+        self._refresh_perp_spot_style(name)
 
         return card
 
@@ -1776,6 +2019,343 @@ class UrwidApp:
             long_wrap.set_attr_map({None: "btn_long"})
             short_wrap.set_attr_map({None: "btn_short"})
             off_wrap.set_attr_map({None: "btn_off"})
+
+    # [ADD] Perp/Spot 버튼 스타일 갱신
+    def _refresh_perp_spot_style(self, name: str):
+        """Perp/Spot 버튼 스타일 반영"""
+        perp_wrap = self.perp_btn_wrap.get(name)
+        spot_wrap = self.spot_btn_wrap.get(name)
+        if not perp_wrap or not spot_wrap:
+            return
+
+        trade_type = self.trade_type_by_ex.get(name, "perp")
+        has_spot = self._has_spot_by_ex.get(name, False)
+
+        if trade_type == "perp":
+            perp_wrap.set_attr_map({None: "btn_perp_on"})
+            spot_wrap.set_attr_map({None: "btn_spot" if has_spot else "btn_spot_disabled"})
+        else:
+            perp_wrap.set_attr_map({None: "btn_perp"})
+            spot_wrap.set_attr_map({None: "btn_spot_on"})
+
+    # [ADD] 포지션 표시 초기화
+    def _clear_position_display(self, name: str):
+        """포지션 표시 초기화 (Perp/Spot 전환 시)"""
+        info_text = self.info_text.get(name)
+        if info_text:
+            info_text.set_text(("info", "📊 Position: loading... | 💰 Collateral: ..."))
+        self._request_redraw()
+
+    # [ADD] 심볼 자동 선택
+    def _auto_select_symbol(self, name: str, symbols: list) -> str | None:
+        """
+        심볼 목록에서 자동 선택.
+        1. 현재 심볼이 목록에 있으면 유지
+        2. 없으면 BTC → ETH 순서로 검색
+        3. 둘 다 없으면 첫 번째 선택
+        """
+        if not symbols:
+            return None
+
+        # 현재 심볼에서 base 부분만 추출
+        ticker_edit = self.ticker_edit_by_ex.get(name)
+        current_raw = ticker_edit.get_edit_text().strip().upper() if ticker_edit else ""
+        current = _extract_base_symbol(current_raw)
+
+        def find_match(target: str) -> str | None:
+            """target에 대해 exact 매칭 우선, contains 매칭 fallback"""
+            if not target:
+                return None
+            contains_match = None
+            for sym in symbols:
+                sym_base = _extract_base_symbol(sym.upper())
+                if sym_base == target:
+                    return sym  # exact 매칭 즉시 반환
+                if contains_match is None and target in sym_base:
+                    contains_match = sym  # 첫 번째 contains 매칭 저장
+            return contains_match
+
+        # 1. 현재 심볼 검색
+        result = find_match(current)
+        if result:
+            return result
+
+        # 2. BTC → ETH 순서로 검색
+        for base in ["BTC", "ETH"]:
+            result = find_match(base)
+            if result:
+                return result
+
+        # 3. 첫 번째 선택
+        return symbols[0]
+
+    # [ADD] 심볼 캐시에서 심볼 목록 가져오기
+    def _get_symbols_for_mode(self, name: str, mode: str) -> list:
+        """
+        해당 거래소의 mode(perp/spot)에 맞는 심볼 목록 반환.
+        캐시 형식:
+            HL-like:  {"perp": {"hl": [...], "xyz": [...]}, "spot": [...]}
+            비-HL:    {"perp": [...], "spot": [...]}
+        """
+        cache = self._symbol_cache_by_ex.get(name, {})
+        if not cache:
+            return []
+
+        if mode == "spot":
+            spot_data = cache.get("spot")
+            if spot_data and isinstance(spot_data, list):
+                return spot_data
+            return []
+
+        # perp 모드
+        perp_data = cache.get("perp", {})
+
+        if self.mgr.is_hl_like(name):
+            # HL-like: perp는 dict {"hl": [...], "xyz": [...], ...}
+            if isinstance(perp_data, dict):
+                dex = self.dex_by_ex.get(name, "HL")
+                dex_key = dex.lower() if dex and dex != "HL" else "hl"
+                symbols = perp_data.get(dex_key, [])
+                # 해당 DEX 목록 없으면 HL 기본 목록 사용
+                if not symbols:
+                    symbols = perp_data.get("hl", [])
+                return symbols
+            return []
+        else:
+            # 비-HL: perp는 단순 리스트
+            if isinstance(perp_data, list):
+                return perp_data
+            return []
+
+    # [ADD] Perp/Spot 전환 시 심볼 자동 선택 적용
+    def _apply_auto_symbol(self, name: str, mode: str):
+        """mode 전환 시 적절한 심볼 자동 선택 및 설정"""
+        symbols = self._get_symbols_for_mode(name, mode)
+        if not symbols:
+            return
+
+        selected = self._auto_select_symbol(name, symbols)
+        if selected:
+            ticker_edit = self.ticker_edit_by_ex.get(name)
+            if ticker_edit:
+                ticker_edit.set_edit_text(selected)
+
+    # [ADD] 심볼 힌트 업데이트 (클릭 가능한 버튼으로 표시)
+    def _update_symbol_hint(self, name: str, input_text: str):
+        """
+        입력된 텍스트를 기반으로 매칭되는 심볼 목록을 클릭 가능한 버튼으로 표시.
+        최대 5개까지 표시.
+        """
+        hint_container = self.symbol_hint_container.get(name)
+        if not hint_container:
+            return
+
+        if not input_text or not input_text.strip():
+            hint_container.original_widget = urwid.Text("")
+            self._symbol_hint_matches[name] = []
+            return
+
+        # 현재 모드에 맞는 심볼 목록
+        mode = self.trade_type_by_ex.get(name, "perp")
+        symbols = self._get_symbols_for_mode(name, mode)
+        if not symbols:
+            hint_container.original_widget = urwid.Text(("hint", "No symbols available"))
+            self._symbol_hint_matches[name] = []
+            return
+
+        query = input_text.strip().upper()
+        matches = []
+
+        # exact 매칭 우선, 부분 매칭 포함
+        for sym in symbols:
+            sym_base = _extract_base_symbol(sym.upper())
+            if sym_base == query:
+                matches.insert(0, sym)  # exact 매칭은 앞으로
+            elif query in sym.upper():
+                if len(matches) < 5:
+                    matches.append(sym)
+
+        # 매칭 결과 저장 (선택용)
+        self._symbol_hint_matches[name] = matches[:5]
+
+        if matches:
+            # 클릭 가능한 버튼들 생성
+            buttons = []
+            for i, sym in enumerate(matches[:5]):
+                def on_hint_click(btn, n=name, idx=i):
+                    self._select_symbol_hint(n, idx)
+                btn = urwid.Button(sym, on_press=on_hint_click)
+                btn_wrap = urwid.AttrMap(btn, "btn_hint", "btn_hint_focus")
+                buttons.append(('pack', btn_wrap))
+
+            # 💡 아이콘 + 버튼들
+            hint_row = urwid.Columns(
+                [('pack', urwid.Text(("hint", "  💡 ")))] + buttons,
+                dividechars=1
+            )
+            hint_container.original_widget = hint_row
+        else:
+            hint_container.original_widget = urwid.Text(("hint", "  ❓ No match"))
+            self._symbol_hint_matches[name] = []
+
+    # [ADD] 힌트에서 심볼 선택
+    def _select_symbol_hint(self, name: str, index: int) -> bool:
+        """
+        힌트 목록에서 index 번째(0-based) 심볼을 선택.
+        - Perp 모드: base 심볼만 추출 (BTC-USDC → BTC)
+        - Spot 모드: 그대로 사용 (HYPE/USDC → HYPE/USDC)
+        Returns: True if selected, False otherwise
+        """
+        matches = self._symbol_hint_matches.get(name, [])
+        if 0 <= index < len(matches):
+            selected = matches[index]
+            ticker_edit = self.ticker_edit_by_ex.get(name)
+            if ticker_edit:
+                # Perp 모드: base만 추출, Spot 모드: 그대로
+                is_spot = self.trade_type_by_ex.get(name, "perp") == "spot"
+                if is_spot:
+                    display_symbol = selected
+                else:
+                    display_symbol = _extract_base_symbol(selected)
+
+                ticker_edit.set_edit_text(display_symbol)
+                self.symbol_by_ex[name] = _normalize_symbol_input(display_symbol)
+                # 힌트 클리어
+                hint_container = self.symbol_hint_container.get(name)
+                if hint_container:
+                    hint_container.original_widget = urwid.Text("")
+                self._symbol_hint_matches[name] = []
+                return True
+        return False
+
+    # [ADD] 심볼 캐시 새로고침
+    async def _refresh_symbol_cache(self):
+        """
+        모든 거래소에서 심볼 목록을 가져와 캐시 업데이트.
+        각 거래소의 get_available_symbols() 반환 형식:
+            HL-like:  {"perp": {"hl": [...], "xyz": [...]}, "spot": [...] or None}
+            비-HL:    {"perp": [...], "spot": [...] or None}
+        """
+        for name in self.mgr.all_names():
+            try:
+                ex = self.mgr.get_exchange(name)
+                if not ex:
+                    continue
+
+                if hasattr(ex, "get_available_symbols"):
+                    data = await ex.get_available_symbols()
+                    if data:
+                        self._symbol_cache_by_ex[name] = data
+            except Exception as e:
+                logger.debug(f"[UI] Symbol cache refresh failed for {name}: {e}")
+
+    # [ADD] Transfer 행 빌드
+    def _build_transfer_row(self, name: str) -> urwid.Widget:
+        """Transfer 행 생성 (◀ 수량 ▶ [전송] 또는 숨김)"""
+
+        # Transfer 방향 버튼 (◀: Spot→Perp, ▶: Perp→Spot)
+        def on_to_perp(btn, n=name):
+            cur = self._transfer_direction_by_ex.get(n)
+            if cur == "to_perp":
+                self._transfer_direction_by_ex[n] = None
+            else:
+                self._transfer_direction_by_ex[n] = "to_perp"
+            self._refresh_transfer_style(n)
+
+        def on_to_spot(btn, n=name):
+            cur = self._transfer_direction_by_ex.get(n)
+            if cur == "to_spot":
+                self._transfer_direction_by_ex[n] = None
+            else:
+                self._transfer_direction_by_ex[n] = "to_spot"
+            self._refresh_transfer_style(n)
+
+        to_perp_b = urwid.Button("◀", on_press=on_to_perp)
+        to_spot_b = urwid.Button("▶", on_press=on_to_spot)
+
+        to_perp_wrap = urwid.AttrMap(to_perp_b, "btn_transfer", "btn_focus")
+        to_spot_wrap = urwid.AttrMap(to_spot_b, "btn_transfer", "btn_focus")
+
+        self.transfer_to_perp_btn[name] = to_perp_b
+        self.transfer_to_spot_btn[name] = to_spot_b
+        self.transfer_to_perp_wrap[name] = to_perp_wrap
+        self.transfer_to_spot_wrap[name] = to_spot_wrap
+
+        # 수량 입력
+        amount_edit = urwid.Edit(("label", "Amt:"), "")
+        self.transfer_amount_edit[name] = amount_edit
+
+        # MAX 버튼
+        def on_max(btn, n=name):
+            direction = self._transfer_direction_by_ex.get(n)
+            if direction == "to_perp":
+                # Spot → Perp: spot의 해당 코인 잔고
+                spot_col = self.spot_collateral_by_ex.get(n, {})
+                # 첫 번째 perp collateral 코인과 같은 코인 찾기
+                perp_col = self.perp_collateral_by_ex.get(n, {})
+                coin = list(perp_col.keys())[0] if perp_col else "USDC"
+                max_val = spot_col.get(coin, 0)
+            elif direction == "to_spot":
+                # Perp → Spot: perp collateral 잔고
+                perp_col = self.perp_collateral_by_ex.get(n, {})
+                max_val = sum(perp_col.values()) if perp_col else 0
+            else:
+                return
+            # 소수점 1자리까지 버림
+            truncated = int(max_val * 10) / 10.0
+            self.transfer_amount_edit[n].set_edit_text(f"{truncated:.1f}")
+
+        max_btn = urwid.Button("MAX", on_press=on_max)
+        max_wrap = urwid.AttrMap(max_btn, "btn_type", "btn_focus")
+
+        # 전송 실행 버튼
+        def on_exec_transfer(btn, n=name):
+            asyncio.get_event_loop().create_task(self._do_transfer(n))
+
+        exec_btn = urwid.Button("전송", on_press=on_exec_transfer)
+        exec_wrap = urwid.AttrMap(exec_btn, "btn_transfer_exec", "btn_focus")
+        self.transfer_exec_btn[name] = exec_btn
+
+        # 행 레이아웃
+        row = urwid.Columns(
+            [
+                (5, to_perp_wrap),
+                (14, urwid.AttrMap(amount_edit, "edit", "edit_focus")),
+                (7, max_wrap),
+                (5, to_spot_wrap),
+                (8, exec_wrap),
+                ('weight', 1, urwid.Text("")),  # 빈 공간
+            ],
+            dividechars=1,
+        )
+
+        self.transfer_row_widget[name] = row
+
+        # 초기에는 숨김 (transfer 미지원 시)
+        # Pile에서 제거하는 대신 빈 위젯으로 대체하거나, 아예 안 보이게
+        # 여기서는 일단 row를 반환하고, 나중에 has_transfer에 따라 visibility 처리
+
+        return row
+
+    # [ADD] Transfer 스타일 갱신
+    def _refresh_transfer_style(self, name: str):
+        """Transfer 방향 버튼 스타일 갱신"""
+        to_perp_wrap = self.transfer_to_perp_wrap.get(name)
+        to_spot_wrap = self.transfer_to_spot_wrap.get(name)
+        if not to_perp_wrap or not to_spot_wrap:
+            return
+
+        direction = self._transfer_direction_by_ex.get(name)
+        if direction == "to_perp":
+            to_perp_wrap.set_attr_map({None: "btn_transfer_on"})
+            to_spot_wrap.set_attr_map({None: "btn_transfer"})
+        elif direction == "to_spot":
+            to_perp_wrap.set_attr_map({None: "btn_transfer"})
+            to_spot_wrap.set_attr_map({None: "btn_transfer_on"})
+        else:
+            to_perp_wrap.set_attr_map({None: "btn_transfer"})
+            to_spot_wrap.set_attr_map({None: "btn_transfer"})
+        self._request_redraw()
 
     # --------- Exchanges 토글 박스 (GridFlow로 가로 나열) ----------
     def _build_switcher(self):
@@ -2049,9 +2629,10 @@ class UrwidApp:
 
                 sym_coin = _normalize_symbol_input(self.symbol_by_ex.get(name) or self.symbol)
                 dex = self.dex_by_ex.get(name, "HL")
-                sym = _compose_symbol(dex, sym_coin)
                 is_hl_like = self.mgr.is_hl_like(name)  # <-- 변경
-                
+                is_spot = self.trade_type_by_ex.get(name, "perp") == "spot"  # [ADD]
+                sym = _compose_symbol(dex, sym_coin, is_spot=is_spot)  # [CHANGED] Spot일 때 DEX 무시
+
                 ex = self.mgr.get_exchange(name)
                 is_ws = hasattr(ex,"fetch_by_ws") and getattr(ex, "fetch_by_ws",False)
 
@@ -2084,12 +2665,20 @@ class UrwidApp:
                         self.card_price_text[name].set_text(("pnl_neg", "Price: Error???"))
 
                 if (need_pos or need_collat or is_ws):
-                    pos_str, col_str, col_val, _ = await self.service.fetch_status(
+                    pos_str, col_str, col_val, json_data = await self.service.fetch_status(
                         name,
                         sym,
                         need_balance=need_collat or is_ws,
                         need_position=need_pos or is_ws,
+                        is_spot=is_spot,  # [ADD]
                     )
+
+                    # [ADD] collateral 정보 저장 (Transfer용)
+                    if json_data and "collateral" in json_data:
+                        perp_col = json_data["collateral"].get("perp", {})
+                        spot_col = json_data["collateral"].get("spot", {})
+                        self.perp_collateral_by_ex[name] = perp_col
+                        self.spot_collateral_by_ex[name] = spot_col
                 else:
                     # CHANGED: 아무 것도 갱신하지 않을 때는 요청 자체를 안 보냄
                     # (필요하면 이전 표시값을 유지하거나 그냥 continue 해도 됨)
@@ -2100,14 +2689,13 @@ class UrwidApp:
                     self.collateral[name] = float(col_val)
                     self._last_balance_at[name] = now
                     self.total_text.set_text(("info", f"Total: {self._collateral_sum():,.1f} USDC"))
-                
+
                 if need_pos:
                     self._last_pos_at[name] = now
 
-                pos_str = self._inject_usdc_value_into_pos(name, pos_str)
-
-                if name in self.info_text:
-                    markup_parts = self._status_bracket_to_urwid(pos_str, col_str)
+                # [CHANGED] json_data 기반으로 상태 표시 (ui_qt.py와 동일한 로직)
+                if name in self.info_text and json_data:
+                    markup_parts = self._format_status_info(name, json_data)
                     self.info_text[name].set_text(markup_parts)
                 
                 self._request_redraw()
@@ -2257,6 +2845,68 @@ class UrwidApp:
     def _on_quit(self, btn):
         raise urwid.ExitMainLoop()
 
+    # --------- Transfer 실행 ----------
+    async def _do_transfer(self, name: str):
+        """Collateral 전송 실행"""
+        direction = self._transfer_direction_by_ex.get(name)
+        if not direction:
+            self._log(f"[{name.upper()}] 전송 방향을 선택하세요 (◀ 또는 ▶)")
+            return
+
+        amount_str = (self.transfer_amount_edit.get(name).edit_text or "").strip() if name in self.transfer_amount_edit else ""
+        if not amount_str:
+            self._log(f"[{name.upper()}] 전송 수량을 입력하세요")
+            return
+
+        try:
+            amount = float(amount_str)
+            if amount <= 0:
+                self._log(f"[{name.upper()}] 전송 수량은 0보다 커야 합니다")
+                return
+        except ValueError:
+            self._log(f"[{name.upper()}] 올바른 수량을 입력하세요")
+            return
+
+        # perp collateral 코인 결정
+        perp_col = self.perp_collateral_by_ex.get(name, {})
+        coin = list(perp_col.keys())[0] if perp_col else "USDC"
+
+        self._log(f"[{name.upper()}] 전송 시작: {direction} {amount} {coin}")
+
+        try:
+            ex = self.mgr.get_exchange(name)
+            if not ex:
+                self._log(f"[{name.upper()}] 거래소 없음")
+                return
+
+            if direction == "to_perp":
+                if hasattr(ex, "transfer_to_perp"):
+                    result = await ex.transfer_to_perp(amount)
+                    status = result.get('status', 'error') if isinstance(result, dict) else 'error'
+                    if status == 'ok':
+                        self._log(f"[{name.upper()}] Spot → Perp 전송 완료: {amount} {coin}")
+                    else:
+                        self._log(f"[{name.upper()}] Spot → Perp 에러: {str(result)}")
+                else:
+                    self._log(f"[{name.upper()}] transfer_to_perp 미지원")
+            elif direction == "to_spot":
+                if hasattr(ex, "transfer_to_spot"):
+                    result = await ex.transfer_to_spot(amount)
+                    status = result.get('status', 'error') if isinstance(result, dict) else 'error'
+                    if status == 'ok':
+                        self._log(f"[{name.upper()}] Perp → Spot 전송 완료: {amount} {coin}")
+                    else:
+                        self._log(f"[{name.upper()}] Perp → Spot 에러: {str(result)}")
+                else:
+                    self._log(f"[{name.upper()}] transfer_to_spot 미지원")
+            else:
+                self._log(f"[{name.upper()}] 알 수 없는 방향: {direction}")
+
+        except Exception as e:
+            self._log(f"[{name.upper()}] 전송 실패: {e}")
+
+        self._request_redraw()
+
     # --------- 주문 실행 ----------
     async def _exec_one(self, name: str, g: int):
         # CHANGED: 그룹 cancel 기준으로 즉시 중단
@@ -2303,9 +2953,10 @@ class UrwidApp:
 
                 sym_coin = _normalize_symbol_input(self.symbol_by_ex.get(name) or self.symbol)
                 dex = self.dex_by_ex.get(name, self.header_dex)
-                sym = _compose_symbol(dex, sym_coin)
+                is_spot = self.trade_type_by_ex.get(name, "perp") == "spot"  # [ADD]
+                sym = _compose_symbol(dex, sym_coin, is_spot=is_spot)  # [CHANGED] Spot일 때 DEX 무시
 
-                self._log(f"[G{g}] [{name.upper()}] {side.upper()} {amount} {sym} @ {otype}")
+                self._log(f"[G{g}] [{name.upper()}] {side.upper()} {amount} {sym} @ {otype} {'(SPOT)' if is_spot else ''}")
 
                 order = await self.service.execute_order(
                     exchange_name=name,
@@ -2314,6 +2965,7 @@ class UrwidApp:
                     order_type=otype,
                     side=side,
                     price=price,
+                    is_spot=is_spot,  # [ADD]
                 )
                 self._log(f"[G{g}] [{name.upper()}] 주문 성공: #{order['id']}")
                 break
@@ -3027,9 +3679,103 @@ class UrwidApp:
                     return True
             return None
 
+        # [ADD] Alt+1~5 / Ctrl+1~5 / 1~5: 힌트 선택 (body 영역에서만)
+        hint_keys = {
+            'meta 1', 'meta 2', 'meta 3', 'meta 4', 'meta 5',
+            'alt 1', 'alt 2', 'alt 3', 'alt 4', 'alt 5',
+            'ctrl 1', 'ctrl 2', 'ctrl 3', 'ctrl 4', 'ctrl 5',
+        }
+        plain_number_keys = {'1', '2', '3', '4', '5'}
+
+        if part == 'body':
+            hint_index = None
+
+            # Alt+N, Ctrl+N 처리
+            if k in hint_keys:
+                hint_index = int(k[-1]) - 1
+            # 단순 숫자키 처리 (ticker edit에 포커스가 없을 때만)
+            elif k in plain_number_keys:
+                focused_card = self._get_focused_card_name()
+                if focused_card:
+                    ticker_edit = self.ticker_edit_by_ex.get(focused_card)
+                    # ticker edit에 포커스가 없는 경우에만 숫자키로 힌트 선택
+                    if ticker_edit and not self._is_widget_focused(ticker_edit):
+                        hint_index = int(k) - 1
+
+            if hint_index is not None:
+                try:
+                    focused_card = self._get_focused_card_name()
+                    if focused_card and self._select_symbol_hint(focused_card, hint_index):
+                        self._request_redraw()
+                        return True
+                except Exception:
+                    pass
+
         # 그 외는 urwid 기본 동작에 맡김
         return None
-    
+
+    def _get_focused_card_name(self) -> Optional[str]:
+        """현재 body에서 포커스된 카드의 이름 반환"""
+        try:
+            focus_widget = self.body_list.focus
+            if focus_widget:
+                # LineBox 안의 카드 찾기
+                for name, card in self.cards.items():
+                    # cards[name]이 focus_widget이거나 LineBox로 감싸져 있는지 확인
+                    if card is focus_widget:
+                        return name
+                    if isinstance(focus_widget, urwid.LineBox):
+                        if focus_widget.original_widget is card:
+                            return name
+                    # AttrMap으로 감싸진 경우
+                    if isinstance(focus_widget, urwid.AttrMap):
+                        inner = focus_widget.original_widget
+                        if isinstance(inner, urwid.LineBox):
+                            if inner.original_widget is card:
+                                return name
+        except Exception:
+            pass
+        return None
+
+    def _is_widget_focused(self, target_widget) -> bool:
+        """특정 위젯이 현재 포커스를 가지고 있는지 확인"""
+        try:
+            # 현재 포커스된 카드 찾기
+            focused_card = self._get_focused_card_name()
+            if not focused_card:
+                return False
+
+            card = self.cards.get(focused_card)
+            if not card:
+                return False
+
+            # 카드 내부의 포커스 체인을 따라가며 target_widget 확인
+            def check_focus_chain(widget):
+                if widget is target_widget:
+                    return True
+                # Container 위젯인 경우 focus 따라가기
+                if hasattr(widget, 'focus'):
+                    focus = widget.focus
+                    if focus is target_widget:
+                        return True
+                    if focus and hasattr(focus, 'focus'):
+                        return check_focus_chain(focus)
+                # Pile, Columns 등의 경우
+                if hasattr(widget, 'focus_position') and hasattr(widget, 'contents'):
+                    try:
+                        idx = widget.focus_position
+                        content = widget.contents[idx][0]
+                        if content is target_widget:
+                            return True
+                        return check_focus_chain(content)
+                    except (IndexError, TypeError):
+                        pass
+                return False
+
+            return check_focus_chain(card)
+        except Exception:
+            return False
+
     def _supports_vt(self) -> bool:
         """
         Windows에서 VT(ANSI) 입력/출력 지원을 최대한 보수적이되 실용적으로 감지.
@@ -3274,9 +4020,33 @@ class UrwidApp:
 
             ("btn_dex",    "white",       ""),
             ("btn_dex_on", "black",       "light green"),
-            
+            ("btn_dex_disabled", "dark gray", ""),  # [ADD] Spot 모드 시 비활성화
+
             ("quote_color", "light green",      "", "bold"),
-            
+
+            # [ADD] Perp/Spot 버튼 스타일
+            ("btn_perp",     "light cyan",  ""),
+            ("btn_perp_on",  "black",       "light cyan"),
+            ("btn_spot",     "light blue",  ""),
+            ("btn_spot_on",  "black",       "light blue"),
+            ("btn_spot_disabled", "dark gray", ""),
+
+            # [ADD] 힌트 버튼 스타일
+            ("btn_hint",       "yellow",      ""),
+            ("btn_hint_focus", "black",       "yellow"),
+
+            # [ADD] Transfer 버튼 스타일
+            ("btn_transfer",    "white",       ""),
+            ("btn_transfer_on", "black",       "light green"),
+            ("btn_transfer_exec", "black",     "light blue"),
+
+            # [ADD] 심볼 힌트 스타일
+            ("hint",         "dark gray",   ""),
+
+            # [ADD] Collateral 스타일
+            ("collateral_coin", "light cyan", ""),
+            ("spot_collateral", "light blue", ""),
+
             ("scroll_bar",   "dark gray",   ""),
             ("scroll_thumb", "light cyan",  ""),
         ]
@@ -3323,6 +4093,24 @@ class UrwidApp:
 
                 # 바디 카드 재구성(카드의 DEX 버튼들도 새 목록 반영)
                 self._rebuild_body_rows()
+
+                # [ADD] 각 거래소의 has_spot, has_transfer 설정
+                for n in self.mgr.all_names():
+                    ex = self.mgr.get_exchange(n)
+                    if ex:
+                        # has_spot 설정
+                        if hasattr(ex, "has_spot"):
+                            self._has_spot_by_ex[n] = bool(ex.has_spot)
+                        # has_transfer 설정
+                        if hasattr(ex, "transfer_to_perp") and hasattr(ex, "transfer_to_spot"):
+                            self._has_transfer_by_ex[n] = True
+                        else:
+                            self._has_transfer_by_ex[n] = False
+                        # Perp/Spot 스타일 갱신
+                        self._refresh_perp_spot_style(n)
+
+                # [ADD] 심볼 목록 캐시 로드 (비동기)
+                await self._refresh_symbol_cache()
             except Exception as e:
                 self._log(f"Error fetching DEX list: {e}")
 

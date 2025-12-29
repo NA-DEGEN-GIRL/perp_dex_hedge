@@ -302,9 +302,9 @@ _ensure_ts_logger()
 
 RATE = {
     "GAP_FOR_INF": 0.05,
-    "STATUS_POS_INTERVAL": {"default": 0.5, "lighter": 2.0},
-    "STATUS_COLLATERAL_INTERVAL": {"default": 0.5, "lighter": 5.0},
-    "CARD_PRICE_INTERVAL": {"default": 1.0, "lighter": 5.0},
+    "STATUS_POS_INTERVAL": {"default": 0.5},
+    "STATUS_COLLATERAL_INTERVAL": {"default": 0.5},
+    "CARD_PRICE_INTERVAL": {"default": 1.0},
 }
 
 def _normalize_symbol_input(sym: str) -> str:
@@ -1087,6 +1087,15 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         else:
             # 방향 미선택 또는 수량 없음
             print(f"[{self.ex_name}] 전송 방향을 선택하고 수량을 입력하세요")
+
+    def is_valid(self) -> bool:
+        """[ADD] 위젯이 아직 유효한지 (삭제되지 않았는지) 확인"""
+        try:
+            # C++ 객체가 삭제되었으면 접근 시 RuntimeError 발생
+            _ = self.price_label.text()
+            return True
+        except RuntimeError:
+            return False
 
     def _build_layout(self) -> None:
         main_layout = QtWidgets.QVBoxLayout(self)
@@ -3013,105 +3022,126 @@ class UiQtApp(QtWidgets.QMainWindow):
                 now = time.monotonic()
                 
                 for n in self.mgr.visible_names():
-                    if n not in self.cards:
-                        continue
-                    c = self.cards[n]
-                    
-                    # 거래소 플랫폼별 업데이트 주기 결정
-                    meta = self.mgr.get_meta(n)
-                    exchange_platform = meta.get("exchange", "hyperliquid")
-                    
+                    # [CHANGED] 전체 카드 처리를 try-except RuntimeError로 감싸서
+                    # await 중 카드가 삭제되어도 안전하게 처리
                     try:
-                        col_interval = RATE["STATUS_COLLATERAL_INTERVAL"].get(
-                            exchange_platform, 
-                            RATE["STATUS_COLLATERAL_INTERVAL"]["default"]
-                        )
-                        pos_interval = RATE["STATUS_POS_INTERVAL"].get(
-                            exchange_platform,
-                            RATE["STATUS_POS_INTERVAL"]["default"]
-                        )
-                        price_interval = RATE["CARD_PRICE_INTERVAL"].get(
-                            exchange_platform,
-                            RATE["CARD_PRICE_INTERVAL"]["default"]
-                        )
-                    except Exception:
-                        col_interval = RATE["STATUS_COLLATERAL_INTERVAL"]["default"]
-                        pos_interval = RATE["STATUS_POS_INTERVAL"]["default"]
-                        price_interval = RATE["CARD_PRICE_INTERVAL"]["default"]
-                    
-                    # 업데이트 필요 여부 판단
-                    need_collat = (now - self._last_balance_at.get(n, 0.0) >= col_interval)
-                    need_pos = (now - self._last_pos_at.get(n, 0.0) >= pos_interval)
-                    need_price = (now - self._last_price_at.get(n, 0.0) >= price_interval)
-                    
-                    # WS 거래소는 항상 업데이트
-                    ex = self.mgr.get_exchange(n)
-                    if not ex:
-                        continue
-                    is_ws = hasattr(ex, "fetch_by_ws") and getattr(ex, "fetch_by_ws", False)
-                    is_hl_like = self.mgr.is_hl_like(n)
-                    is_spot = self.market_type_by_ex.get(n, "perp") == "spot"
-                    
-                    # [수정] 비-HL은 DEX 무시, HL-like만 DEX 적용
-                    if is_hl_like:
-                        sym = _compose_symbol(self.dex_by_ex[n], self.symbol_by_ex[n],is_spot)
-                    else:
-                        sym = self.symbol_by_ex[n].upper()
-
-                    is_hl_like = self.mgr.is_hl_like(n)
-                    
-                    # 가격 업데이트
-                    if need_price or is_ws:
+                        if n not in self.cards:
+                            continue
+                        c = self.cards[n]
+                        
+                        # 카드가 삭제 예정이거나 이미 삭제됐으면 스킵
+                        if not c.is_valid():
+                            continue
+                        
+                        # 거래소 플랫폼별 업데이트 주기 결정
+                        meta = self.mgr.get_meta(n)
+                        exchange_platform = meta.get("exchange", "hyperliquid")
+                        
                         try:
-                            p = await self.service.fetch_price(n, sym, is_spot=is_spot)
-                            c.set_price_label(p)
-                            self._last_price_at[n] = now
-                        except Exception:
-                            c.set_price_label("Err")
-                    
-                    # 이제 모든 거래소 지원 (USD dummy로)
-                    try:
-                        quote_str = ex.get_perp_quote(sym)
-                        c.set_quote_label(quote_str)
-                    except Exception as e:
-                        logger.debug(f"[UI] quote update failed for {n}: {e}", exc_info=True)
-                        print(f"[UI] quote update failed for {n}: {e}")
-                        c.set_quote_label("")
-                    # Quote 업데이트 (HL-like만)
-                    if is_hl_like:
-                        # Builder Fee 업데이트
-                        self._update_fee(n)
-
-                    # 포지션/잔고 업데이트
-                    if need_pos or need_collat or is_ws:
-                        try:
-                            is_spot = self.market_type_by_ex.get(n, "perp") == "spot"
-                            pos, col, total_col_val, json_data = await self.service.fetch_status(
-                                n, sym, 
-                                need_balance=need_collat or is_ws, 
-                                need_position=need_pos or is_ws,
-                                is_spot=is_spot
+                            col_interval = RATE["STATUS_COLLATERAL_INTERVAL"].get(
+                                exchange_platform, 
+                                RATE["STATUS_COLLATERAL_INTERVAL"]["default"]
                             )
-                            
-                            c.set_status_info(json_data)
-                            
-                            if need_collat or is_ws:
-                                if total_col_val: # perp + spot available
-                                    self.collateral[n] = float(total_col_val)
-                                self._last_balance_at[n] = now
-                            
-                            if need_pos or is_ws:
-                                self._last_pos_at[n] = now
-                                
+                            pos_interval = RATE["STATUS_POS_INTERVAL"].get(
+                                exchange_platform,
+                                RATE["STATUS_POS_INTERVAL"]["default"]
+                            )
+                            price_interval = RATE["CARD_PRICE_INTERVAL"].get(
+                                exchange_platform,
+                                RATE["CARD_PRICE_INTERVAL"]["default"]
+                            )
+                        except Exception:
+                            col_interval = RATE["STATUS_COLLATERAL_INTERVAL"]["default"]
+                            pos_interval = RATE["STATUS_POS_INTERVAL"]["default"]
+                            price_interval = RATE["CARD_PRICE_INTERVAL"]["default"]
+                        
+                        # 업데이트 필요 여부 판단
+                        need_collat = (now - self._last_balance_at.get(n, 0.0) >= col_interval)
+                        need_pos = (now - self._last_pos_at.get(n, 0.0) >= pos_interval)
+                        need_price = (now - self._last_price_at.get(n, 0.0) >= price_interval)
+                        
+                        # WS 거래소는 항상 업데이트
+                        ex = self.mgr.get_exchange(n)
+                        if not ex:
+                            continue
+                        is_ws = hasattr(ex, "fetch_by_ws") and getattr(ex, "fetch_by_ws", False)
+                        is_hl_like = self.mgr.is_hl_like(n)
+                        is_spot = self.market_type_by_ex.get(n, "perp") == "spot"
+                        
+                        # [수정] 비-HL은 DEX 무시, HL-like만 DEX 적용
+                        if is_hl_like:
+                            sym = _compose_symbol(self.dex_by_ex[n], self.symbol_by_ex[n], is_spot)
+                        else:
+                            sym = self.symbol_by_ex[n].upper()
+                        
+                        # 가격 업데이트
+                        if need_price or is_ws:
+                            try:
+                                p = await self.service.fetch_price(n, sym, is_spot=is_spot)
+                                c.set_price_label(p)
+                                self._last_price_at[n] = now
+                            except RuntimeError:
+                                # C++ 객체 삭제됨 - 이 카드 스킵
+                                continue
+                            except Exception:
+                                try:
+                                    c.set_price_label("Err")
+                                except RuntimeError:
+                                    continue
+                        
+                        # 이제 모든 거래소 지원 (USD dummy로)
+                        try:
+                            quote_str = ex.get_perp_quote(sym)
+                            c.set_quote_label(quote_str)
+                        except RuntimeError:
+                            continue
                         except Exception as e:
-                            logger.debug(f"[UI] Status update for {n} failed: {e}")
-                            print(f"[UI] Status update for {n} failed: {e}")
+                            logger.debug(f"[UI] quote update failed for {n}: {e}", exc_info=True)
+                            try:
+                                c.set_quote_label("")
+                            except RuntimeError:
+                                continue
+                        
+                        # Quote 업데이트 (HL-like만)
+                        if is_hl_like:
+                            # Builder Fee 업데이트
+                            self._update_fee(n)
+
+                        # 포지션/잔고 업데이트
+                        if need_pos or need_collat or is_ws:
+                            try:
+                                is_spot = self.market_type_by_ex.get(n, "perp") == "spot"
+                                pos, col, total_col_val, json_data = await self.service.fetch_status(
+                                    n, sym, 
+                                    need_balance=need_collat or is_ws, 
+                                    need_position=need_pos or is_ws,
+                                    is_spot=is_spot
+                                )
+                                
+                                c.set_status_info(json_data)
+                                
+                                if need_collat or is_ws:
+                                    if total_col_val:  # perp + spot available
+                                        self.collateral[n] = float(total_col_val)
+                                    self._last_balance_at[n] = now
+                                
+                                if need_pos or is_ws:
+                                    self._last_pos_at[n] = now
+                                    
+                            except RuntimeError:
+                                # C++ 객체 삭제됨 - 이 카드 스킵
+                                continue
+                            except Exception as e:
+                                logger.debug(f"[UI] Status update for {n} failed: {e}")
+                    
+                    except RuntimeError:
+                        # [CHANGED] 카드가 삭제된 경우 - 조용히 스킵
+                        continue
                 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"[UI] Status loop error: {e}")
-                print(f"[UI] Status loop error: {e}")
             
             # 루프 간격
             await asyncio.sleep(RATE["GAP_FOR_INF"])
