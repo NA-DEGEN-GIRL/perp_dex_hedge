@@ -596,6 +596,387 @@ class EmittingStream(QtCore.QObject):
 
 
 # ---------------------------------------------------------------------------
+# 오더북 패널 위젯
+# ---------------------------------------------------------------------------
+
+class OrderBookPanel(QtWidgets.QWidget):
+    """오더북 + 오픈 오더 표시 패널"""
+    close_clicked = QtCore.Signal()
+    cancel_all_clicked = QtCore.Signal()
+    price_clicked = QtCore.Signal(float)  # 가격 클릭 시 해당 가격 전달
+
+    ORDERBOOK_DEPTH = 10  # 오더북 호가 수
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._exchange_name = ""
+        self._symbol = ""
+        # 소숫점 자릿수 (기본값, 심볼별로 조정 가능)
+        self._price_decimals = 2
+        self._size_decimals = 4
+        self._build_ui()
+
+    def _build_ui(self):
+        main_layout = QtWidgets.QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # 스크롤 영역 생성
+        scroll_area = QtWidgets.QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setStyleSheet("QScrollArea { border: none; background-color: transparent; }")
+
+        # 스크롤 내부 컨텐츠 위젯
+        content_widget = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(content_widget)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(4)
+
+        # 헤더: 거래소명 + 심볼 + 닫기 버튼
+        header = QtWidgets.QHBoxLayout()
+        self.title_label = QtWidgets.QLabel("[거래소] 심볼")
+        self.title_label.setStyleSheet(f"color: #baa055; font-weight: bold; font-size: {UI_FONT_SIZE}pt;")
+        header.addWidget(self.title_label)
+        header.addStretch()
+
+        self.close_btn = QtWidgets.QPushButton("X")
+        self.close_btn.setFixedSize(24, 24)
+        self.close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: #3a3a3a;
+                color: #ef5350;
+                border: 1px solid #555;
+                border-radius: 3px;
+                font-weight: bold;
+                font-size: {UI_FONT_SIZE}pt;
+            }}
+            QPushButton:hover {{
+                background-color: #4a4a4a;
+                border-color: #ef5350;
+            }}
+        """)
+        self.close_btn.clicked.connect(self.close_clicked.emit)
+        header.addWidget(self.close_btn)
+        layout.addLayout(header)
+
+        # 오더북 섹션 제목 + Spread (같은 줄)
+        orderbook_header = QtWidgets.QHBoxLayout()
+        ob_title = QtWidgets.QLabel("오더북")
+        ob_title.setStyleSheet(f"color: #888; font-size: {UI_FONT_SIZE}pt;")
+        orderbook_header.addWidget(ob_title)
+        orderbook_header.addStretch()
+        self.spread_label = QtWidgets.QLabel("Spread: -")
+        self.spread_label.setStyleSheet(f"color: #90caf9; font-size: {UI_FONT_SIZE}pt;")
+        orderbook_header.addWidget(self.spread_label)
+        layout.addLayout(orderbook_header)
+
+        # 오더북 컬럼 헤더 (한 번만) - 테이블과 바로 붙어야 함
+        col_header = QtWidgets.QHBoxLayout()
+        col_header.setSpacing(0)
+        col_header.setContentsMargins(4, 0, 4, 0)
+        for col_name in ["Price", "Size", "Total"]:
+            lbl = QtWidgets.QLabel(col_name)
+            lbl.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+            lbl.setStyleSheet(f"color: #666; font-size: {UI_FONT_SIZE - 1}pt; padding: 2px 4px;")
+            col_header.addWidget(lbl, stretch=1)
+        layout.addLayout(col_header)
+
+        # Asks 테이블 (빨간색) - 헤더와 바로 붙음
+        self.asks_table = self._create_orderbook_table("#ef9a9a", show_header=False)
+        self.asks_table.cellClicked.connect(self._on_orderbook_clicked)
+        layout.addWidget(self.asks_table)
+
+        # Bids 테이블 (초록색) - asks와 바로 붙음
+        self.bids_table = self._create_orderbook_table("#81c784", show_header=False)
+        self.bids_table.cellClicked.connect(self._on_orderbook_clicked)
+        layout.addWidget(self.bids_table)
+
+        # 오픈 오더 섹션 제목
+        orders_header = QtWidgets.QHBoxLayout()
+        orders_title = QtWidgets.QLabel("오픈 오더")
+        orders_title.setStyleSheet(f"color: #888; font-size: {UI_FONT_SIZE}pt; margin-top: 8px;")
+        orders_header.addWidget(orders_title)
+        orders_header.addStretch()
+        layout.addLayout(orders_header)
+
+        # 오픈 오더 테이블
+        self.orders_table = QtWidgets.QTableWidget()
+        self.orders_table.setColumnCount(4)
+        self.orders_table.setHorizontalHeaderLabels(["Side", "Price", "Size", "Order ID"])
+        self.orders_table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.orders_table.verticalHeader().setVisible(False)
+        self.orders_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        self.orders_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.orders_table.verticalHeader().setDefaultSectionSize(22)
+        self.orders_table.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: #2b2b2b;
+                color: #e0e0e0;
+                border: 1px solid #444;
+                gridline-color: #333;
+                font-size: {UI_FONT_SIZE}pt;
+            }}
+            QHeaderView::section {{
+                background-color: #3a3a3a;
+                color: #888;
+                padding: 2px;
+                border: none;
+                font-size: {UI_FONT_SIZE - 1}pt;
+            }}
+        """)
+        # 오픈오더는 최대 10개 정도 보이도록
+        self.orders_table.setMinimumHeight(8 * 22 + 25)  # 8행 + 헤더
+        layout.addWidget(self.orders_table)
+
+        # 전체 취소 버튼
+        self.cancel_all_btn = QtWidgets.QPushButton("전체 취소")
+        self.cancel_all_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: #3a3a3a;
+                color: #ef5350;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 6px 12px;
+                font-weight: bold;
+                font-size: {UI_FONT_SIZE}pt;
+            }}
+            QPushButton:hover {{
+                background-color: #4a4a4a;
+                border-color: #ef5350;
+            }}
+            QPushButton:pressed {{
+                background-color: #2a2a2a;
+            }}
+        """)
+        self.cancel_all_btn.clicked.connect(self.cancel_all_clicked.emit)
+        layout.addWidget(self.cancel_all_btn)
+
+        # 남는 공간은 맨 아래로
+        layout.addStretch(1)
+
+        # 스크롤 영역에 컨텐츠 위젯 설정
+        scroll_area.setWidget(content_widget)
+        main_layout.addWidget(scroll_area)
+
+        # 패널 스타일
+        self.setStyleSheet(f"""
+            OrderBookPanel {{
+                background-color: #2d2d2d;
+                border: 1px solid #555;
+                border-radius: 4px;
+                font-size: {UI_FONT_SIZE}pt;
+            }}
+        """)
+        self.setMinimumWidth(300)
+        # bid/ask 10행씩 모두 보이도록 최소 높이 설정
+        # 오더북: (10행 * 28px + 2) * 2 = 564px
+        # 오픈오더: 135px
+        # 헤더/제목/버튼 등: ~180px
+        # 총: 약 880px
+        self.setMinimumHeight(880)
+
+    def _create_orderbook_table(self, color: str, show_header: bool = True) -> QtWidgets.QTableWidget:
+        """오더북 테이블 생성"""
+        table = QtWidgets.QTableWidget()
+        table.setColumnCount(3)
+        if show_header:
+            table.setHorizontalHeaderLabels(["Price", "Size", "Total"])
+        else:
+            table.horizontalHeader().setVisible(False)
+        table.setRowCount(self.ORDERBOOK_DEPTH)
+        table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Stretch)
+        table.verticalHeader().setVisible(False)
+        table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
+        table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setShowGrid(False)
+        # 스크롤바 숨기기
+        table.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        table.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: #2b2b2b;
+                color: {color};
+                border: 1px solid #444;
+                font-size: {UI_FONT_SIZE}pt;
+            }}
+            QTableWidget::item {{
+                padding: 1px 4px;
+            }}
+        """)
+        # 행 높이 - 강제 고정
+        row_height = 28
+        table.verticalHeader().setDefaultSectionSize(row_height)
+        table.verticalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Fixed)
+        for i in range(self.ORDERBOOK_DEPTH):
+            table.setRowHeight(i, row_height)
+        # 테이블 높이: 10행 + border
+        table.setFixedHeight( (self.ORDERBOOK_DEPTH) * row_height + 2)
+        return table
+
+    def set_exchange_info(self, exchange_name: str, symbol: str):
+        """거래소/심볼 정보 설정"""
+        self._exchange_name = exchange_name
+        self._symbol = symbol
+        self.title_label.setText(f"[{exchange_name.upper()}] {symbol}")
+        # 심볼에 따라 소숫점 자릿수 자동 조정
+        self._auto_detect_decimals(symbol)
+
+    def _auto_detect_decimals(self, symbol: str):
+        """심볼에 따라 소숫점 자릿수 자동 결정"""
+        symbol_upper = symbol.upper()
+        # BTC, ETH 등 고가 코인
+        if any(x in symbol_upper for x in ["BTC", "ETH"]):
+            self._price_decimals = 2
+            self._size_decimals = 4
+        # SOL, AVAX 등 중가 코인
+        elif any(x in symbol_upper for x in ["SOL", "AVAX", "BNB", "AAVE"]):
+            self._price_decimals = 3
+            self._size_decimals = 3
+        # 저가 코인
+        elif any(x in symbol_upper for x in ["DOGE", "SHIB", "PEPE", "FLOKI", "WIF", "BONK"]):
+            self._price_decimals = 6
+            self._size_decimals = 0
+        # 기본값
+        else:
+            self._price_decimals = 4
+            self._size_decimals = 2
+
+    def _on_orderbook_clicked(self, row: int, col: int):
+        """오더북 가격 클릭 시 해당 가격을 시그널로 전달"""
+        # 어느 테이블에서 클릭했는지 확인
+        sender = self.sender()
+        if sender is None:
+            return
+
+        item = sender.item(row, 0)  # 첫 번째 열이 가격
+        if item and item.text():
+            try:
+                # 콤마 제거 후 float 변환
+                price_str = item.text().replace(",", "")
+                price = float(price_str)
+                self.price_clicked.emit(price)
+            except ValueError:
+                pass
+
+    def update_orderbook(self, orderbook: dict):
+        """오더북 데이터 업데이트"""
+        if not orderbook:
+            return
+
+        bids = orderbook.get("bids", [])
+        asks = orderbook.get("asks", [])
+
+        # Asks 테이블 업데이트 (역순: 높은 가격이 아래로, 아래 정렬)
+        asks_display = asks[:self.ORDERBOOK_DEPTH]
+        asks_display = list(reversed(asks_display))  # 역순
+        total = 0.0
+        totals = []
+        for ask in reversed(asks_display):
+            total += float(ask[1]) if len(ask) > 1 else 0
+            totals.insert(0, total)
+
+        # 아래 정렬: 빈 행은 위쪽에, 데이터는 아래쪽에
+        empty_rows = self.ORDERBOOK_DEPTH - len(asks_display)
+        for i in range(self.ORDERBOOK_DEPTH):
+            if i < empty_rows:
+                self._clear_table_row(self.asks_table, i)
+            else:
+                data_idx = i - empty_rows
+                price = float(asks_display[data_idx][0])
+                size = float(asks_display[data_idx][1]) if len(asks_display[data_idx]) > 1 else 0
+                total_size = totals[data_idx]
+                self._set_table_row(self.asks_table, i, price, size, total_size)
+
+        # Bids 테이블 업데이트 (정순: 높은 가격이 위로)
+        bids_display = bids[:self.ORDERBOOK_DEPTH]
+        total = 0.0
+        for i in range(self.ORDERBOOK_DEPTH):
+            if i < len(bids_display):
+                price = float(bids_display[i][0])
+                size = float(bids_display[i][1]) if len(bids_display[i]) > 1 else 0
+                total += size
+                self._set_table_row(self.bids_table, i, price, size, total)
+            else:
+                self._clear_table_row(self.bids_table, i)
+
+        # Spread 계산
+        if bids and asks:
+            best_bid = float(bids[0][0])
+            best_ask = float(asks[0][0])
+            spread = best_ask - best_bid
+            spread_pct = (spread / best_bid * 100) if best_bid > 0 else 0
+            self.spread_label.setText(f"Spread: {spread:.{self._price_decimals}f} ({spread_pct:.3f}%)")
+        else:
+            self.spread_label.setText("Spread: -")
+
+    def _set_table_row(self, table: QtWidgets.QTableWidget, row: int, price: float, size: float, total: float):
+        """테이블 행 설정 (고정 소숫점 자릿수)"""
+        price_str = f"{price:,.{self._price_decimals}f}"
+        size_str = f"{size:,.{self._size_decimals}f}"
+        total_str = f"{total:,.{self._size_decimals}f}"
+
+        for col, text in enumerate([price_str, size_str, total_str]):
+            item = table.item(row, col)
+            if not item:
+                item = QtWidgets.QTableWidgetItem(text)
+                item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+                table.setItem(row, col, item)
+            else:
+                item.setText(text)
+
+    def _clear_table_row(self, table: QtWidgets.QTableWidget, row: int):
+        """테이블 행 비우기"""
+        for col in range(3):
+            item = table.item(row, col)
+            if item:
+                item.setText("")
+
+    def update_open_orders(self, orders: list):
+        """오픈 오더 목록 업데이트"""
+        if orders is None:
+            orders = []
+
+        self.orders_table.setRowCount(len(orders))
+
+        for row, order in enumerate(orders):
+            side = str(order.get("side", "")).upper()
+            price = order.get("price", 0)
+            size = order.get("size", order.get("quantity", 0))
+            order_id = str(order.get("order_id", order.get("id", "")))[:12]
+
+            # Side 색상
+            side_item = QtWidgets.QTableWidgetItem(side)
+            if side == "BUY":
+                side_item.setForeground(QtGui.QColor("#81c784"))
+            else:
+                side_item.setForeground(QtGui.QColor("#ef9a9a"))
+            self.orders_table.setItem(row, 0, side_item)
+
+            # Price (고정 자릿수)
+            price_item = QtWidgets.QTableWidgetItem(f"{float(price):,.{self._price_decimals}f}")
+            price_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+            self.orders_table.setItem(row, 1, price_item)
+
+            # Size (고정 자릿수)
+            size_item = QtWidgets.QTableWidgetItem(f"{float(size):,.{self._size_decimals}f}")
+            size_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+            self.orders_table.setItem(row, 2, size_item)
+
+            # Order ID
+            id_item = QtWidgets.QTableWidgetItem(order_id)
+            self.orders_table.setItem(row, 3, id_item)
+
+    def clear(self):
+        """패널 초기화"""
+        for i in range(self.ORDERBOOK_DEPTH):
+            self._clear_table_row(self.asks_table, i)
+            self._clear_table_row(self.bids_table, i)
+        self.spread_label.setText("Spread: -")
+        self.orders_table.setRowCount(0)
+
+
+# ---------------------------------------------------------------------------
 # 거래소 카드 위젯
 # ---------------------------------------------------------------------------
 
@@ -610,6 +991,7 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
     group_changed = QtCore.Signal(str, int)  # (ex_name, group)
     market_type_changed = QtCore.Signal(str, str)  # (ex_name, "perp" or "spot")
     transfer_execute = QtCore.Signal(str, dict)  # [ADD] (ex_name, transfer_info)
+    detail_order_clicked = QtCore.Signal(str)  # [ADD] 상세 주문 버튼 클릭 (ex_name)
 
     def __init__(self, ex_name: str, dex_choices: List[str], is_hl_like: bool = True, parent=None):
         super().__init__(parent)
@@ -721,9 +1103,12 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         self.short_btn = QtWidgets.QPushButton("Short")
         self.off_btn = QtWidgets.QPushButton("미선택")
         self.exec_btn = QtWidgets.QPushButton("주문 실행")
+        self.detail_btn = QtWidgets.QPushButton("상세")  # [ADD] 상세 주문 버튼
 
         self.exec_btn.setAutoDefault(False)
         self.exec_btn.setDefault(False)
+        self.detail_btn.setAutoDefault(False)
+        self.detail_btn.setDefault(False)
 
         self.group_buttons: Dict[int, QtWidgets.QPushButton] = {}
         self.current_group = 0
@@ -826,7 +1211,29 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
                 border-color: #333;
             }
         """
-        
+
+        BTN_DETAIL = """
+            QPushButton {
+                background-color: #3a3a3a;
+                color: #ce93d8;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 8px 16px;
+            }
+            QPushButton:hover {
+                background-color: #4a4a4a;
+                border-color: #ce93d8;
+            }
+            QPushButton:pressed {
+                background-color: #2a2a2a;
+            }
+            QPushButton:disabled {
+                background-color: #2a2a2a;
+                color: #555;
+                border-color: #333;
+            }
+        """
+
         for g in range(GROUP_COUNT):
             btn = QtWidgets.QPushButton(str(g))
             btn.setCheckable(True)
@@ -840,6 +1247,7 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         self.short_btn.setStyleSheet(BTN_SHORT)
         self.off_btn.setStyleSheet(BTN_BASE)
         self.exec_btn.setStyleSheet(BTN_EXEC)
+        self.detail_btn.setStyleSheet(BTN_DETAIL)
 
         # 정보 라벨
         self.price_title = QtWidgets.QLabel("가격: ")
@@ -1129,7 +1537,7 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         header_row.addWidget(self.perp_btn, stretch=1)
         header_row.addWidget(self.spot_btn, stretch=1)
         
-        for b in (self.long_btn, self.short_btn, self.off_btn, self.exec_btn):
+        for b in (self.long_btn, self.short_btn, self.off_btn, self.exec_btn, self.detail_btn):
             header_row.addWidget(b, stretch=1)
         
         main_layout.addLayout(header_row)
@@ -1368,6 +1776,7 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
     def _on_market_clicked(self):
         self.market_btn.setChecked(True)
         self.limit_btn.setChecked(False)
+        self.price_edit.clear()  # 가격 입력란 비우기
         self.price_edit.setEnabled(False)
         self.price_edit.setPlaceholderText("auto")
         self.order_type_changed.emit(self.ex_name, "market")
@@ -1384,6 +1793,7 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         self.long_btn.clicked.connect(lambda: self.long_clicked.emit(self.ex_name))
         self.short_btn.clicked.connect(lambda: self.short_clicked.emit(self.ex_name))
         self.off_btn.clicked.connect(lambda: self.off_clicked.emit(self.ex_name))
+        self.detail_btn.clicked.connect(lambda: self.detail_order_clicked.emit(self.ex_name))
         
         self.market_btn.clicked.connect(self._on_market_clicked)
         self.limit_btn.clicked.connect(self._on_limit_clicked)
@@ -1439,7 +1849,11 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
     def set_fee_label(self, txt):
         if self.fee_label:
             self.fee_label.setText(txt)
-    
+
+    def set_has_orderbook(self, has_orderbook: bool):
+        """오더북 기능 지원 여부에 따라 상세 버튼 활성화/비활성화"""
+        self.detail_btn.setEnabled(has_orderbook)
+
     def _adjust_pos_label_width(self, is_spot: bool):
         """[ADD] 포지션 라벨 너비를 모드에 따라 조정"""
         if is_spot:
@@ -2027,6 +2441,12 @@ class UiQtApp(QtWidgets.QMainWindow):
 
         self._switching_group = False
 
+        # 오더북 패널 상태
+        self.orderbook_panel: Optional[OrderBookPanel] = None  # 패널 인스턴스
+        self._orderbook_panel_exchange: Optional[str] = None   # 현재 표시 중인 거래소
+        self._orderbook_panel_symbol: Optional[str] = None     # 현재 구독 중인 심볼 (unsubscribe용)
+        self._orderbook_task: Optional[asyncio.Task] = None    # 오더북 업데이트 태스크
+
         self._build_main_layout()
         self._connect_header_signals()
 
@@ -2144,11 +2564,31 @@ class UiQtApp(QtWidgets.QMainWindow):
         header_gb = create_section("", self.header)
         main_vbox.addWidget(header_gb)
 
-        # Cards Scroll
+        # 중앙 영역: Cards + OrderBook Panel (수평 레이아웃, 확장형)
+        self.center_container = QtWidgets.QWidget()
+        self.center_layout = QtWidgets.QHBoxLayout(self.center_container)
+        self.center_layout.setContentsMargins(0, 0, 0, 0)
+        self.center_layout.setSpacing(4)
+
+        # Cards Scroll (왼쪽)
         cards_scroll = QtWidgets.QScrollArea()
         cards_scroll.setWidgetResizable(True)
         cards_scroll.setWidget(self.cards_container)
-        main_vbox.addWidget(cards_scroll, stretch=2)
+        self.center_layout.addWidget(cards_scroll, 1)  # stretch factor 1
+
+        # OrderBook Panel (오른쪽, 초기에는 숨김) - 고정 너비
+        self.orderbook_panel = OrderBookPanel()
+        self.orderbook_panel.setFixedWidth(400)
+        self.orderbook_panel.setVisible(False)
+        self.orderbook_panel.close_clicked.connect(self._on_orderbook_panel_close)
+        self.orderbook_panel.cancel_all_clicked.connect(self._on_orderbook_cancel_all)
+        self.orderbook_panel.price_clicked.connect(self._on_orderbook_price_clicked)
+        self.center_layout.addWidget(self.orderbook_panel, 0)  # stretch factor 0 (고정)
+
+        # 오더북 패널 너비 저장 (확장/축소용)
+        self._orderbook_panel_width = 400
+
+        main_vbox.addWidget(self.center_container, stretch=2)
 
         # Bottom Area
         bottom_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
@@ -2454,6 +2894,7 @@ class UiQtApp(QtWidgets.QMainWindow):
                     card.group_changed.connect(self._on_card_group)
                     card.market_type_changed.connect(self._on_market_type_change)
                     card.transfer_execute.connect(self._on_transfer_execute)
+                    card.detail_order_clicked.connect(self._on_detail_order)
                     
                     self.cards[name] = card
                     '''
@@ -2478,6 +2919,10 @@ class UiQtApp(QtWidgets.QMainWindow):
                         card.set_has_transfer(True)
                     else:
                         card.set_has_transfer(False)
+
+                    # 오더북 지원 여부 확인
+                    has_orderbook = ex and hasattr(ex, "get_orderbook")
+                    card.set_has_orderbook(has_orderbook)
 
                     if name in self._symbol_cache_by_ex:
                         dex = self.dex_by_ex.get(name, "HL")
@@ -2561,12 +3006,81 @@ class UiQtApp(QtWidgets.QMainWindow):
         s = _normalize_symbol_input(t or self.symbol)
         self.symbol_by_ex[n] = s
         self.exchange_state[n].symbol = s
+        # 오더북 패널이 열려있으면 심볼 변경 시 갱신
+        if self._orderbook_panel_exchange == n:
+            asyncio.get_event_loop().create_task(self._refresh_orderbook_for_symbol(n, s))
+
+    async def _refresh_orderbook_for_symbol(self, ex_name: str, symbol: str):
+        """심볼 변경 시 오더북 갱신 (WS 재구독)"""
+        if self._orderbook_panel_exchange != ex_name:
+            return
+        # 기존 구독 해제
+        try:
+            ex = self.mgr.get_exchange(ex_name)
+            old_symbol = self._orderbook_panel_symbol
+            if ex and old_symbol and hasattr(ex, "unsubscribe_orderbook"):
+                await ex.unsubscribe_orderbook(old_symbol)
+        except Exception as e:
+            self._log(f"[ORDERBOOK] unsubscribe 실패: {e}")
+
+        # 새 심볼로 다시 열기 (_do_exec와 동일한 심볼 생성 방식)
+        is_spot = self.market_type_by_ex.get(ex_name, "perp") == "spot"
+        is_hl_like = self.mgr.is_hl_like(ex_name)
+        if is_hl_like:
+            sym = _compose_symbol(self.dex_by_ex.get(ex_name, "HL"), symbol, is_spot)
+        else:
+            sym = symbol.upper()
+        native_symbol = self.service._to_native_symbol(ex_name, sym, is_spot)
+        self._orderbook_panel_symbol = native_symbol
+        self.orderbook_panel.set_exchange_info(ex_name, native_symbol)
+        self.orderbook_panel.clear()
+
+        # 업데이트 태스크 재시작
+        if self._orderbook_task:
+            self._orderbook_task.cancel()
+        self._orderbook_task = asyncio.get_event_loop().create_task(
+            self._orderbook_update_loop(ex_name, native_symbol)
+        )
 
     def _on_card_dex(self, n, d):
+        """카드의 DEX 변경 처리 (perp에서만 DEX 선택 가능)"""
         self.dex_by_ex[n] = d
         self.exchange_state[n].dex = d
         self._update_fee(n)
-        self._update_card_symbols(n, d)
+
+        # 심볼 목록 업데이트 (DEX 변경은 perp에서만 발생)
+        market_type = self.market_type_by_ex.get(n, "perp")
+        self._update_card_symbols(n, d, market_type)
+
+        # 심볼 자동 선택 (perp인 경우만)
+        if n in self.cards and market_type == "perp":
+            card = self.cards[n]
+            ex_cache = self._symbol_cache_by_ex.get(n, {})
+
+            # 새 DEX의 perp 심볼 목록 가져오기
+            perp_data = ex_cache.get("perp", {})
+            if self.mgr.is_hl_like(n) and isinstance(perp_data, dict):
+                dex_key = d.lower() if d and d != "HL" else "hl"
+                symbols = perp_data.get(dex_key, perp_data.get("hl", []))
+            elif isinstance(perp_data, list):
+                symbols = perp_data
+            else:
+                symbols = []
+
+            # 자동 선택 및 적용
+            if symbols:
+                selected = card._auto_select_symbol(symbols)
+                if selected:
+                    normalized = card.ticker_edit._normalize_symbol(selected)
+                    card.ticker_edit.setEditText(normalized)
+                    self.symbol_by_ex[n] = normalized
+                    self.exchange_state[n].symbol = normalized
+
+                    # 오더북 패널이 열려있으면 새 심볼로 갱신
+                    if self._orderbook_panel_exchange == n:
+                        asyncio.get_event_loop().create_task(
+                            self._refresh_orderbook_for_symbol(n, normalized)
+                        )
 
     def _on_long(self, n): self._set_side(n, "buy")
     def _on_short(self, n): self._set_side(n, "sell")
@@ -3193,6 +3707,196 @@ class UiQtApp(QtWidgets.QMainWindow):
         if at_bottom:
             sb.setValue(sb.maximum())
 
+    # ============================
+    # 오더북 패널 핸들러
+    # ============================
+    def _on_detail_order(self, ex_name: str):
+        """상세 주문 버튼 클릭 핸들러"""
+        asyncio.get_event_loop().create_task(self._toggle_orderbook_panel(ex_name))
+
+    def _on_orderbook_panel_close(self):
+        """오더북 패널 닫기 버튼 클릭"""
+        asyncio.get_event_loop().create_task(self._close_orderbook_panel())
+
+    def _on_orderbook_cancel_all(self):
+        """오더북 패널 전체 취소 버튼 클릭"""
+        asyncio.get_event_loop().create_task(self._do_cancel_all_orders())
+
+    def _on_orderbook_price_clicked(self, price: float):
+        """오더북 가격 클릭 시 해당 카드의 limit 가격으로 설정"""
+        ex_name = self._orderbook_panel_exchange
+        if not ex_name:
+            return
+
+        card = self.cards.get(ex_name)
+        if card:
+            # 주문 타입을 limit으로 변경
+            card.set_order_type("limit")
+            self.order_type[ex_name] = "limit"
+            self.exchange_state[ex_name].order_type = "limit"
+            # 가격 설정
+            card.price_edit.setText(str(price))
+            self._log(f"[{ex_name}] Limit 가격 설정: {price}")
+
+    async def _toggle_orderbook_panel(self, ex_name: str):
+        """오더북 패널 토글"""
+        if self._orderbook_panel_exchange == ex_name and self.orderbook_panel.isVisible():
+            # 같은 거래소면 토글 (닫기)
+            await self._close_orderbook_panel()
+        else:
+            # 다른 거래소면 열기
+            await self._open_orderbook_panel(ex_name)
+
+    async def _open_orderbook_panel(self, ex_name: str):
+        """오더북 패널 열기"""
+        # 기존 패널이 열려있으면 먼저 닫기 (WS 구독 해제)
+        if self._orderbook_panel_exchange:
+            await self._close_orderbook_panel()
+
+        self._orderbook_panel_exchange = ex_name
+        coin = self.symbol_by_ex.get(ex_name, "BTC")
+        is_spot = self.market_type_by_ex.get(ex_name, "perp") == "spot"
+
+        # _do_exec와 동일한 심볼 생성 방식 사용
+        is_hl_like = self.mgr.is_hl_like(ex_name)
+        if is_hl_like:
+            sym = _compose_symbol(self.dex_by_ex.get(ex_name, "HL"), coin, is_spot)
+        else:
+            sym = coin.upper()
+        native_symbol = self.service._to_native_symbol(ex_name, sym, is_spot)
+        self._orderbook_panel_symbol = native_symbol
+
+        self.orderbook_panel.set_exchange_info(ex_name, native_symbol)
+        self.orderbook_panel.setVisible(True)
+
+        # 창 너비 확장 (오른쪽으로 늘어나는 효과)
+        current_geom = self.geometry()
+        new_width = current_geom.width() + self._orderbook_panel_width
+        self.resize(new_width, current_geom.height())
+
+        # 오더북 업데이트 루프 시작
+        if self._orderbook_task:
+            self._orderbook_task.cancel()
+        self._orderbook_task = asyncio.get_event_loop().create_task(
+            self._orderbook_update_loop(ex_name, native_symbol)
+        )
+
+    async def _close_orderbook_panel(self):
+        """오더북 패널 닫기 + WS 구독 해제"""
+        if self._orderbook_task:
+            self._orderbook_task.cancel()
+            self._orderbook_task = None
+
+        # WS 구독 해제 (필수!)
+        if self._orderbook_panel_exchange:
+            try:
+                ex = self.mgr.get_exchange(self._orderbook_panel_exchange)
+                symbol = self._orderbook_panel_symbol
+                if ex and symbol and hasattr(ex, "unsubscribe_orderbook"):
+                    await ex.unsubscribe_orderbook(symbol)
+            except Exception as e:
+                self._log(f"[ORDERBOOK] unsubscribe 실패: {e}")
+
+        # 창 너비 축소 (원래 크기로)
+        if self.orderbook_panel.isVisible():
+            current_geom = self.geometry()
+            new_width = current_geom.width() - self._orderbook_panel_width
+            self.resize(new_width, current_geom.height())
+
+        self.orderbook_panel.setVisible(False)
+        self.orderbook_panel.clear()
+        self._orderbook_panel_exchange = None
+        self._orderbook_panel_symbol = None
+
+    async def _orderbook_update_loop(self, ex_name: str, symbol: str):
+        """오더북/오픈오더 주기적 업데이트"""
+        error_count = 0
+        max_errors = 5  # 연속 에러 시 중단
+
+        while not self._stopping and self._orderbook_panel_exchange == ex_name:
+            # 심볼이 변경되었으면 이 루프 종료 (새 루프가 시작됨)
+            if self._orderbook_panel_symbol != symbol:
+                break
+
+            try:
+                ex = self.mgr.get_exchange(ex_name)
+                if not ex:
+                    break
+
+                # 오더북 조회
+                if hasattr(ex, "get_orderbook"):
+                    try:
+                        orderbook = await ex.get_orderbook(symbol)
+                        if orderbook and (orderbook.get("bids") or orderbook.get("asks")):
+                            self.orderbook_panel.update_orderbook(orderbook)
+                            error_count = 0  # 성공하면 에러 카운트 초기화
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        error_count += 1
+                        if error_count <= 2:  # 처음 몇 번만 로그
+                            self._log(f"[ORDERBOOK] {ex_name} 오더북 조회 실패: {e}")
+
+                # 오픈 오더 조회
+                if hasattr(ex, "get_open_orders"):
+                    try:
+                        open_orders = await ex.get_open_orders(symbol)
+                        self.orderbook_panel.update_open_orders(open_orders or [])
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        if error_count <= 2:
+                            self._log(f"[ORDERBOOK] {ex_name} 오픈오더 조회 실패: {e}")
+
+                # 연속 에러가 너무 많으면 잠시 대기 후 재시도
+                if error_count >= max_errors:
+                    self._log(f"[ORDERBOOK] {ex_name} 연속 에러 {error_count}회, 5초 대기")
+                    await asyncio.sleep(5.0)
+                    error_count = 0
+                    continue
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self._log(f"[ORDERBOOK] {ex_name} 업데이트 실패: {e}")
+
+            await asyncio.sleep(0.05)  # 1초 간격 업데이트
+
+    async def _do_cancel_all_orders(self):
+        """오픈 오더 전체 취소"""
+        ex_name = self._orderbook_panel_exchange
+        if not ex_name:
+            return
+
+        ex = self.mgr.get_exchange(ex_name)
+        if not ex:
+            self._log(f"[{ex_name}] 거래소 없음")
+            return
+
+        symbol = self._orderbook_panel_symbol
+        if not symbol:
+            self._log(f"[{ex_name}] 심볼 없음")
+            return
+
+        try:
+            if hasattr(ex, "cancel_orders"):
+                # 먼저 오픈 오더 조회
+                open_orders = []
+                if hasattr(ex, "get_open_orders"):
+                    open_orders = await ex.get_open_orders(symbol)
+
+                if not open_orders:
+                    self._log(f"[{ex_name}] 취소할 주문 없음")
+                    return
+
+                # 주문 취소
+                await ex.cancel_orders(symbol, open_orders)
+                self._log(f"[{ex_name}] {len(open_orders)}개 주문 취소 완료")
+            else:
+                self._log(f"[{ex_name}] cancel_orders 미지원")
+        except Exception as e:
+            self._log(f"[{ex_name}] 주문 취소 실패: {e}")
+
     async def shutdown(self):
         self._stopping = True
         if self._console_redirect_installed:
@@ -3201,6 +3905,13 @@ class UiQtApp(QtWidgets.QMainWindow):
         # Cancel tasks...
         if self._price_task: self._price_task.cancel()
         if self._status_task: self._status_task.cancel()
+        # 오더북 패널 정리
+        if self._orderbook_task: self._orderbook_task.cancel()
+        if self._orderbook_panel_exchange:
+            try:
+                await self._close_orderbook_panel()
+            except:
+                pass
         await self.mgr.close_all()
 
     def closeEvent(self, e):

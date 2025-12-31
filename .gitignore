@@ -2,6 +2,7 @@
 ai_models.txt
 .env
 *.png
+!image.png
 !screenshot*.png
 !variational_token.png
 !treadfi_token.png
