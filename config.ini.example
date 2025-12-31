@@ -109,3 +109,7 @@ show = False
 [pacifica]
 exchange = pacifica
 show = False
+
+[standx]
+exchange = standx
+show = False

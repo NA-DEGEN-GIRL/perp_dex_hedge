@@ -409,6 +409,12 @@ class ExchangeManager:
                     agent_private_key=os.getenv(f"{u_name}_AGENT_PRIVATE_KEY"),
                 )
             
+            if exchange_platform.lower() == "standx":
+                return SimpleNamespace(
+                    wallet_address=os.getenv(f"{u_name}_WALLET_ADDRESS"),
+                    evm_private_key=os.getenv(f"{u_name}_WALLET_PRIVATE_KEY"),
+                )
+            
         except Exception as e:
             logger.warning(f"[{name}] env key parse failed: {e}")
             return None
