@@ -98,7 +98,7 @@ show = False
 exchange = backpack
 show = False
 
-[treadfi_pc] # 추후 지원 예정 treadfi pacifica
+[treadfi_pc] 
 exchange = treadfi.pacifica
 show = False
 

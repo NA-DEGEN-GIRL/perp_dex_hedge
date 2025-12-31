@@ -33,7 +33,7 @@ GitHub: https://github.com/NA-DEGEN-GIRL/perp_dex_hedge
 
 ### Hyperliquid 기반
 - MASS, Lit, Dexari, Liquid, BasedOne, Supercexy, Bullpen, Dreamcash, HyEna
-- 특수 케이스: Superstack, Tread.fi (with Hyperliquid)
+- 특수 케이스: Superstack, Tread.fi (with Hyperliquid), Tread.fi (with Pacifica)
 - **Spot 지원**: Lit, Dexari, Liquid, BasedOne, Supercexy 등 (거래소별 상이)
 
 ### 비-Hyperliquid 거래소
@@ -296,7 +296,7 @@ LIT_AGENT_PRIVATE_KEY=0x...
 LIT_IS_SUB=1
 ```
 
-#### Tread.fi 설정
+#### Tread.fi (Hyperliquid) 설정
 ```env
 # 보안을 위해 프로그램 실행시 지시하는 로그인 절차를 따르는것을 추천
 TREADFI_HL_LOGIN_WALLET_ADDRESS=로그인지갑주소
@@ -306,6 +306,18 @@ TREADFI_HL_ACCOUNT_NAME=treadfi에서만든계정이름
 TREADFI_HL_LOGIN_WALLET_PRIVATE_KEY=로그인지갑프라이빗키
 TREADFI_HL_CSRF_TOKEN=쿠키에서복사
 TREADFI_HL_SESSION_ID=쿠키에서복사
+```
+
+#### Tread.fi (Pacifica) 설정
+```env
+# Tread.fi Hyperliquid와 동일한 로그인 지갑 사용 가능
+TREADFI_PC_LOGIN_WALLET_ADDRESS=로그인지갑주소
+TREADFI_PC_TRADING_WALLET_ADDRESS=거래계정주소(솔라나주소)
+TREADFI_PC_ACCOUNT_NAME=treadfi에서만든pacifica계정이름
+# 선택: 자동 로그인 원하면 아래값 설정
+TREADFI_PC_LOGIN_WALLET_PRIVATE_KEY=로그인지갑프라이빗키
+TREADFI_PC_CSRF_TOKEN=쿠키에서복사
+TREADFI_PC_SESSION_ID=쿠키에서복사
 ```
 
 #### Superstack 설정
@@ -384,6 +396,7 @@ initial_setup = xyz:XYZ100, 0.0002, long, perp
 | `hyperliquid` (또는 생략) | 일반 Hyperliquid |
 | `superstack` | Superstack |
 | `treadfi.hyperliquid` | Tread.fi (HL 계정 사용) |
+| `treadfi.pacifica` | Tread.fi (Pacifica 계정 사용) |
 | `lighter` | Lighter |
 | `backpack` | Backpack |
 | `variational` | Variational |

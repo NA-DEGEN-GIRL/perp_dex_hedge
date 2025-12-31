@@ -352,13 +352,24 @@ class ExchangeManager:
                 return SimpleNamespace(
                     session_cookies={"csrftoken":os.getenv(f"{u_name}_CSRF_TOKEN"),
                                      "sessionid":os.getenv(f"{u_name}_SESSION_ID")},
-                    login_wallet_address = wallet_address,
+                    login_wallet_address = os.getenv(f"{u_name}_LOGIN_WALLET_ADDRESS"),
                     login_wallet_private_key = os.getenv(f"{u_name}_LOGIN_WALLET_PRIVATE_KEY"),
                     trading_wallet_address = os.getenv(f"{u_name}_TRADING_WALLET_ADDRESS"),
                     account_name = os.getenv(f"{u_name}_ACCOUNT_NAME"),
                     fetch_by_ws = True,
                     trading_wallet_private_key = os.getenv("f{u_name}_TRADING_WALLET_PRIVATE_KEY", None),
                     options = {"builder_fee_pair":fee_pair}
+                )
+            
+            if exchange_platform.lower() == "treadfi.pacifica":
+                return SimpleNamespace(
+                    session_cookies={"csrftoken":os.getenv(f"{u_name}_CSRF_TOKEN"),
+                                     "sessionid":os.getenv(f"{u_name}_SESSION_ID")},
+                    login_wallet_address = os.getenv(f"{u_name}_LOGIN_WALLET_ADDRESS"),
+                    login_wallet_private_key = os.getenv(f"{u_name}_LOGIN_WALLET_PRIVATE_KEY"),
+                    pacifica_public_key = os.getenv(f"{u_name}_TRADING_WALLET_ADDRESS") or os.getenv(f"{u_name}_PACIFICA_PUBLIC_KEY"),
+                    account_name = os.getenv(f"{u_name}_ACCOUNT_NAME"),
+                    fetch_by_ws = True,
                 )
             
             if exchange_platform.lower() == "lighter":
