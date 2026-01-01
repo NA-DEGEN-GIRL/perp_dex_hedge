@@ -449,7 +449,8 @@ class TradingService:
         pos_str = last[0]
         if need_position or is_ws:
             try:
-                native = self._to_native_symbol(exchange_name, symbol)
+                quote = ex.get_perp_quote(symbol) # for tread.fi exception
+                native = self._to_native_symbol(exchange_name, symbol, is_spot=False, quote=quote)
                 pos = await ex.get_position(native)
                 json_data["position"] = None
                 pos_str = "📊 포지션: N/A"

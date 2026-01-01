@@ -3030,7 +3030,10 @@ class UiQtApp(QtWidgets.QMainWindow):
             sym = _compose_symbol(self.dex_by_ex.get(ex_name, "HL"), symbol, is_spot)
         else:
             sym = symbol.upper()
-        native_symbol = self.service._to_native_symbol(ex_name, sym, is_spot)
+
+        quote = ex.get_perp_quote(sym) # for tread.fi exception
+        native_symbol = self.service._to_native_symbol(ex_name, sym, is_spot, quote=quote)
+
         self._orderbook_panel_symbol = native_symbol
         self.orderbook_panel.set_exchange_info(ex_name, native_symbol)
         self.orderbook_panel.clear()
@@ -3763,7 +3766,10 @@ class UiQtApp(QtWidgets.QMainWindow):
             sym = _compose_symbol(self.dex_by_ex.get(ex_name, "HL"), coin, is_spot)
         else:
             sym = coin.upper()
-        native_symbol = self.service._to_native_symbol(ex_name, sym, is_spot)
+            
+        ex = self.mgr.get_exchange(ex_name)
+        quote = ex.get_perp_quote(sym) # for tread.fi exception
+        native_symbol = self.service._to_native_symbol(ex_name, sym, is_spot, quote=quote)
         self._orderbook_panel_symbol = native_symbol
 
         self.orderbook_panel.set_exchange_info(ex_name, native_symbol)
