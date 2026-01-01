@@ -992,6 +992,7 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
     market_type_changed = QtCore.Signal(str, str)  # (ex_name, "perp" or "spot")
     transfer_execute = QtCore.Signal(str, dict)  # [ADD] (ex_name, transfer_info)
     detail_order_clicked = QtCore.Signal(str)  # [ADD] 상세 주문 버튼 클릭 (ex_name)
+    close_position_clicked = QtCore.Signal(str)  # 포지션 종료 버튼 클릭 (ex_name)
 
     def __init__(self, ex_name: str, dex_choices: List[str], is_hl_like: bool = True, parent=None):
         super().__init__(parent)
@@ -1103,10 +1104,13 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         self.short_btn = QtWidgets.QPushButton("Short")
         self.off_btn = QtWidgets.QPushButton("미선택")
         self.exec_btn = QtWidgets.QPushButton("주문 실행")
+        self.close_pos_btn = QtWidgets.QPushButton("포지션 종료")  # 포지션 종료 버튼
         self.detail_btn = QtWidgets.QPushButton("상세")  # [ADD] 상세 주문 버튼
 
         self.exec_btn.setAutoDefault(False)
         self.exec_btn.setDefault(False)
+        self.close_pos_btn.setAutoDefault(False)
+        self.close_pos_btn.setDefault(False)
         self.detail_btn.setAutoDefault(False)
         self.detail_btn.setDefault(False)
 
@@ -1234,6 +1238,28 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
             }
         """
 
+        BTN_CLOSE_POS = """
+            QPushButton {
+                background-color: #3a3a3a;
+                color: #ffab91;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 8px 16px;
+            }
+            QPushButton:hover {
+                background-color: #4a4a4a;
+                border-color: #ffab91;
+            }
+            QPushButton:pressed {
+                background-color: #2a2a2a;
+            }
+            QPushButton:disabled {
+                background-color: #2a2a2a;
+                color: #555;
+                border-color: #333;
+            }
+        """
+
         for g in range(GROUP_COUNT):
             btn = QtWidgets.QPushButton(str(g))
             btn.setCheckable(True)
@@ -1247,6 +1273,7 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         self.short_btn.setStyleSheet(BTN_SHORT)
         self.off_btn.setStyleSheet(BTN_BASE)
         self.exec_btn.setStyleSheet(BTN_EXEC)
+        self.close_pos_btn.setStyleSheet(BTN_CLOSE_POS)
         self.detail_btn.setStyleSheet(BTN_DETAIL)
 
         # 정보 라벨
@@ -1537,7 +1564,7 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         header_row.addWidget(self.perp_btn, stretch=1)
         header_row.addWidget(self.spot_btn, stretch=1)
         
-        for b in (self.long_btn, self.short_btn, self.off_btn, self.exec_btn, self.detail_btn):
+        for b in (self.long_btn, self.short_btn, self.off_btn, self.exec_btn, self.close_pos_btn, self.detail_btn):
             header_row.addWidget(b, stretch=1)
         
         main_layout.addLayout(header_row)
@@ -1794,7 +1821,8 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         self.short_btn.clicked.connect(lambda: self.short_clicked.emit(self.ex_name))
         self.off_btn.clicked.connect(lambda: self.off_clicked.emit(self.ex_name))
         self.detail_btn.clicked.connect(lambda: self.detail_order_clicked.emit(self.ex_name))
-        
+        self.close_pos_btn.clicked.connect(lambda: self.close_position_clicked.emit(self.ex_name))
+
         self.market_btn.clicked.connect(self._on_market_clicked)
         self.limit_btn.clicked.connect(self._on_limit_clicked)
 
@@ -2895,7 +2923,8 @@ class UiQtApp(QtWidgets.QMainWindow):
                     card.market_type_changed.connect(self._on_market_type_change)
                     card.transfer_execute.connect(self._on_transfer_execute)
                     card.detail_order_clicked.connect(self._on_detail_order)
-                    
+                    card.close_position_clicked.connect(self._on_close_position)
+
                     self.cards[name] = card
                     '''
                     if name in self._symbol_cache_by_ex:
@@ -3124,6 +3153,33 @@ class UiQtApp(QtWidgets.QMainWindow):
 
     def _on_close_all(self):
         asyncio.get_running_loop().create_task(self._do_close_all())
+
+    def _on_close_position(self, n: str):
+        """개별 거래소 포지션 종료 핸들러"""
+        asyncio.get_running_loop().create_task(self._do_close_position(n))
+
+    async def _do_close_position(self, n: str):
+        """개별 거래소 포지션 종료"""
+        try:
+            hint = float(self.current_price.replace(",", ""))
+        except:
+            hint = None
+
+        is_hl_like = self.mgr.is_hl_like(n)
+        is_spot = self.market_type_by_ex.get(n, "perp") == "spot"
+
+        if is_hl_like:
+            sym = _compose_symbol(self.dex_by_ex.get(n, "HL"), self.symbol_by_ex.get(n, "BTC"), is_spot)
+        else:
+            sym = self.symbol_by_ex.get(n, "BTC").upper()
+
+        self._log(f"[{n.upper()}] 포지션 종료 시작... ({sym})")
+
+        try:
+            await self.service.close_position(n, sym, hint)
+            self._log(f"[{n.upper()}] 포지션 종료 완료")
+        except Exception as e:
+            self._log(f"[{n.upper()}] 포지션 종료 실패: {e}")
 
     def _on_transfer_execute(self, n: str, info: dict):
         """[ADD] 전송 실행 핸들러"""
