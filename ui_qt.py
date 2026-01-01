@@ -603,6 +603,7 @@ class OrderBookPanel(QtWidgets.QWidget):
     """오더북 + 오픈 오더 표시 패널"""
     close_clicked = QtCore.Signal()
     cancel_all_clicked = QtCore.Signal()
+    cancel_selected_clicked = QtCore.Signal(list)  # 선택된 오더 목록 전달
     price_clicked = QtCore.Signal(float)  # 가격 클릭 시 해당 가격 전달
 
     ORDERBOOK_DEPTH = 10  # 오더북 호가 수
@@ -702,32 +703,79 @@ class OrderBookPanel(QtWidgets.QWidget):
 
         # 오픈 오더 테이블
         self.orders_table = QtWidgets.QTableWidget()
-        self.orders_table.setColumnCount(4)
-        self.orders_table.setHorizontalHeaderLabels(["Side", "Price", "Size", "Order ID"])
+        self.orders_table.setColumnCount(5)
+        self.orders_table.setHorizontalHeaderLabels(["", "Side", "Price", "Size", "Order ID"])
         self.orders_table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.orders_table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        self.orders_table.setColumnWidth(0, 50)  # 체크박스 열 너비
         self.orders_table.verticalHeader().setVisible(False)
         self.orders_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         self.orders_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.orders_table.verticalHeader().setDefaultSectionSize(22)
+        self.orders_table.verticalHeader().setDefaultSectionSize(26)
         self.orders_table.setStyleSheet(f"""
             QTableWidget {{
-                background-color: #2b2b2b;
+                background-color: #3a3a3a;
                 color: #e0e0e0;
                 border: 1px solid #444;
-                gridline-color: #333;
+                gridline-color: #444;
                 font-size: {UI_FONT_SIZE}pt;
             }}
             QHeaderView::section {{
-                background-color: #3a3a3a;
-                color: #888;
-                padding: 2px;
+                background-color: #454545;
+                color: #aaa;
+                padding: 4px;
                 border: none;
                 font-size: {UI_FONT_SIZE - 1}pt;
             }}
+            QHeaderView::section:first {{
+                padding: 0px;
+            }}
         """)
-        # 오픈오더는 최대 10개 정도 보이도록
-        self.orders_table.setMinimumHeight(8 * 22 + 25)  # 8행 + 헤더
+
+        # 헤더의 첫 번째 열에 체크박스 오버레이
+        self._select_all_checkbox = QtWidgets.QCheckBox()
+        self._select_all_checkbox.setParent(self.orders_table)
+        self._select_all_checkbox.stateChanged.connect(self._on_select_all_changed)
+        # 초기 위치는 _update_select_all_checkbox_pos에서 설정
+        self._select_all_checkbox.raise_()
+
+        # 오픈오더는 최대 8개 정도 보이도록
+        self.orders_table.setMinimumHeight(8 * 26 + 28)
         layout.addWidget(self.orders_table)
+
+        # 오더 데이터 저장 (취소 시 사용)
+        self._open_orders_data: list = []
+        # 현재 표시 중인 오더 ID 목록 (변경 감지용)
+        self._current_order_ids: list = []
+        # 행별 체크박스 참조 저장
+        self._row_checkboxes: dict = {}
+
+        # 취소 버튼 레이아웃
+        cancel_btn_layout = QtWidgets.QHBoxLayout()
+        cancel_btn_layout.setSpacing(8)
+
+        # 선택 취소 버튼
+        self.cancel_selected_btn = QtWidgets.QPushButton("선택 취소")
+        self.cancel_selected_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: #3a3a3a;
+                color: #ffab91;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 6px 12px;
+                font-weight: bold;
+                font-size: {UI_FONT_SIZE}pt;
+            }}
+            QPushButton:hover {{
+                background-color: #4a4a4a;
+                border-color: #ffab91;
+            }}
+            QPushButton:pressed {{
+                background-color: #2a2a2a;
+            }}
+        """)
+        self.cancel_selected_btn.clicked.connect(self._on_cancel_selected)
+        cancel_btn_layout.addWidget(self.cancel_selected_btn)
 
         # 전체 취소 버튼
         self.cancel_all_btn = QtWidgets.QPushButton("전체 취소")
@@ -750,7 +798,9 @@ class OrderBookPanel(QtWidgets.QWidget):
             }}
         """)
         self.cancel_all_btn.clicked.connect(self.cancel_all_clicked.emit)
-        layout.addWidget(self.cancel_all_btn)
+        cancel_btn_layout.addWidget(self.cancel_all_btn)
+
+        layout.addLayout(cancel_btn_layout)
 
         # 남는 공간은 맨 아래로
         layout.addStretch(1)
@@ -932,40 +982,117 @@ class OrderBookPanel(QtWidgets.QWidget):
             if item:
                 item.setText("")
 
+    def showEvent(self, event):
+        """패널 표시 시 체크박스 위치 업데이트"""
+        super().showEvent(event)
+        QtCore.QTimer.singleShot(10, self._update_select_all_checkbox_pos)
+
+    def resizeEvent(self, event):
+        """리사이즈 시 체크박스 위치 업데이트"""
+        super().resizeEvent(event)
+        self._update_select_all_checkbox_pos()
+
+    def _update_select_all_checkbox_pos(self):
+        """전체 선택 체크박스를 헤더 첫 번째 셀 중앙에 위치"""
+        header = self.orders_table.horizontalHeader()
+        if not header.isVisible():
+            return
+        # 첫 번째 열의 폭과 헤더 높이
+        col_width = self.orders_table.columnWidth(0)
+        header_height = header.height()
+        cb_w, cb_h = 18, 18
+        x = (col_width - cb_w) // 2 + 3  # 오른쪽으로 약간 이동
+        y = (header_height - cb_h) // 2
+        self._select_all_checkbox.setGeometry(x, y, cb_w, cb_h)
+        self._select_all_checkbox.show()
+
+    def _on_select_all_changed(self, state):
+        """전체 선택 체크박스 상태 변경"""
+        is_checked = (state == QtCore.Qt.CheckState.Checked.value)
+        for cb in self._row_checkboxes.values():
+            if cb:
+                cb.setChecked(is_checked)
+
+    def _create_row_checkbox(self, order_id: str) -> QtWidgets.QWidget:
+        """행용 체크박스 위젯 생성"""
+        container = QtWidgets.QWidget()
+        layout = QtWidgets.QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+
+        checkbox = QtWidgets.QCheckBox()
+        layout.addWidget(checkbox)
+
+        # 체크박스 참조 저장
+        self._row_checkboxes[order_id] = checkbox
+        return container
+
     def update_open_orders(self, orders: list):
         """오픈 오더 목록 업데이트"""
         if orders is None:
             orders = []
 
-        self.orders_table.setRowCount(len(orders))
+        # 오더 ID 목록 추출
+        new_order_ids = [str(o.get("order_id", o.get("id", ""))) for o in orders]
 
-        for row, order in enumerate(orders):
-            side = str(order.get("side", "")).upper()
-            price = order.get("price", 0)
-            size = order.get("size", order.get("quantity", 0))
-            order_id = str(order.get("order_id", order.get("id", "")))[:12]
+        # 오더 목록이 변경된 경우에만 테이블 재구성
+        if new_order_ids != self._current_order_ids:
+            self._current_order_ids = new_order_ids
+            self._open_orders_data = orders
+            self._row_checkboxes.clear()
 
-            # Side 색상
-            side_item = QtWidgets.QTableWidgetItem(side)
-            if side == "BUY":
-                side_item.setForeground(QtGui.QColor("#81c784"))
-            else:
-                side_item.setForeground(QtGui.QColor("#ef9a9a"))
-            self.orders_table.setItem(row, 0, side_item)
+            self.orders_table.setRowCount(len(orders))
 
-            # Price (고정 자릿수)
-            price_item = QtWidgets.QTableWidgetItem(f"{float(price):,.{self._price_decimals}f}")
-            price_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
-            self.orders_table.setItem(row, 1, price_item)
+            for row, order in enumerate(orders):
+                side = str(order.get("side", "")).upper()
+                price = order.get("price", 0)
+                size = order.get("size", order.get("quantity", 0))
+                order_id = str(order.get("order_id", order.get("id", "")))
 
-            # Size (고정 자릿수)
-            size_item = QtWidgets.QTableWidgetItem(f"{float(size):,.{self._size_decimals}f}")
-            size_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
-            self.orders_table.setItem(row, 2, size_item)
+                # 체크박스 위젯 (열 0)
+                checkbox_widget = self._create_row_checkbox(order_id)
+                self.orders_table.setCellWidget(row, 0, checkbox_widget)
 
-            # Order ID
-            id_item = QtWidgets.QTableWidgetItem(order_id)
-            self.orders_table.setItem(row, 3, id_item)
+                # Side 색상 (열 1)
+                side_item = QtWidgets.QTableWidgetItem(side)
+                side_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+                if side == "BUY":
+                    side_item.setForeground(QtGui.QColor("#81c784"))
+                else:
+                    side_item.setForeground(QtGui.QColor("#ef9a9a"))
+                self.orders_table.setItem(row, 1, side_item)
+
+                # Price (열 2)
+                price_item = QtWidgets.QTableWidgetItem(f"{float(price):,.{self._price_decimals}f}")
+                price_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+                self.orders_table.setItem(row, 2, price_item)
+
+                # Size (열 3)
+                size_item = QtWidgets.QTableWidgetItem(f"{float(size):,.{self._size_decimals}f}")
+                size_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+                self.orders_table.setItem(row, 3, size_item)
+
+                # Order ID (열 4)
+                id_item = QtWidgets.QTableWidgetItem(order_id[:12])
+                self.orders_table.setItem(row, 4, id_item)
+
+    def _on_cancel_selected(self):
+        """선택된 오더 취소"""
+        selected_orders = []
+        for idx, order_id in enumerate(self._current_order_ids):
+            cb = self._row_checkboxes.get(order_id)
+            if cb and cb.isChecked():
+                if idx < len(self._open_orders_data):
+                    selected_orders.append(self._open_orders_data[idx])
+
+        if selected_orders:
+            self.cancel_selected_clicked.emit(selected_orders)
+            # 선택 취소 후 체크 해제
+            for order_id in list(self._row_checkboxes.keys()):
+                cb = self._row_checkboxes.get(order_id)
+                if cb:
+                    cb.setChecked(False)
+            self._select_all_checkbox.setChecked(False)
 
     def clear(self):
         """패널 초기화"""
@@ -974,6 +1101,10 @@ class OrderBookPanel(QtWidgets.QWidget):
             self._clear_table_row(self.bids_table, i)
         self.spread_label.setText("Spread: -")
         self.orders_table.setRowCount(0)
+        self._open_orders_data = []
+        self._current_order_ids = []
+        self._row_checkboxes.clear()
+        self._select_all_checkbox.setChecked(False)
 
 
 # ---------------------------------------------------------------------------
@@ -2610,6 +2741,7 @@ class UiQtApp(QtWidgets.QMainWindow):
         self.orderbook_panel.setVisible(False)
         self.orderbook_panel.close_clicked.connect(self._on_orderbook_panel_close)
         self.orderbook_panel.cancel_all_clicked.connect(self._on_orderbook_cancel_all)
+        self.orderbook_panel.cancel_selected_clicked.connect(self._on_orderbook_cancel_selected)
         self.orderbook_panel.price_clicked.connect(self._on_orderbook_price_clicked)
         self.center_layout.addWidget(self.orderbook_panel, 0)  # stretch factor 0 (고정)
 
@@ -3780,6 +3912,39 @@ class UiQtApp(QtWidgets.QMainWindow):
     def _on_orderbook_cancel_all(self):
         """오더북 패널 전체 취소 버튼 클릭"""
         asyncio.get_event_loop().create_task(self._do_cancel_all_orders())
+
+    def _on_orderbook_cancel_selected(self, selected_orders: list):
+        """오더북 패널 선택 취소 버튼 클릭"""
+        asyncio.get_event_loop().create_task(self._do_cancel_selected_orders(selected_orders))
+
+    async def _do_cancel_selected_orders(self, selected_orders: list):
+        """선택된 오픈 오더 취소"""
+        if not selected_orders:
+            self._log("[ORDERBOOK] 선택된 주문 없음")
+            return
+
+        ex_name = self._orderbook_panel_exchange
+        if not ex_name:
+            return
+
+        ex = self.mgr.get_exchange(ex_name)
+        if not ex:
+            self._log(f"[{ex_name}] 거래소 없음")
+            return
+
+        symbol = self._orderbook_panel_symbol
+        if not symbol:
+            self._log(f"[{ex_name}] 심볼 없음")
+            return
+
+        try:
+            if hasattr(ex, "cancel_orders"):
+                await ex.cancel_orders(symbol, selected_orders)
+                self._log(f"[{ex_name}] {len(selected_orders)}개 선택 주문 취소 완료")
+            else:
+                self._log(f"[{ex_name}] cancel_orders 미지원")
+        except Exception as e:
+            self._log(f"[{ex_name}] 선택 주문 취소 실패: {e}")
 
     def _on_orderbook_price_clicked(self, price: float):
         """오더북 가격 클릭 시 해당 카드의 limit 가격으로 설정"""
