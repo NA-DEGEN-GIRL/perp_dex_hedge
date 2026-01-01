@@ -705,9 +705,14 @@ class OrderBookPanel(QtWidgets.QWidget):
         self.orders_table = QtWidgets.QTableWidget()
         self.orders_table.setColumnCount(5)
         self.orders_table.setHorizontalHeaderLabels(["", "Side", "Price", "Size", "Order ID"])
-        self.orders_table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Stretch)
-        self.orders_table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Fixed)
-        self.orders_table.setColumnWidth(0, 50)  # 체크박스 열 너비
+        # 컬럼 크기 조절 가능하게 (Interactive), 마지막 열은 남은 공간 채움
+        self.orders_table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Interactive)
+        self.orders_table.horizontalHeader().setStretchLastSection(True)
+        # 기본 컬럼 너비 설정
+        self.orders_table.setColumnWidth(0, 40)   # 체크박스
+        self.orders_table.setColumnWidth(1, 50)   # Side
+        self.orders_table.setColumnWidth(2, 80)   # Price
+        self.orders_table.setColumnWidth(3, 70)   # Size
         self.orders_table.verticalHeader().setVisible(False)
         self.orders_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         self.orders_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -1064,16 +1069,17 @@ class OrderBookPanel(QtWidgets.QWidget):
 
                 # Price (열 2)
                 price_item = QtWidgets.QTableWidgetItem(f"{float(price):,.{self._price_decimals}f}")
-                price_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+                price_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
                 self.orders_table.setItem(row, 2, price_item)
 
                 # Size (열 3)
                 size_item = QtWidgets.QTableWidgetItem(f"{float(size):,.{self._size_decimals}f}")
-                size_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+                size_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
                 self.orders_table.setItem(row, 3, size_item)
 
                 # Order ID (열 4)
                 id_item = QtWidgets.QTableWidgetItem(order_id[:12])
+                id_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
                 self.orders_table.setItem(row, 4, id_item)
 
     def _on_cancel_selected(self):
@@ -1695,7 +1701,7 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         header_row.addWidget(self.perp_btn, stretch=1)
         header_row.addWidget(self.spot_btn, stretch=1)
         
-        for b in (self.long_btn, self.short_btn, self.off_btn, self.exec_btn, self.close_pos_btn, self.detail_btn):
+        for b in (self.long_btn, self.short_btn, self.off_btn, self.exec_btn, self.close_pos_btn):
             header_row.addWidget(b, stretch=1)
         
         main_layout.addLayout(header_row)
@@ -1724,7 +1730,7 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         input_row.addWidget(self.limit_btn, stretch=1)
         
         add_field("주문 가격:", self.price_edit, stretch=2)
-        input_row.addStretch(1)
+        input_row.addWidget(self.detail_btn, stretch=1)
         
         main_layout.addLayout(input_row)
 
@@ -2723,32 +2729,41 @@ class UiQtApp(QtWidgets.QMainWindow):
         header_gb = create_section("", self.header)
         main_vbox.addWidget(header_gb)
 
-        # 중앙 영역: Cards + OrderBook Panel (수평 레이아웃, 확장형)
-        self.center_container = QtWidgets.QWidget()
-        self.center_layout = QtWidgets.QHBoxLayout(self.center_container)
-        self.center_layout.setContentsMargins(0, 0, 0, 0)
-        self.center_layout.setSpacing(4)
+        # 중앙 영역: Cards + OrderBook Panel (QSplitter로 크기 조절 가능)
+        self.center_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        self.center_splitter.setHandleWidth(4)
+        self.center_splitter.setStyleSheet("""
+            QSplitter::handle {
+                background-color: #555;
+            }
+            QSplitter::handle:hover {
+                background-color: #777;
+            }
+        """)
 
         # Cards Scroll (왼쪽)
         cards_scroll = QtWidgets.QScrollArea()
         cards_scroll.setWidgetResizable(True)
         cards_scroll.setWidget(self.cards_container)
-        self.center_layout.addWidget(cards_scroll, 1)  # stretch factor 1
+        self.center_splitter.addWidget(cards_scroll)
 
-        # OrderBook Panel (오른쪽, 초기에는 숨김) - 고정 너비
+        # OrderBook Panel (오른쪽, 초기에는 숨김)
         self.orderbook_panel = OrderBookPanel()
-        self.orderbook_panel.setFixedWidth(400)
+        self.orderbook_panel.setMinimumWidth(300)
         self.orderbook_panel.setVisible(False)
         self.orderbook_panel.close_clicked.connect(self._on_orderbook_panel_close)
         self.orderbook_panel.cancel_all_clicked.connect(self._on_orderbook_cancel_all)
         self.orderbook_panel.cancel_selected_clicked.connect(self._on_orderbook_cancel_selected)
         self.orderbook_panel.price_clicked.connect(self._on_orderbook_price_clicked)
-        self.center_layout.addWidget(self.orderbook_panel, 0)  # stretch factor 0 (고정)
+        self.center_splitter.addWidget(self.orderbook_panel)
 
-        # 오더북 패널 너비 저장 (확장/축소용)
+        # 오더북 패널 기본 너비
         self._orderbook_panel_width = 400
 
-        main_vbox.addWidget(self.center_container, stretch=2)
+        # 초기 splitter 비율 설정 (cards:orderbook)
+        self.center_splitter.setSizes([1000, 0])
+
+        main_vbox.addWidget(self.center_splitter, stretch=2)
 
         # Bottom Area
         bottom_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
@@ -3996,10 +4011,15 @@ class UiQtApp(QtWidgets.QMainWindow):
         self.orderbook_panel.set_exchange_info(ex_name, native_symbol)
         self.orderbook_panel.setVisible(True)
 
-        # 창 너비 확장 (오른쪽으로 늘어나는 효과)
+        # 창 너비 확장 (카드 영역 유지 + 오더북 패널 추가)
         current_geom = self.geometry()
-        new_width = current_geom.width() + self._orderbook_panel_width
-        self.resize(new_width, current_geom.height())
+        sizes = self.center_splitter.sizes()
+        cards_width = sizes[0]
+        new_window_width = current_geom.width() + self._orderbook_panel_width
+        self.resize(new_window_width, current_geom.height())
+
+        # Splitter 크기 설정 (카드 영역 유지, 오더북 패널 할당)
+        self.center_splitter.setSizes([cards_width, self._orderbook_panel_width])
 
         # 오더북 업데이트 루프 시작
         if self._orderbook_task:
@@ -4024,11 +4044,20 @@ class UiQtApp(QtWidgets.QMainWindow):
             except Exception as e:
                 self._log(f"[ORDERBOOK] unsubscribe 실패: {e}")
 
-        # 창 너비 축소 (원래 크기로)
+        # 창 너비 축소 + Splitter 정리
         if self.orderbook_panel.isVisible():
+            sizes = self.center_splitter.sizes()
+            # 현재 오더북 패널 너비 저장 (다음에 열 때 사용)
+            if sizes[1] > 0:
+                self._orderbook_panel_width = sizes[1]
+
+            # 창 너비 축소
             current_geom = self.geometry()
-            new_width = current_geom.width() - self._orderbook_panel_width
+            new_width = current_geom.width() - sizes[1]
             self.resize(new_width, current_geom.height())
+
+            # Splitter 크기 조정
+            self.center_splitter.setSizes([sizes[0], 0])
 
         self.orderbook_panel.setVisible(False)
         self.orderbook_panel.clear()
