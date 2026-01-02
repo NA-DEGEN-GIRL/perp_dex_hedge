@@ -267,7 +267,7 @@ class ExchangeManager:
                 #print(key)
 
                 client = await create_exchange(exchange_platform.lower(), key)
-                #await asyncio.sleep(0.25)  # 약간의 딜레이
+                await asyncio.sleep(0.25)  # 약간의 딜레이
                 try:
                     print("dex_list_check...:",getattr(client,"dex_list"))
                 except:

@@ -310,6 +310,11 @@ RATE = {
     "CARD_PRICE_INTERVAL": {"default": 0.2},
 }
 
+# HL 거래소 주문 순차 실행 옵션
+# True: HL 거래소끼리는 순차 실행 (WS 소켓 공유 시 rate limit 방지)
+# False: 모든 거래소 병렬 실행
+HL_SEQUENTIAL_ORDER = False
+
 def _normalize_symbol_input(sym: str) -> str:
     if not sym: return ""
     s = sym.strip()
@@ -3526,7 +3531,7 @@ class UiQtApp(QtWidgets.QMainWindow):
         """[CHANGED] 현재 그룹만 실행"""
         if g is None:
             g = self.current_group
-        
+
         exec_items = []
         for n in self.mgr.visible_names():
             # [ADD] 그룹 필터
@@ -3541,20 +3546,53 @@ class UiQtApp(QtWidgets.QMainWindow):
 
         self._log(f"[EXEC ALL:G{g}] {len(exec_items)}개 거래소 주문 시작...")
 
-        tasks = [self._do_exec(n, silent=True) for n in exec_items]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
         success = 0
         failed = 0
-        for n, res in zip(exec_items, results):
-            if isinstance(res, Exception):
-                self._log(f"  ✗ {n.upper()}: {res}")
-                failed += 1
-            elif res:
-                self._log(f"  ✓ {n.upper()}: 주문 완료")
-                success += 1
-            else:
-                failed += 1
+
+        if HL_SEQUENTIAL_ORDER:
+            # HL 거래소와 비-HL 거래소 분리
+            hl_items = [n for n in exec_items if self.mgr.is_hl_like(n)]
+            non_hl_items = [n for n in exec_items if not self.mgr.is_hl_like(n)]
+
+            # 비-HL 거래소는 병렬 실행
+            if non_hl_items:
+                tasks = [self._do_exec(n, silent=True) for n in non_hl_items]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                for n, res in zip(non_hl_items, results):
+                    if isinstance(res, Exception):
+                        self._log(f"  ✗ {n.upper()}: {res}")
+                        failed += 1
+                    elif res:
+                        self._log(f"  ✓ {n.upper()}: 주문 완료")
+                        success += 1
+                    else:
+                        failed += 1
+
+            # HL 거래소는 순차 실행
+            for n in hl_items:
+                try:
+                    res = await self._do_exec(n, silent=True)
+                    if res:
+                        self._log(f"  ✓ {n.upper()}: 주문 완료")
+                        success += 1
+                    else:
+                        failed += 1
+                except Exception as e:
+                    self._log(f"  ✗ {n.upper()}: {e}")
+                    failed += 1
+        else:
+            # 모든 거래소 병렬 실행
+            tasks = [self._do_exec(n, silent=True) for n in exec_items]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for n, res in zip(exec_items, results):
+                if isinstance(res, Exception):
+                    self._log(f"  ✗ {n.upper()}: {res}")
+                    failed += 1
+                elif res:
+                    self._log(f"  ✓ {n.upper()}: 주문 완료")
+                    success += 1
+                else:
+                    failed += 1
 
         self._log(f"[EXEC ALL:G{g}] 완료 (성공: {success}, 실패: {failed})")
 
@@ -3567,7 +3605,7 @@ class UiQtApp(QtWidgets.QMainWindow):
         for n in self.mgr.visible_names():
             if self.group_by_ex.get(n, 0) != g:
                 continue
-            
+
             if self.enabled.get(n):
                 try:
                     hint = float(self.current_price.replace(",", ""))
@@ -3581,7 +3619,7 @@ class UiQtApp(QtWidgets.QMainWindow):
                 else:
                     sym = self.symbol_by_ex[n].upper()
 
-                close_items.append((n, sym, hint))
+                close_items.append((n, sym, hint, is_hl_like))
 
         if not close_items:
             self._log("[CLOSE ALL] 종료할 포지션 없음")
@@ -3589,24 +3627,49 @@ class UiQtApp(QtWidgets.QMainWindow):
 
         self._log(f"[CLOSE ALL] {len(close_items)}개 포지션 종료 시작...")
 
-        tasks = [
-            self.service.close_position(n, sym, hint)
-            for n, sym, hint in close_items
-        ]
-
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # 결과 집계
         success = 0
         failed = 0
-        for (n, sym, _), res in zip(close_items, results):
-            if isinstance(res, Exception):
-                self._log(f"  ✗ {n.upper()}: {res}")
-                failed += 1
-            else:
-                self._log(f"  ✓ {n.upper()}: 종료 완료")
-                self._force_status_update.add(n)
-                success += 1
+
+        if HL_SEQUENTIAL_ORDER:
+            # HL 거래소와 비-HL 거래소 분리
+            hl_items = [(n, sym, hint) for n, sym, hint, is_hl in close_items if is_hl]
+            non_hl_items = [(n, sym, hint) for n, sym, hint, is_hl in close_items if not is_hl]
+
+            # 비-HL 거래소는 병렬 실행
+            if non_hl_items:
+                tasks = [self.service.close_position(n, sym, hint) for n, sym, hint in non_hl_items]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                for (n, sym, _), res in zip(non_hl_items, results):
+                    if isinstance(res, Exception):
+                        self._log(f"  ✗ {n.upper()}: {res}")
+                        failed += 1
+                    else:
+                        self._log(f"  ✓ {n.upper()}: 종료 완료")
+                        self._force_status_update.add(n)
+                        success += 1
+
+            # HL 거래소는 순차 실행
+            for n, sym, hint in hl_items:
+                try:
+                    res = await self.service.close_position(n, sym, hint)
+                    self._log(f"  ✓ {n.upper()}: 종료 완료")
+                    self._force_status_update.add(n)
+                    success += 1
+                except Exception as e:
+                    self._log(f"  ✗ {n.upper()}: {e}")
+                    failed += 1
+        else:
+            # 모든 거래소 병렬 실행
+            tasks = [self.service.close_position(n, sym, hint) for n, sym, hint, _ in close_items]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for (n, sym, _, __), res in zip(close_items, results):
+                if isinstance(res, Exception):
+                    self._log(f"  ✗ {n.upper()}: {res}")
+                    failed += 1
+                else:
+                    self._log(f"  ✓ {n.upper()}: 종료 완료")
+                    self._force_status_update.add(n)
+                    success += 1
 
         self._log(f"[CLOSE ALL] 완료 (성공: {success}, 실패: {failed})")
 
@@ -3972,7 +4035,14 @@ class UiQtApp(QtWidgets.QMainWindow):
             try:
                 now = time.monotonic()
                 visible_names = self.mgr.visible_names()
-
+                """
+                # 병렬 업데이트
+                tasks = [
+                    self._update_single_card(n, now)
+                    for n in visible_names
+                ]
+                await asyncio.gather(*tasks, return_exceptions=True)
+                """
                 for n in visible_names:
                     await self._update_single_card(n, now)
                 self._initial_load_done = True
@@ -3991,6 +4061,7 @@ class UiQtApp(QtWidgets.QMainWindow):
                     ]
                     await asyncio.gather(*tasks, return_exceptions=True)
                 """
+                
 
             except asyncio.CancelledError:
                 break
