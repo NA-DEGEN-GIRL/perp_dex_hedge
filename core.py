@@ -133,8 +133,14 @@ class ExchangeManager:
         self.exchanges = {}
         self.meta = {}
         for exchange_name in EXCHANGES:
-            show = config.get(exchange_name, "show", fallback="True").strip().lower() == "true"
-            
+            # show 파싱: True, False, Never 지원
+            # Never: 거래소 생성 자체를 안 함 (UI에도 안 보임)
+            show_raw = config.get(exchange_name, "show", fallback="True").strip().lower()
+            if show_raw == "never":
+                show = "never"
+            else:
+                show = (show_raw == "true")
+
             exchange_platform = config.get(exchange_name, "exchange", fallback='hyperliquid')
             hl_like = (exchange_platform in ("hyperliquid", "superstack", "treadfi.hyperliquid"))
 
@@ -248,6 +254,11 @@ class ExchangeManager:
                 continue
 
             if create_exchange is None:
+                continue
+
+            # show=never인 거래소는 생성하지 않음
+            if self.meta.get(name, {}).get("show") == "never":
+                logger.info(f"[{name}] show=never, 거래소 생성 스킵")
                 continue
 
             # we know fn: name -> exchange (platform)
@@ -464,7 +475,12 @@ class ExchangeManager:
         return self.get_meta(name).get("exchange")
 
     def visible_names(self):
-        return [n for n in EXCHANGES if self.meta.get(n, {}).get("show", False)]
+        """show=True인 거래소 목록 (UI에 카드로 표시)"""
+        return [n for n in EXCHANGES if self.meta.get(n, {}).get("show") is True]
+
+    def available_names(self):
+        """show!=never인 거래소 목록 (선택 가능한 거래소)"""
+        return [n for n in EXCHANGES if self.meta.get(n, {}).get("show") != "never"]
 
     def all_names(self):
         return list(EXCHANGES)

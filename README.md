@@ -382,13 +382,25 @@ PACIFICA_AGENT_PRIVATE_KEY=API프라이빗키
 #### 기본 구조
 ```ini
 [거래소이름]
-show = True              # UI에 표시할지 여부
+show = True              # UI에 표시할지 여부 (True/False/Never)
 exchange = hyperliquid   # 거래소 엔진 종류
 builder_code = 0x...     # HL 빌더 코드 (HL 기반만)
 fee_rate = 20 / 25       # 수수료 (limit / market)
 # [신규] 카드 초기값 설정 (심볼, 수량, long/short, spot/perp)
 initial_setup = xyz:XYZ100, 0.0002, long, perp
 ```
+
+#### show 옵션 설명
+
+| 값 | 설명 |
+|----|------|
+| `True` | UI에 카드로 표시되고, 거래소 클라이언트 생성됨 |
+| `False` | UI에서 숨김 (카드 안 보임), 하지만 거래소 클라이언트는 생성됨. 토글로 다시 켤 수 있음 |
+| `Never` | 거래소 클라이언트 자체를 생성하지 않음. 선택 목록에도 안 나옴. `.env`에 키는 유지하되 당분간 사용 안 할 때 유용 |
+
+**Never 사용 예시:**
+- 잠시 사용 안 하는 거래소를 `.env`에서 지우지 않고 비활성화하고 싶을 때
+- 나중에 `True` 또는 `False`로 바꿔서 다시 활성화 가능
 
 #### exchange 값 종류
 | 값 | 설명 |
@@ -461,10 +473,16 @@ fee_rate = 35 / 50
 initial_setup = BTC, 0.002, long, perp, 1
 show = True
 
-# 사용 안 할 거래소: show = False
+# 숨김 (토글로 다시 켤 수 있음): show = False
 [paradex]
 exchange = paradex
 show = False
+
+# 완전 비활성화 (클라이언트 생성 안 함): show = Never
+# .env에 키는 유지하되 당분간 안 쓸 때 유용
+[grvt]
+exchange = grvt
+show = Never
 
 # 비-HL 거래소는 exchange 필수
 [backpack]
@@ -607,7 +625,10 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force
 ```
 
 ### Q: 거래소가 안 보여요
-A: `config.ini`에서 해당 거래소 `show = True` 확인
+A: `config.ini`에서 해당 거래소 `show` 값 확인
+- `show = True` → 카드에 표시
+- `show = False` → 숨김 상태 (토글로 켤 수 있음)
+- `show = Never` → 완전 비활성화 (선택 목록에도 안 나옴)
 
 ### Q: "API key not found" 오류
 A: `.env` 파일에 해당 거래소 키가 올바르게 입력되었는지 확인
