@@ -301,10 +301,11 @@ _ensure_ts_logger()
 
 
 RATE = {
-    "GAP_FOR_INF": 0.05,
-    "STATUS_POS_INTERVAL": {"default": 0.5},
-    "STATUS_COLLATERAL_INTERVAL": {"default": 0.5},
-    "CARD_PRICE_INTERVAL": {"default": 1.0},
+    "GAP_FOR_INF": 0.01,
+    "STATUS_POS_INTERVAL": {"default": 0.5, "standx":100000.0},
+    "STATUS_OO_INTERVAL": {"default": 0.5, "standx":100000.0},
+    "STATUS_COLLATERAL_INTERVAL": {"default": 0.5,"standx":100000.0},
+    "CARD_PRICE_INTERVAL": {"default": 0.05},
 }
 
 def _normalize_symbol_input(sym: str) -> str:
@@ -1128,7 +1129,7 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
     group_changed = QtCore.Signal(str, int)  # (ex_name, group)
     market_type_changed = QtCore.Signal(str, str)  # (ex_name, "perp" or "spot")
     transfer_execute = QtCore.Signal(str, dict)  # [ADD] (ex_name, transfer_info)
-    detail_order_clicked = QtCore.Signal(str)  # [ADD] 상세 주문 버튼 클릭 (ex_name)
+    detail_order_clicked = QtCore.Signal(str, str)  # [ADD] 상세 주문 버튼 클릭 (ex_name, direction: "left" or "right")
     close_position_clicked = QtCore.Signal(str)  # 포지션 종료 버튼 클릭 (ex_name)
 
     def __init__(self, ex_name: str, dex_choices: List[str], is_hl_like: bool = True, parent=None):
@@ -1242,7 +1243,15 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         self.off_btn = QtWidgets.QPushButton("미선택")
         self.exec_btn = QtWidgets.QPushButton("주문 실행")
         self.close_pos_btn = QtWidgets.QPushButton("포지션 종료")  # 포지션 종료 버튼
-        self.detail_btn = QtWidgets.QPushButton("상세")  # [ADD] 상세 주문 버튼
+
+        # 상세 버튼 + 방향 선택 버튼
+        self.detail_left_btn = QtWidgets.QPushButton("◀")  # 왼쪽 방향
+        self.detail_right_btn = QtWidgets.QPushButton("▶")  # 오른쪽 방향 (기본)
+        self.detail_btn = QtWidgets.QPushButton("상세")
+
+        self.detail_left_btn.setCheckable(True)
+        self.detail_right_btn.setCheckable(True)
+        self.detail_right_btn.setChecked(True)  # 기본: 오른쪽
 
         self.exec_btn.setAutoDefault(False)
         self.exec_btn.setDefault(False)
@@ -1250,6 +1259,8 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         self.close_pos_btn.setDefault(False)
         self.detail_btn.setAutoDefault(False)
         self.detail_btn.setDefault(False)
+        self.detail_left_btn.setAutoDefault(False)
+        self.detail_right_btn.setAutoDefault(False)
 
         self.group_buttons: Dict[int, QtWidgets.QPushButton] = {}
         self.current_group = 0
@@ -1375,6 +1386,32 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
             }
         """
 
+        BTN_ARROW = """
+            QPushButton {
+                background-color: #3a3a3a;
+                color: #888;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 4px 6px;
+                min-width: 20px;
+                max-width: 24px;
+            }
+            QPushButton:hover {
+                background-color: #4a4a4a;
+                color: #ce93d8;
+            }
+            QPushButton:checked {
+                background-color: #4a3a4a;
+                color: #ce93d8;
+                border-color: #ce93d8;
+            }
+            QPushButton:disabled {
+                background-color: #2a2a2a;
+                color: #444;
+                border-color: #333;
+            }
+        """
+
         BTN_CLOSE_POS = """
             QPushButton {
                 background-color: #3a3a3a;
@@ -1412,6 +1449,8 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         self.exec_btn.setStyleSheet(BTN_EXEC)
         self.close_pos_btn.setStyleSheet(BTN_CLOSE_POS)
         self.detail_btn.setStyleSheet(BTN_DETAIL)
+        self.detail_left_btn.setStyleSheet(BTN_ARROW)
+        self.detail_right_btn.setStyleSheet(BTN_ARROW)
 
         # 정보 라벨
         self.price_title = QtWidgets.QLabel("가격: ")
@@ -1730,6 +1769,8 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         input_row.addWidget(self.limit_btn, stretch=1)
         
         add_field("주문 가격:", self.price_edit, stretch=2)
+        input_row.addWidget(self.detail_left_btn)
+        input_row.addWidget(self.detail_right_btn)
         input_row.addWidget(self.detail_btn, stretch=1)
         
         main_layout.addLayout(input_row)
@@ -1952,13 +1993,33 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         self.price_edit.setPlaceholderText("")
         self.order_type_changed.emit(self.ex_name, "limit")
 
+    def _on_detail_left_clicked(self):
+        self.detail_left_btn.setChecked(True)
+        self.detail_right_btn.setChecked(False)
+
+    def _on_detail_right_clicked(self):
+        self.detail_left_btn.setChecked(False)
+        self.detail_right_btn.setChecked(True)
+
+    def _on_detail_clicked(self):
+        direction = "left" if self.detail_left_btn.isChecked() else "right"
+        self.detail_order_clicked.emit(self.ex_name, direction)
+
+    def get_detail_direction(self) -> str:
+        """현재 선택된 상세 방향 반환"""
+        return "left" if self.detail_left_btn.isChecked() else "right"
+
     def _connect_signals(self) -> None:
         self.exec_btn.clicked.connect(lambda: self.execute_clicked.emit(self.ex_name))
         self.long_btn.clicked.connect(lambda: self.long_clicked.emit(self.ex_name))
         self.short_btn.clicked.connect(lambda: self.short_clicked.emit(self.ex_name))
         self.off_btn.clicked.connect(lambda: self.off_clicked.emit(self.ex_name))
-        self.detail_btn.clicked.connect(lambda: self.detail_order_clicked.emit(self.ex_name))
+        self.detail_btn.clicked.connect(self._on_detail_clicked)
         self.close_pos_btn.clicked.connect(lambda: self.close_position_clicked.emit(self.ex_name))
+
+        # 방향 버튼 토글 (라디오 버튼처럼 동작)
+        self.detail_left_btn.clicked.connect(self._on_detail_left_clicked)
+        self.detail_right_btn.clicked.connect(self._on_detail_right_clicked)
 
         self.market_btn.clicked.connect(self._on_market_clicked)
         self.limit_btn.clicked.connect(self._on_limit_clicked)
@@ -2018,6 +2079,8 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
     def set_has_orderbook(self, has_orderbook: bool):
         """오더북 기능 지원 여부에 따라 상세 버튼 활성화/비활성화"""
         self.detail_btn.setEnabled(has_orderbook)
+        self.detail_left_btn.setEnabled(has_orderbook)
+        self.detail_right_btn.setEnabled(has_orderbook)
 
     def _adjust_pos_label_width(self, is_spot: bool):
         """[ADD] 포지션 라벨 너비를 모드에 따라 조정"""
@@ -2548,9 +2611,11 @@ class UiQtApp(QtWidgets.QMainWindow):
         self._stopping = False
         self._price_task = None
         self._status_task = None
-        self._last_balance_at = {}
-        self._last_pos_at = {}
-        self._last_price_at = {}
+        self._last_balance_at: dict[str, float] = {}
+        self._last_pos_at: dict[str, float] = {}
+        self._last_price_at: dict[str, float] = {}
+        self._force_status_update: set[str] = set()  # 잔고/포지션 즉시 업데이트용
+        self._force_open_orders_update: set[str] = set()  # 오픈오더 즉시 업데이트용
 
         # Components
         self.header = HeaderWidget()
@@ -2606,11 +2671,16 @@ class UiQtApp(QtWidgets.QMainWindow):
 
         self._switching_group = False
 
-        # 오더북 패널 상태
-        self.orderbook_panel: Optional[OrderBookPanel] = None  # 패널 인스턴스
-        self._orderbook_panel_exchange: Optional[str] = None   # 현재 표시 중인 거래소
-        self._orderbook_panel_symbol: Optional[str] = None     # 현재 구독 중인 심볼 (unsubscribe용)
-        self._orderbook_task: Optional[asyncio.Task] = None    # 오더북 업데이트 태스크
+        # 오더북 패널 상태 (왼쪽/오른쪽 각각)
+        self._orderbook_panel_exchange_left: Optional[str] = None
+        self._orderbook_panel_symbol_left: Optional[str] = None
+        self._orderbook_task_left: Optional[asyncio.Task] = None
+        self._last_open_orders_at_left: float = 0.0
+
+        self._orderbook_panel_exchange_right: Optional[str] = None
+        self._orderbook_panel_symbol_right: Optional[str] = None
+        self._orderbook_task_right: Optional[asyncio.Task] = None
+        self._last_open_orders_at_right: float = 0.0
 
         self._build_main_layout()
         self._connect_header_signals()
@@ -2729,7 +2799,7 @@ class UiQtApp(QtWidgets.QMainWindow):
         header_gb = create_section("", self.header)
         main_vbox.addWidget(header_gb)
 
-        # 중앙 영역: Cards + OrderBook Panel (QSplitter로 크기 조절 가능)
+        # 중앙 영역: Left Panel + Cards + Right Panel (QSplitter로 크기 조절 가능)
         self.center_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         self.center_splitter.setHandleWidth(4)
         self.center_splitter.setStyleSheet("""
@@ -2741,27 +2811,38 @@ class UiQtApp(QtWidgets.QMainWindow):
             }
         """)
 
-        # Cards Scroll (왼쪽)
+        # 왼쪽 OrderBook Panel (초기에는 숨김)
+        self.orderbook_panel_left = OrderBookPanel()
+        self.orderbook_panel_left.setMinimumWidth(300)
+        self.orderbook_panel_left.setVisible(False)
+        self.orderbook_panel_left.close_clicked.connect(lambda: self._on_orderbook_panel_close("left"))
+        self.orderbook_panel_left.cancel_all_clicked.connect(lambda: self._on_orderbook_cancel_all("left"))
+        self.orderbook_panel_left.cancel_selected_clicked.connect(lambda orders: self._on_orderbook_cancel_selected(orders, "left"))
+        self.orderbook_panel_left.price_clicked.connect(self._on_orderbook_price_clicked)
+        self.center_splitter.addWidget(self.orderbook_panel_left)
+
+        # Cards Scroll (중앙)
         cards_scroll = QtWidgets.QScrollArea()
         cards_scroll.setWidgetResizable(True)
         cards_scroll.setWidget(self.cards_container)
         self.center_splitter.addWidget(cards_scroll)
 
-        # OrderBook Panel (오른쪽, 초기에는 숨김)
-        self.orderbook_panel = OrderBookPanel()
-        self.orderbook_panel.setMinimumWidth(300)
-        self.orderbook_panel.setVisible(False)
-        self.orderbook_panel.close_clicked.connect(self._on_orderbook_panel_close)
-        self.orderbook_panel.cancel_all_clicked.connect(self._on_orderbook_cancel_all)
-        self.orderbook_panel.cancel_selected_clicked.connect(self._on_orderbook_cancel_selected)
-        self.orderbook_panel.price_clicked.connect(self._on_orderbook_price_clicked)
-        self.center_splitter.addWidget(self.orderbook_panel)
+        # 오른쪽 OrderBook Panel (초기에는 숨김)
+        self.orderbook_panel_right = OrderBookPanel()
+        self.orderbook_panel_right.setMinimumWidth(300)
+        self.orderbook_panel_right.setVisible(False)
+        self.orderbook_panel_right.close_clicked.connect(lambda: self._on_orderbook_panel_close("right"))
+        self.orderbook_panel_right.cancel_all_clicked.connect(lambda: self._on_orderbook_cancel_all("right"))
+        self.orderbook_panel_right.cancel_selected_clicked.connect(lambda orders: self._on_orderbook_cancel_selected(orders, "right"))
+        self.orderbook_panel_right.price_clicked.connect(self._on_orderbook_price_clicked)
+        self.center_splitter.addWidget(self.orderbook_panel_right)
 
         # 오더북 패널 기본 너비
-        self._orderbook_panel_width = 400
+        self._orderbook_panel_width_left = 400
+        self._orderbook_panel_width_right = 400
 
-        # 초기 splitter 비율 설정 (cards:orderbook)
-        self.center_splitter.setSizes([1000, 0])
+        # 초기 splitter 비율 설정 (left:cards:right)
+        self.center_splitter.setSizes([0, 1000, 0])
 
         main_vbox.addWidget(self.center_splitter, stretch=2)
 
@@ -3182,20 +3263,26 @@ class UiQtApp(QtWidgets.QMainWindow):
         s = _normalize_symbol_input(t or self.symbol)
         self.symbol_by_ex[n] = s
         self.exchange_state[n].symbol = s
-        # 오더북 패널이 열려있으면 심볼 변경 시 갱신
-        if self._orderbook_panel_exchange == n:
-            asyncio.get_event_loop().create_task(self._refresh_orderbook_for_symbol(n, s))
+        # 오더북 패널이 열려있으면 심볼 변경 시 갱신 (왼쪽/오른쪽 모두 체크)
+        if self._orderbook_panel_exchange_left == n:
+            asyncio.get_event_loop().create_task(self._refresh_orderbook_for_symbol(n, s, "left"))
+        if self._orderbook_panel_exchange_right == n:
+            asyncio.get_event_loop().create_task(self._refresh_orderbook_for_symbol(n, s, "right"))
 
-    async def _refresh_orderbook_for_symbol(self, ex_name: str, symbol: str):
+    async def _refresh_orderbook_for_symbol(self, ex_name: str, symbol: str, direction: str = "right"):
         """심볼 변경 시 오더북 갱신 (WS 재구독)"""
-        if self._orderbook_panel_exchange != ex_name:
+        panel = self._get_panel_by_direction(direction)
+        panel_exchange = self._get_panel_exchange(direction)
+        panel_symbol = self._get_panel_symbol(direction)
+
+        if panel_exchange != ex_name:
             return
+
         # 기존 구독 해제
         try:
             ex = self.mgr.get_exchange(ex_name)
-            old_symbol = self._orderbook_panel_symbol
-            if ex and old_symbol and hasattr(ex, "unsubscribe_orderbook"):
-                await ex.unsubscribe_orderbook(old_symbol)
+            if ex and panel_symbol and hasattr(ex, "unsubscribe_orderbook"):
+                await ex.unsubscribe_orderbook(panel_symbol)
         except Exception as e:
             self._log(f"[ORDERBOOK] unsubscribe 실패: {e}")
 
@@ -3207,19 +3294,30 @@ class UiQtApp(QtWidgets.QMainWindow):
         else:
             sym = symbol.upper()
 
-        quote = ex.get_perp_quote(sym) # for tread.fi exception
+        quote = ex.get_perp_quote(sym)
         native_symbol = self.service._to_native_symbol(ex_name, sym, is_spot, quote=quote)
 
-        self._orderbook_panel_symbol = native_symbol
-        self.orderbook_panel.set_exchange_info(ex_name, native_symbol)
-        self.orderbook_panel.clear()
+        if direction == "left":
+            self._orderbook_panel_symbol_left = native_symbol
+        else:
+            self._orderbook_panel_symbol_right = native_symbol
+
+        panel.set_exchange_info(ex_name, native_symbol)
+        panel.clear()
 
         # 업데이트 태스크 재시작
-        if self._orderbook_task:
-            self._orderbook_task.cancel()
-        self._orderbook_task = asyncio.get_event_loop().create_task(
-            self._orderbook_update_loop(ex_name, native_symbol)
-        )
+        if direction == "left":
+            if self._orderbook_task_left:
+                self._orderbook_task_left.cancel()
+            self._orderbook_task_left = asyncio.get_event_loop().create_task(
+                self._orderbook_update_loop(ex_name, native_symbol, direction)
+            )
+        else:
+            if self._orderbook_task_right:
+                self._orderbook_task_right.cancel()
+            self._orderbook_task_right = asyncio.get_event_loop().create_task(
+                self._orderbook_update_loop(ex_name, native_symbol, direction)
+            )
 
     def _on_card_dex(self, n, d):
         """카드의 DEX 변경 처리 (perp에서만 DEX 선택 가능)"""
@@ -3255,10 +3353,14 @@ class UiQtApp(QtWidgets.QMainWindow):
                     self.symbol_by_ex[n] = normalized
                     self.exchange_state[n].symbol = normalized
 
-                    # 오더북 패널이 열려있으면 새 심볼로 갱신
-                    if self._orderbook_panel_exchange == n:
+                    # 오더북 패널이 열려있으면 새 심볼로 갱신 (왼쪽/오른쪽 모두 체크)
+                    if self._orderbook_panel_exchange_left == n:
                         asyncio.get_event_loop().create_task(
-                            self._refresh_orderbook_for_symbol(n, normalized)
+                            self._refresh_orderbook_for_symbol(n, normalized, "left")
+                        )
+                    if self._orderbook_panel_exchange_right == n:
+                        asyncio.get_event_loop().create_task(
+                            self._refresh_orderbook_for_symbol(n, normalized, "right")
                         )
 
     def _on_long(self, n): self._set_side(n, "buy")
@@ -3325,6 +3427,7 @@ class UiQtApp(QtWidgets.QMainWindow):
         try:
             await self.service.close_position(n, sym, hint)
             self._log(f"[{n.upper()}] 포지션 종료 완료")
+            self._force_status_update.add(n)
         except Exception as e:
             self._log(f"[{n.upper()}] 포지션 종료 실패: {e}")
 
@@ -3349,9 +3452,10 @@ class UiQtApp(QtWidgets.QMainWindow):
             if direction == "to_perp":
                 if hasattr(ex, "transfer_to_perp"):
                     result = await ex.transfer_to_perp(amount)
-                    status =  result.get('status','error')
+                    status = result.get('status', 'error')
                     if status == 'ok':
                         self._log(f"[{n.upper()}] Spot → Perp 전송 완료: {amount} {coin}")
+                        self._force_status_update.add(n)
                     else:
                         self._log(f"[{n.upper()}] Spot → Perp 에러 : {str(result)}")
                 else:
@@ -3359,9 +3463,10 @@ class UiQtApp(QtWidgets.QMainWindow):
             elif direction == "to_spot":
                 if hasattr(ex, "transfer_to_spot"):
                     result = await ex.transfer_to_spot(amount)
-                    status =  result.get('status','error')
+                    status = result.get('status', 'error')
                     if status == 'ok':
                         self._log(f"[{n.upper()}] Perp → Spot 전송 완료: {amount} {coin}")
+                        self._force_status_update.add(n)
                     else:
                         self._log(f"[{n.upper()}] Perp → Spot 에러 : {str(result)}")
                 else:
@@ -3403,6 +3508,10 @@ class UiQtApp(QtWidgets.QMainWindow):
 
             if not silent:
                 self._log(f"[{n.upper()}] OK: {res['id']}")
+
+            # 주문 성공 시 즉시 업데이트 요청
+            self._force_status_update.add(n)  # 잔고/포지션
+            self._force_open_orders_update.add(n)  # 오픈오더 (limit 주문 시)
 
             return True
         except Exception as e:
@@ -3493,6 +3602,7 @@ class UiQtApp(QtWidgets.QMainWindow):
                 failed += 1
             else:
                 self._log(f"  ✓ {n.upper()}: 종료 완료")
+                self._force_status_update.add(n)
                 success += 1
 
         self._log(f"[CLOSE ALL] 완료 (성공: {success}, 실패: {failed})")
@@ -3728,136 +3838,143 @@ class UiQtApp(QtWidgets.QMainWindow):
             except: pass
             await asyncio.sleep(RATE["GAP_FOR_INF"])
 
+    async def _update_single_card(self, n: str, now: float):
+        """단일 카드 상태 업데이트 (병렬 처리용)"""
+        try:
+            if n not in self.cards:
+                return
+            c = self.cards[n]
+
+            # 카드가 삭제 예정이거나 이미 삭제됐으면 스킵
+            if not c.is_valid():
+                return
+
+            # 거래소 플랫폼별 업데이트 주기 결정
+            meta = self.mgr.get_meta(n)
+            exchange_platform = meta.get("exchange", "hyperliquid")
+
+            try:
+                col_interval = RATE["STATUS_COLLATERAL_INTERVAL"].get(
+                    exchange_platform,
+                    RATE["STATUS_COLLATERAL_INTERVAL"]["default"]
+                )
+                pos_interval = RATE["STATUS_POS_INTERVAL"].get(
+                    exchange_platform,
+                    RATE["STATUS_POS_INTERVAL"]["default"]
+                )
+                price_interval = RATE["CARD_PRICE_INTERVAL"].get(
+                    exchange_platform,
+                    RATE["CARD_PRICE_INTERVAL"]["default"]
+                )
+            except Exception:
+                col_interval = RATE["STATUS_COLLATERAL_INTERVAL"]["default"]
+                pos_interval = RATE["STATUS_POS_INTERVAL"]["default"]
+                price_interval = RATE["CARD_PRICE_INTERVAL"]["default"]
+
+            # 업데이트 필요 여부 판단 (force_update 시 즉시 업데이트)
+            force_update = n in self._force_status_update
+            need_collat = force_update or (now - self._last_balance_at.get(n, 0.0) >= col_interval)
+            need_pos = force_update or (now - self._last_pos_at.get(n, 0.0) >= pos_interval)
+            need_price = force_update or (now - self._last_price_at.get(n, 0.0) >= price_interval)
+
+            # WS 거래소는 항상 업데이트
+            ex = self.mgr.get_exchange(n)
+            if not ex:
+                return
+            is_ws = hasattr(ex, "fetch_by_ws") and getattr(ex, "fetch_by_ws", False)
+            is_hl_like = self.mgr.is_hl_like(n)
+            is_spot = self.market_type_by_ex.get(n, "perp") == "spot"
+
+            # [수정] 비-HL은 DEX 무시, HL-like만 DEX 적용
+            if is_hl_like:
+                sym = _compose_symbol(self.dex_by_ex[n], self.symbol_by_ex[n], is_spot)
+            else:
+                sym = self.symbol_by_ex[n].upper()
+
+            # 가격 업데이트
+            if need_price or is_ws:
+                try:
+                    p = await self.service.fetch_price(n, sym, is_spot=is_spot)
+                    c.set_price_label(p)
+                    self._last_price_at[n] = now
+                except RuntimeError:
+                    return
+                except Exception:
+                    try:
+                        c.set_price_label("Err")
+                    except RuntimeError:
+                        return
+
+            # Quote 라벨 업데이트
+            try:
+                quote_str = ex.get_perp_quote(sym)
+                c.set_quote_label(quote_str)
+            except RuntimeError:
+                return
+            except Exception as e:
+                logger.debug(f"[UI] quote update failed for {n}: {e}", exc_info=True)
+                try:
+                    c.set_quote_label("")
+                except RuntimeError:
+                    return
+
+            # Builder Fee 업데이트 (HL-like만)
+            if is_hl_like:
+                self._update_fee(n)
+
+            # 포지션/잔고 업데이트
+            if need_pos or need_collat or is_ws:
+                try:
+                    is_spot = self.market_type_by_ex.get(n, "perp") == "spot"
+                    _pos, _col, total_col_val, json_data = await self.service.fetch_status(
+                        n, sym,
+                        need_balance=need_collat or is_ws,
+                        need_position=need_pos or is_ws,
+                        is_spot=is_spot
+                    )
+
+                    c.set_status_info(json_data)
+
+                    if need_collat or is_ws:
+                        if total_col_val:
+                            self.collateral[n] = float(total_col_val)
+                        self._last_balance_at[n] = now
+
+                    if need_pos or is_ws:
+                        self._last_pos_at[n] = now
+
+                    # force update 플래그 해제
+                    self._force_status_update.discard(n)
+
+                except RuntimeError:
+                    return
+                except Exception as e:
+                    logger.debug(f"[UI] Status update for {n} failed: {e}")
+
+        except RuntimeError:
+            # 카드가 삭제된 경우
+            pass
+        except Exception as e:
+            logger.debug(f"[UI] Card update error for {n}: {e}")
+
     async def _status_loop(self):
         """
         거래소별 상태(가격/포지션/잔고) 업데이트 루프.
+        - 모든 카드를 병렬로 동시 업데이트
         - WS 거래소: 매 틱마다 업데이트
         - REST 거래소: RATE에 정의된 주기에 따라 업데이트
         """
-        # 초기 지연 (UI가 완전히 로드된 후 시작)
-        await asyncio.sleep(0.3)
-        
         while not self._stopping:
             try:
                 now = time.monotonic()
-                
-                for n in self.mgr.visible_names():
-                    # [CHANGED] 전체 카드 처리를 try-except RuntimeError로 감싸서
-                    # await 중 카드가 삭제되어도 안전하게 처리
-                    try:
-                        if n not in self.cards:
-                            continue
-                        c = self.cards[n]
-                        
-                        # 카드가 삭제 예정이거나 이미 삭제됐으면 스킵
-                        if not c.is_valid():
-                            continue
-                        
-                        # 거래소 플랫폼별 업데이트 주기 결정
-                        meta = self.mgr.get_meta(n)
-                        exchange_platform = meta.get("exchange", "hyperliquid")
-                        
-                        try:
-                            col_interval = RATE["STATUS_COLLATERAL_INTERVAL"].get(
-                                exchange_platform, 
-                                RATE["STATUS_COLLATERAL_INTERVAL"]["default"]
-                            )
-                            pos_interval = RATE["STATUS_POS_INTERVAL"].get(
-                                exchange_platform,
-                                RATE["STATUS_POS_INTERVAL"]["default"]
-                            )
-                            price_interval = RATE["CARD_PRICE_INTERVAL"].get(
-                                exchange_platform,
-                                RATE["CARD_PRICE_INTERVAL"]["default"]
-                            )
-                        except Exception:
-                            col_interval = RATE["STATUS_COLLATERAL_INTERVAL"]["default"]
-                            pos_interval = RATE["STATUS_POS_INTERVAL"]["default"]
-                            price_interval = RATE["CARD_PRICE_INTERVAL"]["default"]
-                        
-                        # 업데이트 필요 여부 판단
-                        need_collat = (now - self._last_balance_at.get(n, 0.0) >= col_interval)
-                        need_pos = (now - self._last_pos_at.get(n, 0.0) >= pos_interval)
-                        need_price = (now - self._last_price_at.get(n, 0.0) >= price_interval)
-                        
-                        # WS 거래소는 항상 업데이트
-                        ex = self.mgr.get_exchange(n)
-                        if not ex:
-                            continue
-                        is_ws = hasattr(ex, "fetch_by_ws") and getattr(ex, "fetch_by_ws", False)
-                        is_hl_like = self.mgr.is_hl_like(n)
-                        is_spot = self.market_type_by_ex.get(n, "perp") == "spot"
-                        
-                        # [수정] 비-HL은 DEX 무시, HL-like만 DEX 적용
-                        if is_hl_like:
-                            sym = _compose_symbol(self.dex_by_ex[n], self.symbol_by_ex[n], is_spot)
-                        else:
-                            sym = self.symbol_by_ex[n].upper()
-                        
-                        # 가격 업데이트
-                        if need_price or is_ws:
-                            try:
-                                p = await self.service.fetch_price(n, sym, is_spot=is_spot)
-                                c.set_price_label(p)
-                                self._last_price_at[n] = now
-                            except RuntimeError:
-                                # C++ 객체 삭제됨 - 이 카드 스킵
-                                continue
-                            except Exception:
-                                try:
-                                    c.set_price_label("Err")
-                                except RuntimeError:
-                                    continue
-                        
-                        # 이제 모든 거래소 지원 (USD dummy로)
-                        try:
-                            quote_str = ex.get_perp_quote(sym)
-                            c.set_quote_label(quote_str)
-                        except RuntimeError:
-                            continue
-                        except Exception as e:
-                            logger.debug(f"[UI] quote update failed for {n}: {e}", exc_info=True)
-                            try:
-                                c.set_quote_label("")
-                            except RuntimeError:
-                                continue
-                        
-                        # Quote 업데이트 (HL-like만)
-                        if is_hl_like:
-                            # Builder Fee 업데이트
-                            self._update_fee(n)
 
-                        # 포지션/잔고 업데이트
-                        if need_pos or need_collat or is_ws:
-                            try:
-                                is_spot = self.market_type_by_ex.get(n, "perp") == "spot"
-                                pos, col, total_col_val, json_data = await self.service.fetch_status(
-                                    n, sym, 
-                                    need_balance=need_collat or is_ws, 
-                                    need_position=need_pos or is_ws,
-                                    is_spot=is_spot
-                                )
-                                
-                                c.set_status_info(json_data)
-                                
-                                if need_collat or is_ws:
-                                    if total_col_val:  # perp + spot available
-                                        self.collateral[n] = float(total_col_val)
-                                    self._last_balance_at[n] = now
-                                
-                                if need_pos or is_ws:
-                                    self._last_pos_at[n] = now
-                                    
-                            except RuntimeError:
-                                # C++ 객체 삭제됨 - 이 카드 스킵
-                                continue
-                            except Exception as e:
-                                logger.debug(f"[UI] Status update for {n} failed: {e}")
-                    
-                    except RuntimeError:
-                        # [CHANGED] 카드가 삭제된 경우 - 조용히 스킵
-                        continue
-                
+                # 모든 카드 병렬 업데이트
+                tasks = [
+                    self._update_single_card(n, now)
+                    for n in self.mgr.visible_names()
+                ]
+                await asyncio.gather(*tasks, return_exceptions=True)
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -3916,29 +4033,45 @@ class UiQtApp(QtWidgets.QMainWindow):
     # ============================
     # 오더북 패널 핸들러
     # ============================
-    def _on_detail_order(self, ex_name: str):
+    def _on_detail_order(self, ex_name: str, direction: str = "right"):
         """상세 주문 버튼 클릭 핸들러"""
-        asyncio.get_event_loop().create_task(self._toggle_orderbook_panel(ex_name))
+        asyncio.get_event_loop().create_task(self._toggle_orderbook_panel(ex_name, direction))
 
-    def _on_orderbook_panel_close(self):
+    def _on_orderbook_panel_close(self, direction: str = "right"):
         """오더북 패널 닫기 버튼 클릭"""
-        asyncio.get_event_loop().create_task(self._close_orderbook_panel())
+        asyncio.get_event_loop().create_task(self._close_orderbook_panel(direction))
 
-    def _on_orderbook_cancel_all(self):
+    def _on_orderbook_cancel_all(self, direction: str = "right"):
         """오더북 패널 전체 취소 버튼 클릭"""
-        asyncio.get_event_loop().create_task(self._do_cancel_all_orders())
+        asyncio.get_event_loop().create_task(self._do_cancel_all_orders(direction))
 
-    def _on_orderbook_cancel_selected(self, selected_orders: list):
+    def _on_orderbook_cancel_selected(self, selected_orders: list, direction: str = "right"):
         """오더북 패널 선택 취소 버튼 클릭"""
-        asyncio.get_event_loop().create_task(self._do_cancel_selected_orders(selected_orders))
+        asyncio.get_event_loop().create_task(self._do_cancel_selected_orders(selected_orders, direction))
 
-    async def _do_cancel_selected_orders(self, selected_orders: list):
+    def _get_panel_by_direction(self, direction: str) -> OrderBookPanel:
+        """방향에 따른 패널 반환"""
+        return self.orderbook_panel_left if direction == "left" else self.orderbook_panel_right
+
+    def _get_panel_exchange(self, direction: str) -> Optional[str]:
+        """방향에 따른 거래소 이름 반환"""
+        if direction == "left":
+            return self._orderbook_panel_exchange_left
+        return self._orderbook_panel_exchange_right
+
+    def _get_panel_symbol(self, direction: str) -> Optional[str]:
+        """방향에 따른 심볼 반환"""
+        if direction == "left":
+            return self._orderbook_panel_symbol_left
+        return self._orderbook_panel_symbol_right
+
+    async def _do_cancel_selected_orders(self, selected_orders: list, direction: str = "right"):
         """선택된 오픈 오더 취소"""
         if not selected_orders:
             self._log("[ORDERBOOK] 선택된 주문 없음")
             return
 
-        ex_name = self._orderbook_panel_exchange
+        ex_name = self._get_panel_exchange(direction)
         if not ex_name:
             return
 
@@ -3947,7 +4080,7 @@ class UiQtApp(QtWidgets.QMainWindow):
             self._log(f"[{ex_name}] 거래소 없음")
             return
 
-        symbol = self._orderbook_panel_symbol
+        symbol = self._get_panel_symbol(direction)
         if not symbol:
             self._log(f"[{ex_name}] 심볼 없음")
             return
@@ -3956,6 +4089,7 @@ class UiQtApp(QtWidgets.QMainWindow):
             if hasattr(ex, "cancel_orders"):
                 await ex.cancel_orders(symbol, selected_orders)
                 self._log(f"[{ex_name}] {len(selected_orders)}개 선택 주문 취소 완료")
+                self._force_open_orders_update.add(ex_name)  # 오픈오더만
             else:
                 self._log(f"[{ex_name}] cancel_orders 미지원")
         except Exception as e:
@@ -3963,7 +4097,14 @@ class UiQtApp(QtWidgets.QMainWindow):
 
     def _on_orderbook_price_clicked(self, price: float):
         """오더북 가격 클릭 시 해당 카드의 limit 가격으로 설정"""
-        ex_name = self._orderbook_panel_exchange
+        # 어느 패널에서 클릭했는지 확인
+        sender = self.sender()
+        ex_name = None
+        if sender == self.orderbook_panel_left:
+            ex_name = self._orderbook_panel_exchange_left
+        elif sender == self.orderbook_panel_right:
+            ex_name = self._orderbook_panel_exchange_right
+
         if not ex_name:
             return
 
@@ -3977,22 +4118,37 @@ class UiQtApp(QtWidgets.QMainWindow):
             card.price_edit.setText(str(price))
             self._log(f"[{ex_name}] Limit 가격 설정: {price}")
 
-    async def _toggle_orderbook_panel(self, ex_name: str):
+    async def _toggle_orderbook_panel(self, ex_name: str, direction: str = "right"):
         """오더북 패널 토글"""
-        if self._orderbook_panel_exchange == ex_name and self.orderbook_panel.isVisible():
+        panel = self._get_panel_by_direction(direction)
+        panel_exchange = self._get_panel_exchange(direction)
+
+        if panel_exchange == ex_name and panel.isVisible():
             # 같은 거래소면 토글 (닫기)
-            await self._close_orderbook_panel()
+            await self._close_orderbook_panel(direction)
         else:
             # 다른 거래소면 열기
-            await self._open_orderbook_panel(ex_name)
+            await self._open_orderbook_panel(ex_name, direction)
 
-    async def _open_orderbook_panel(self, ex_name: str):
+    async def _open_orderbook_panel(self, ex_name: str, direction: str = "right"):
         """오더북 패널 열기"""
-        # 기존 패널이 열려있으면 먼저 닫기 (WS 구독 해제)
-        if self._orderbook_panel_exchange:
-            await self._close_orderbook_panel()
+        panel = self._get_panel_by_direction(direction)
+        opposite = "right" if direction == "left" else "left"
 
-        self._orderbook_panel_exchange = ex_name
+        # 같은 거래소가 반대쪽에 이미 열려있으면 그쪽을 닫음
+        if self._get_panel_exchange(opposite) == ex_name:
+            await self._close_orderbook_panel(opposite)
+
+        # 해당 방향에 이미 열린 패널이 있으면 먼저 닫기 (WS 구독 해제)
+        if self._get_panel_exchange(direction):
+            await self._close_orderbook_panel(direction)
+
+        # 거래소/심볼 설정
+        if direction == "left":
+            self._orderbook_panel_exchange_left = ex_name
+        else:
+            self._orderbook_panel_exchange_right = ex_name
+
         coin = self.symbol_by_ex.get(ex_name, "BTC")
         is_spot = self.market_type_by_ex.get(ex_name, "perp") == "spot"
 
@@ -4002,76 +4158,133 @@ class UiQtApp(QtWidgets.QMainWindow):
             sym = _compose_symbol(self.dex_by_ex.get(ex_name, "HL"), coin, is_spot)
         else:
             sym = coin.upper()
-            
-        ex = self.mgr.get_exchange(ex_name)
-        quote = ex.get_perp_quote(sym) # for tread.fi exception
-        native_symbol = self.service._to_native_symbol(ex_name, sym, is_spot, quote=quote)
-        self._orderbook_panel_symbol = native_symbol
 
-        self.orderbook_panel.set_exchange_info(ex_name, native_symbol)
-        self.orderbook_panel.setVisible(True)
+        ex = self.mgr.get_exchange(ex_name)
+        quote = ex.get_perp_quote(sym)
+        native_symbol = self.service._to_native_symbol(ex_name, sym, is_spot, quote=quote)
+
+        if direction == "left":
+            self._orderbook_panel_symbol_left = native_symbol
+        else:
+            self._orderbook_panel_symbol_right = native_symbol
+
+        panel.set_exchange_info(ex_name, native_symbol)
+        panel.setVisible(True)
 
         # 창 너비 확장 (카드 영역 유지 + 오더북 패널 추가)
-        current_geom = self.geometry()
         sizes = self.center_splitter.sizes()
-        cards_width = sizes[0]
-        new_window_width = current_geom.width() + self._orderbook_panel_width
-        self.resize(new_window_width, current_geom.height())
+        panel_width = self._orderbook_panel_width_left if direction == "left" else self._orderbook_panel_width_right
 
-        # Splitter 크기 설정 (카드 영역 유지, 오더북 패널 할당)
-        self.center_splitter.setSizes([cards_width, self._orderbook_panel_width])
+        # 왼쪽 확장 시 창 위치 이동
+        if direction == "left":
+            self.move(self.x() - panel_width, self.y())
+
+        # 창 너비 확장
+        self.resize(self.width() + panel_width, self.height())
+
+        # Splitter 크기 설정 (left:cards:right)
+        if direction == "left":
+            self.center_splitter.setSizes([panel_width, sizes[1], sizes[2]])
+        else:
+            self.center_splitter.setSizes([sizes[0], sizes[1], panel_width])
 
         # 오더북 업데이트 루프 시작
-        if self._orderbook_task:
-            self._orderbook_task.cancel()
-        self._orderbook_task = asyncio.get_event_loop().create_task(
-            self._orderbook_update_loop(ex_name, native_symbol)
-        )
+        if direction == "left":
+            if self._orderbook_task_left:
+                self._orderbook_task_left.cancel()
+            self._orderbook_task_left = asyncio.get_event_loop().create_task(
+                self._orderbook_update_loop(ex_name, native_symbol, direction)
+            )
+        else:
+            if self._orderbook_task_right:
+                self._orderbook_task_right.cancel()
+            self._orderbook_task_right = asyncio.get_event_loop().create_task(
+                self._orderbook_update_loop(ex_name, native_symbol, direction)
+            )
 
-    async def _close_orderbook_panel(self):
+    async def _close_orderbook_panel(self, direction: str = "right"):
         """오더북 패널 닫기 + WS 구독 해제"""
-        if self._orderbook_task:
-            self._orderbook_task.cancel()
-            self._orderbook_task = None
+        panel = self._get_panel_by_direction(direction)
 
-        # WS 구독 해제 (필수!)
-        if self._orderbook_panel_exchange:
+        # 태스크 취소
+        if direction == "left":
+            if self._orderbook_task_left:
+                self._orderbook_task_left.cancel()
+                self._orderbook_task_left = None
+        else:
+            if self._orderbook_task_right:
+                self._orderbook_task_right.cancel()
+                self._orderbook_task_right = None
+
+        # WS 구독 해제
+        panel_exchange = self._get_panel_exchange(direction)
+        panel_symbol = self._get_panel_symbol(direction)
+        if panel_exchange:
             try:
-                ex = self.mgr.get_exchange(self._orderbook_panel_exchange)
-                symbol = self._orderbook_panel_symbol
-                if ex and symbol and hasattr(ex, "unsubscribe_orderbook"):
-                    await ex.unsubscribe_orderbook(symbol)
+                ex = self.mgr.get_exchange(panel_exchange)
+                if ex and panel_symbol and hasattr(ex, "unsubscribe_orderbook"):
+                    await ex.unsubscribe_orderbook(panel_symbol)
             except Exception as e:
                 self._log(f"[ORDERBOOK] unsubscribe 실패: {e}")
 
         # 창 너비 축소 + Splitter 정리
-        if self.orderbook_panel.isVisible():
+        if panel.isVisible():
             sizes = self.center_splitter.sizes()
-            # 현재 오더북 패널 너비 저장 (다음에 열 때 사용)
-            if sizes[1] > 0:
-                self._orderbook_panel_width = sizes[1]
+            idx = 0 if direction == "left" else 2
 
-            # 창 너비 축소
-            current_geom = self.geometry()
-            new_width = current_geom.width() - sizes[1]
-            self.resize(new_width, current_geom.height())
+            # 현재 오더북 패널 너비 저장 (다음에 열 때 사용)
+            if sizes[idx] > 0:
+                if direction == "left":
+                    self._orderbook_panel_width_left = sizes[idx]
+                else:
+                    self._orderbook_panel_width_right = sizes[idx]
 
             # Splitter 크기 조정
-            self.center_splitter.setSizes([sizes[0], 0])
+            if direction == "left":
+                self.center_splitter.setSizes([0, sizes[1], sizes[2]])
+            else:
+                self.center_splitter.setSizes([sizes[0], sizes[1], 0])
 
-        self.orderbook_panel.setVisible(False)
-        self.orderbook_panel.clear()
-        self._orderbook_panel_exchange = None
-        self._orderbook_panel_symbol = None
+            # 창 너비 축소
+            panel_width = sizes[idx]
 
-    async def _orderbook_update_loop(self, ex_name: str, symbol: str):
+            # 왼쪽 축소 시 창 위치 이동
+            if direction == "left":
+                self.move(self.x() + panel_width, self.y())
+
+            # 창 너비 축소
+            self.resize(self.width() - panel_width, self.height())
+
+        panel.setVisible(False)
+        panel.clear()
+
+        if direction == "left":
+            self._orderbook_panel_exchange_left = None
+            self._orderbook_panel_symbol_left = None
+        else:
+            self._orderbook_panel_exchange_right = None
+            self._orderbook_panel_symbol_right = None
+
+    async def _orderbook_update_loop(self, ex_name: str, symbol: str, direction: str = "right"):
         """오더북/오픈오더 주기적 업데이트"""
         error_count = 0
-        max_errors = 5  # 연속 에러 시 중단
+        max_errors = 5
 
-        while not self._stopping and self._orderbook_panel_exchange == ex_name:
-            # 심볼이 변경되었으면 이 루프 종료 (새 루프가 시작됨)
-            if self._orderbook_panel_symbol != symbol:
+        panel = self._get_panel_by_direction(direction)
+
+        # 거래소별 오픈오더 조회 주기 설정
+        meta = self.mgr.get_meta(ex_name)
+        exchange_platform = meta.get("exchange", "hyperliquid") if meta else "hyperliquid"
+        open_orders_interval = RATE["STATUS_OO_INTERVAL"].get(
+            exchange_platform,
+            RATE["STATUS_OO_INTERVAL"]["default"]
+        )
+
+        while not self._stopping:
+            # 거래소가 변경되었거나 패널이 닫혔으면 종료
+            if self._get_panel_exchange(direction) != ex_name:
+                break
+            if self._get_panel_symbol(direction) != symbol:
                 break
 
             try:
@@ -4079,32 +4292,50 @@ class UiQtApp(QtWidgets.QMainWindow):
                 if not ex:
                     break
 
-                # 오더북 조회
+                now = time.time()
+                is_ws = hasattr(ex, "fetch_by_ws") and getattr(ex, "fetch_by_ws", False)
+                force_update = ex_name in self._force_open_orders_update
+
+                # 오더북 조회 (항상)
                 if hasattr(ex, "get_orderbook"):
                     try:
                         orderbook = await ex.get_orderbook(symbol)
                         if orderbook and (orderbook.get("bids") or orderbook.get("asks")):
-                            self.orderbook_panel.update_orderbook(orderbook)
-                            error_count = 0  # 성공하면 에러 카운트 초기화
+                            panel.update_orderbook(orderbook)
+                            error_count = 0
                     except asyncio.CancelledError:
                         raise
                     except Exception as e:
                         error_count += 1
-                        if error_count <= 2:  # 처음 몇 번만 로그
+                        if error_count <= 2:
                             self._log(f"[ORDERBOOK] {ex_name} 오더북 조회 실패: {e}")
 
-                # 오픈 오더 조회
-                if hasattr(ex, "get_open_orders"):
+                # 오픈 오더 조회 (주기 제한 적용)
+                last_open_orders_at = (
+                    self._last_open_orders_at_left if direction == "left"
+                    else self._last_open_orders_at_right
+                )
+                need_open_orders = is_ws or force_update or (now - last_open_orders_at >= open_orders_interval)
+
+                if need_open_orders and hasattr(ex, "get_open_orders"):
+                    if ex_name == 'standx':
+                        print("Fetching open orders...")
                     try:
                         open_orders = await ex.get_open_orders(symbol)
-                        self.orderbook_panel.update_open_orders(open_orders or [])
+                        panel.update_open_orders(open_orders or [])
+                        # 마지막 조회 시간 업데이트
+                        if direction == "left":
+                            self._last_open_orders_at_left = now
+                        else:
+                            self._last_open_orders_at_right = now
+                        # force update 플래그 해제
+                        self._force_open_orders_update.discard(ex_name)
                     except asyncio.CancelledError:
                         raise
                     except Exception as e:
                         if error_count <= 2:
                             self._log(f"[ORDERBOOK] {ex_name} 오픈오더 조회 실패: {e}")
 
-                # 연속 에러가 너무 많으면 잠시 대기 후 재시도
                 if error_count >= max_errors:
                     self._log(f"[ORDERBOOK] {ex_name} 연속 에러 {error_count}회, 5초 대기")
                     await asyncio.sleep(5.0)
@@ -4116,11 +4347,11 @@ class UiQtApp(QtWidgets.QMainWindow):
             except Exception as e:
                 self._log(f"[ORDERBOOK] {ex_name} 업데이트 실패: {e}")
 
-            await asyncio.sleep(0.05)  # 1초 간격 업데이트
+            await asyncio.sleep(RATE["GAP_FOR_INF"])
 
-    async def _do_cancel_all_orders(self):
+    async def _do_cancel_all_orders(self, direction: str = "right"):
         """오픈 오더 전체 취소"""
-        ex_name = self._orderbook_panel_exchange
+        ex_name = self._get_panel_exchange(direction)
         if not ex_name:
             return
 
@@ -4129,14 +4360,13 @@ class UiQtApp(QtWidgets.QMainWindow):
             self._log(f"[{ex_name}] 거래소 없음")
             return
 
-        symbol = self._orderbook_panel_symbol
+        symbol = self._get_panel_symbol(direction)
         if not symbol:
             self._log(f"[{ex_name}] 심볼 없음")
             return
 
         try:
             if hasattr(ex, "cancel_orders"):
-                # 먼저 오픈 오더 조회
                 open_orders = []
                 if hasattr(ex, "get_open_orders"):
                     open_orders = await ex.get_open_orders(symbol)
@@ -4145,9 +4375,9 @@ class UiQtApp(QtWidgets.QMainWindow):
                     self._log(f"[{ex_name}] 취소할 주문 없음")
                     return
 
-                # 주문 취소
                 await ex.cancel_orders(symbol, open_orders)
                 self._log(f"[{ex_name}] {len(open_orders)}개 주문 취소 완료")
+                self._force_open_orders_update.add(ex_name)  # 오픈오더만
             else:
                 self._log(f"[{ex_name}] cancel_orders 미지원")
         except Exception as e:
@@ -4161,11 +4391,17 @@ class UiQtApp(QtWidgets.QMainWindow):
         # Cancel tasks...
         if self._price_task: self._price_task.cancel()
         if self._status_task: self._status_task.cancel()
-        # 오더북 패널 정리
-        if self._orderbook_task: self._orderbook_task.cancel()
-        if self._orderbook_panel_exchange:
+        # 오더북 패널 정리 (왼쪽/오른쪽 모두)
+        if self._orderbook_task_left: self._orderbook_task_left.cancel()
+        if self._orderbook_task_right: self._orderbook_task_right.cancel()
+        if self._orderbook_panel_exchange_left:
             try:
-                await self._close_orderbook_panel()
+                await self._close_orderbook_panel("left")
+            except:
+                pass
+        if self._orderbook_panel_exchange_right:
+            try:
+                await self._close_orderbook_panel("right")
             except:
                 pass
         await self.mgr.close_all()
