@@ -2752,7 +2752,7 @@ class UiQtApp(QtWidgets.QMainWindow):
             HL-like:  {"perp": {"hl": [...], "xyz": [...]}, "spot": [...] or None}
             비-HL:    {"perp": [...], "spot": [...] or None}
         """
-        for name in self.mgr.all_names():
+        for name in self.mgr.available_names():
             try:
                 ex = self.mgr.get_exchange(name)
                 if not ex:
@@ -3038,15 +3038,16 @@ class UiQtApp(QtWidgets.QMainWindow):
             w = self.exchange_switch_layout.takeAt(0).widget()
             if w: w.deleteLater()
         self.exchange_switches.clear()
-        
-        names = self.mgr.all_names()
+
+        # show=never인 거래소는 선택지에서 제외
+        names = self.mgr.available_names()
         if not names: return
 
         row, col = 0, 0
         for name in names:
             meta = self.mgr.get_meta(name)
             cb = QtWidgets.QCheckBox(name.upper())
-            cb.setChecked(bool(meta.get("show", False)))
+            cb.setChecked(meta.get("show") is True)
             cb.toggled.connect(lambda s, n=name: self._on_toggle_show(n, s))
             self.exchange_switches[name] = cb
             self.exchange_switch_layout.addWidget(cb, row, col)
