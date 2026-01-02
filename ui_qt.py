@@ -300,12 +300,14 @@ def _ensure_ts_logger() -> None:
 _ensure_ts_logger()
 
 
+# standx는 rest api 부르면 ws 끊기는 현상이 있어서 폴링 간격을 길게 잡았음.
+# mpdex의 문제가 아닌 standx 서버 문제로 보임.
 RATE = {
-    "GAP_FOR_INF": 0.01,
+    "GAP_FOR_INF": 0.05,
     "STATUS_POS_INTERVAL": {"default": 0.5, "standx":100000.0},
     "STATUS_OO_INTERVAL": {"default": 0.5, "standx":100000.0},
     "STATUS_COLLATERAL_INTERVAL": {"default": 0.5,"standx":100000.0},
-    "CARD_PRICE_INTERVAL": {"default": 0.05},
+    "CARD_PRICE_INTERVAL": {"default": 0.2},
 }
 
 def _normalize_symbol_input(sym: str) -> str:
@@ -2616,6 +2618,7 @@ class UiQtApp(QtWidgets.QMainWindow):
         self._last_price_at: dict[str, float] = {}
         self._force_status_update: set[str] = set()  # 잔고/포지션 즉시 업데이트용
         self._force_open_orders_update: set[str] = set()  # 오픈오더 즉시 업데이트용
+        self._initial_load_done: bool = False  # 초기 로딩 완료 여부
 
         # Components
         self.header = HeaderWidget()
@@ -3960,26 +3963,40 @@ class UiQtApp(QtWidgets.QMainWindow):
     async def _status_loop(self):
         """
         거래소별 상태(가격/포지션/잔고) 업데이트 루프.
-        - 모든 카드를 병렬로 동시 업데이트
+        - 초기 로딩: 순차 업데이트 (rate limit 방지)
+        - 이후: 병렬 동시 업데이트
         - WS 거래소: 매 틱마다 업데이트
         - REST 거래소: RATE에 정의된 주기에 따라 업데이트
         """
         while not self._stopping:
             try:
                 now = time.monotonic()
+                visible_names = self.mgr.visible_names()
 
-                # 모든 카드 병렬 업데이트
-                tasks = [
-                    self._update_single_card(n, now)
-                    for n in self.mgr.visible_names()
-                ]
-                await asyncio.gather(*tasks, return_exceptions=True)
+                for n in visible_names:
+                    await self._update_single_card(n, now)
+                self._initial_load_done = True
+                
+                """
+                if not self._initial_load_done:
+                    # 초기 로딩: 순차 업데이트 (rate limit 방지)
+                    for n in visible_names:
+                        await self._update_single_card(n, now)
+                    self._initial_load_done = True
+                else:
+                    # 이후: 병렬 업데이트
+                    tasks = [
+                        self._update_single_card(n, now)
+                        for n in visible_names
+                    ]
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                """
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"[UI] Status loop error: {e}")
-            
+
             # 루프 간격
             await asyncio.sleep(RATE["GAP_FOR_INF"])
 
