@@ -303,7 +303,7 @@ _ensure_ts_logger()
 # standx는 rest api 부르면 ws 끊기는 현상이 있어서 폴링 간격을 길게 잡았음.
 # mpdex의 문제가 아닌 standx 서버 문제로 보임.
 RATE = {
-    "GAP_FOR_INF": 0.1,  # 무한대 방지용 최소 갭
+    "GAP_FOR_INF": 0.1,
     "STATUS_POS_INTERVAL": {"default": 0.5, "standx":10.0},
     "STATUS_OO_INTERVAL": {"default": 0.5, "standx":10.0},
     "STATUS_COLLATERAL_INTERVAL": {"default": 0.5, "standx":10.0},
@@ -2752,7 +2752,7 @@ class UiQtApp(QtWidgets.QMainWindow):
             HL-like:  {"perp": {"hl": [...], "xyz": [...]}, "spot": [...] or None}
             비-HL:    {"perp": [...], "spot": [...] or None}
         """
-        for name in self.mgr.available_names():
+        for name in self.mgr.all_names():
             try:
                 ex = self.mgr.get_exchange(name)
                 if not ex:
@@ -3038,16 +3038,15 @@ class UiQtApp(QtWidgets.QMainWindow):
             w = self.exchange_switch_layout.takeAt(0).widget()
             if w: w.deleteLater()
         self.exchange_switches.clear()
-
-        # show=never인 거래소는 선택지에서 제외
-        names = self.mgr.available_names()
+        
+        names = self.mgr.all_names()
         if not names: return
 
         row, col = 0, 0
         for name in names:
             meta = self.mgr.get_meta(name)
             cb = QtWidgets.QCheckBox(name.upper())
-            cb.setChecked(meta.get("show") is True)
+            cb.setChecked(bool(meta.get("show", False)))
             cb.toggled.connect(lambda s, n=name: self._on_toggle_show(n, s))
             self.exchange_switches[name] = cb
             self.exchange_switch_layout.addWidget(cb, row, col)
@@ -4074,19 +4073,19 @@ class UiQtApp(QtWidgets.QMainWindow):
             try:
                 now = time.monotonic()
                 visible_names = self.mgr.visible_names()
-                
+                """
                 # 병렬 업데이트
                 tasks = [
                     self._update_single_card(n, now)
                     for n in visible_names
                 ]
                 await asyncio.gather(*tasks, return_exceptions=True)
-                """
+                
                 for n in visible_names:
                     await self._update_single_card(n, now)
                 self._initial_load_done = True
                 """
-                """
+                
                 if not self._initial_load_done:
                     # 초기 로딩: 순차 업데이트 (rate limit 방지)
                     for n in visible_names:
@@ -4099,7 +4098,7 @@ class UiQtApp(QtWidgets.QMainWindow):
                         for n in visible_names
                     ]
                     await asyncio.gather(*tasks, return_exceptions=True)
-                """
+                
                 
 
             except asyncio.CancelledError:
