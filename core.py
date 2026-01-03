@@ -148,6 +148,9 @@ class ExchangeManager:
             fm_raw = config.get(exchange_name, "FrontendMarket", fallback="False")
             frontend_market = (fm_raw or "").strip().lower() == "true"
 
+            proxy_raw = config.get(exchange_name, "proxy", fallback="False")
+            use_proxy = (proxy_raw or "").strip().lower() == "true"
+
             raw_setup = config.get(exchange_name, "initial_setup", fallback=None)
             setup_data = {
                 "symbol": "BTC",
@@ -200,6 +203,7 @@ class ExchangeManager:
                 "frontend_market": frontend_market,
                 "exchange": exchange_platform,
                 "initial_setup": setup_data,
+                "use_proxy": use_proxy,
             }
 
             self.exchanges[exchange_name] = None
@@ -344,6 +348,7 @@ class ExchangeManager:
                         builder_code=builder_code,
                         builder_fee_pair=fee_pair,
                         FrontendMarket=frontend_market,
+                        proxy=os.getenv(f"{u_name}_PROXY") if self.meta.get(name, {}).get("use_proxy", False) else None,
                     )
                 except Exception as e:
                     print(e)
@@ -355,6 +360,7 @@ class ExchangeManager:
                     vault_address = vault_address,
                     builder_fee_pair = fee_pair,
                     FrontendMarket = frontend_market,
+                    proxy=os.getenv(f"{u_name}_PROXY") if self.meta.get(name, {}).get("use_proxy", False) else None,
                 )
 
             if exchange_platform.lower() == "treadfi.hyperliquid":

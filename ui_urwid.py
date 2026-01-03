@@ -3048,7 +3048,7 @@ class UrwidApp:
             orders: [(sym, amount, side, otype, price), ...]
             g: 그룹 번호
         """
-        HL_ORDER_DELAY = 0.15  # 주문 간 최소 간격 (초)
+        HL_ORDER_DELAY = float(os.environ.get("HL_ORDER_DELAY", "0.15"))
         MAX_RETRY = 3
 
         for (sym, amount, side, otype, price) in orders:

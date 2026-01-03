@@ -417,6 +417,47 @@ initial_setup = xyz:XYZ100, 0.0002, long, perp
 | `grvt` | GRVT |
 | `pacifica` | Pacifica |
 
+#### proxy 옵션 (프록시 설정)
+
+일부 Hyperliquid 기반 거래소에서 **프록시 연결**을 지원합니다.
+
+**지원 거래소:**
+- HyEna, MASS, Lit, Dexari, Liquid, Supercexy, BasedOne, Dreamcash, Superstack
+
+**설정 방법:**
+
+1. **config.ini에서 활성화:**
+```ini
+[hyena]
+proxy = True  # 프록시 사용
+show = True
+```
+
+2. **.env에서 프록시 주소 설정:**
+```env
+HYENA_PROXY=http://your_proxy:port
+# 또는
+HYENA_PROXY=socks5://your_proxy:port
+```
+
+**예시:**
+```ini
+# config.ini
+[superstack]
+exchange = superstack
+proxy = True
+show = True
+```
+
+```env
+# .env
+SUPERSTACK_PROXY=http://127.0.0.1:8080
+```
+
+> ⚠️ `proxy = True`로 설정했는데 `.env`에 프록시 주소가 없으면 프록시 없이 연결됩니다.
+>
+> 💡 프록시 서비스 추천, 주소 형식, 상세 설정법은 아래 [Rate Limit 문제와 해결 방법](#-rate-limit-문제와-해결-방법) 참고
+
 #### initial_setup (카드 초기값 설정)  ✅ 신규
 프로그램 실행 직후, 각 거래소 카드의 기본 입력값(코인/수량/유형)을 자동으로 채우기 위한 옵션입니다.
 
@@ -614,8 +655,147 @@ show = True
 - **VNTL**: Ventuals에서 운영 (USDH 필요)
 - **HYNA**: HyEna에서 운영 (USDE 필요)
 
-> ⚠️ FLX/VNTL 거래 시 **Spot에 USDH**가 있어야 합니다  
+> ⚠️ FLX/VNTL 거래 시 **Spot에 USDH**가 있어야 합니다
 > ⚠️ HYNA 거래 시 **Spot에 USDE**가 있어야 합니다
+
+---
+
+## ⚡ Rate Limit 문제와 해결 방법
+
+### Rate Limit이 뭔가요?
+
+Hyperliquid(HL)는 **같은 IP에서 너무 빠르게 주문을 보내면 차단**합니다.
+예를 들어, Lit, Dexari, Liquid, HyEna 등 **5개 이상의 HL 거래소**를 동시에 "전체 주문 수행"하면 일부 주문이 실패할 수 있습니다.
+
+**증상:**
+- 로그에 `429` 또는 `rate limit` 오류가 뜸
+- 일부 거래소만 주문 성공하고 나머지는 실패
+- "전체 주문 수행" 시 몇 개만 체결됨
+
+### 해결 방법 1: HL_ORDER_DELAY 조정 (간단)
+
+`.env` 파일에 `HL_ORDER_DELAY` 값을 설정해서 **주문 간격**을 조절할 수 있습니다.
+
+```env
+# .env 파일에 추가
+HL_ORDER_DELAY=0.15
+```
+
+| 값 | 동작 | 설명 |
+|----|------|------|
+| `0` | 완전 병렬 | 모든 주문 동시 실행 (빠르지만 Rate Limit 걸릴 수 있음) |
+| `0.15` (기본) | 미세 순차 | 0.15초 간격으로 주문 시작 (권장) |
+| `0.3` | 더 느리게 | Rate Limit 자주 걸리면 이 값으로 |
+| `-1` | 완전 순차 | 하나 끝나면 다음 (가장 안전하지만 느림) |
+
+**Rate Limit이 계속 걸린다면:**
+```env
+# 간격을 더 늘려보세요
+HL_ORDER_DELAY=0.3
+
+# 또는 완전 순차 실행
+HL_ORDER_DELAY=-1
+```
+
+### 해결 방법 2: 프록시 사용 (권장)
+
+**HL 거래소를 5개 이상 동시에 쓴다면 프록시를 강력히 권장합니다.**
+
+프록시를 사용하면 각 거래소가 **다른 IP로 접속**하기 때문에 Rate Limit에 걸리지 않습니다.
+
+#### 프록시 서비스 추천
+
+**Bright Data** (구 Luminati) - 가장 안정적
+- 가입: https://brightdata.com
+- "Residential Proxy" 또는 "ISP Proxy" 선택
+- 가격: 트래픽 기반 과금 (거래 용도면 저렴함)
+
+**기타 서비스:**
+- Smartproxy (https://smartproxy.com)
+- Oxylabs (https://oxylabs.io)
+- IPRoyal (https://iproyal.com) - 저렴한 옵션
+
+#### 프록시 주소 형식
+
+프록시 서비스 가입하면 아래와 같은 형식의 주소를 받습니다:
+
+```
+http://사용자명:비밀번호@프록시서버:포트
+```
+
+**Bright Data 예시:**
+```env
+# 기본 형식
+HYENA_PROXY=http://brd-customer-hl_12345678-zone-residential:abcd1234@brd.superproxy.io:22225
+
+# 국가 지정 (미국)
+HYENA_PROXY=http://brd-customer-hl_12345678-zone-residential-country-us:abcd1234@brd.superproxy.io:22225
+
+# 세션 유지 (같은 IP 유지)
+HYENA_PROXY=http://brd-customer-hl_12345678-zone-residential-session-abc123:abcd1234@brd.superproxy.io:22225
+```
+
+**Smartproxy 예시:**
+```env
+HYENA_PROXY=http://user123:pass456@gate.smartproxy.com:7000
+```
+
+**SOCKS5 프록시:**
+```env
+HYENA_PROXY=socks5://user:pass@proxy.example.com:1080
+```
+
+#### 프록시 설정 방법
+
+**1단계: config.ini에서 프록시 활성화**
+```ini
+[hyena]
+proxy = True
+show = True
+
+[superstack]
+exchange = superstack
+proxy = True
+show = True
+```
+
+**2단계: .env에서 프록시 주소 설정**
+```env
+# 각 거래소마다 다른 프록시 사용 가능 (권장)
+HYENA_PROXY=http://user:pass@proxy1.example.com:8080
+MASS_PROXY=http://user:pass@proxy2.example.com:8080
+LIT_PROXY=http://user:pass@proxy3.example.com:8080
+DEXARI_PROXY=http://user:pass@proxy4.example.com:8080
+
+# 또는 같은 프록시 사용 (Rotating Proxy면 OK)
+HYENA_PROXY=http://user:pass@rotating-proxy.example.com:8080
+MASS_PROXY=http://user:pass@rotating-proxy.example.com:8080
+```
+
+> 💡 **팁**: Bright Data의 Rotating Proxy를 쓰면 같은 주소를 넣어도 매번 다른 IP가 할당됩니다.
+
+#### 프록시 지원 거래소
+
+| 거래소 | 환경변수 |
+|--------|----------|
+| HyEna | `HYENA_PROXY` |
+| MASS | `MASS_PROXY` |
+| Lit | `LIT_PROXY` |
+| Dexari | `DEXARI_PROXY` |
+| Liquid | `LIQUID_PROXY` |
+| Supercexy | `SUPERCEXY_PROXY` |
+| BasedOne | `BASEDONE_PROXY` |
+| Dreamcash | `DREAMCASH_PROXY` |
+| Superstack | `SUPERSTACK_PROXY` |
+
+### 어떤 방법을 써야 하나요?
+
+| 상황 | 권장 방법 |
+|------|-----------|
+| HL 거래소 1~3개 사용 | 기본값(`HL_ORDER_DELAY=0.15`) 그대로 사용 |
+| HL 거래소 4~5개 사용 | `HL_ORDER_DELAY=0.3` 정도로 늘리기 |
+| HL 거래소 6개 이상 사용 | **프록시 사용 권장** |
+| 태우기/반복 자주 사용 | **프록시 사용 강력 권장** |
 
 ---
 
@@ -651,6 +831,17 @@ A: `.env` 파일에 해당 거래소 키가 올바르게 입력되었는지 확�
 
 ### Q: 한글/이모지가 깨져요
 A: 폰트 문제입니다. 시스템에 한글 폰트가 설치되어 있는지 확인하세요.
+
+### Q: "429" 또는 "rate limit" 오류가 나요
+A: Hyperliquid에서 너무 빠르게 주문을 보내서 차단된 것입니다.
+1. `.env`에서 `HL_ORDER_DELAY=0.3` 또는 더 큰 값으로 설정
+2. 그래도 안 되면 프록시 사용 권장
+3. 자세한 내용은 위의 [Rate Limit 문제와 해결 방법](#-rate-limit-문제와-해결-방법) 참고
+
+### Q: 전체 주문 수행 시 일부만 성공해요
+A: Rate Limit 문제일 가능성이 높습니다.
+- HL 거래소가 5개 이상이면 프록시 사용을 권장합니다
+- 또는 `HL_ORDER_DELAY` 값을 `0.3` 이상으로 늘려보세요
 
 ---
 

@@ -311,11 +311,11 @@ RATE = {
     "CARD_PRICE_INTERVAL": {"default": 0.2},
 }
 
-# HL 거래소 주문 실행 옵션
+# HL 거래소 주문 실행 옵션 (.env의 HL_ORDER_DELAY로 설정 가능)
 # - 0: 모든 거래소 완전 병렬 실행
-# - 양수(예: 0.05): HL 거래소 간 해당 초만큼 딜레이 (미세 순차)
+# - 양수(예: 0.15): HL 거래소 간 해당 초만큼 딜레이 (미세 순차)
 # - 음수(예: -1): HL 거래소 완전 순차 실행 (하나 끝나면 다음)
-HL_ORDER_DELAY = 0.25  # 딜레이
+HL_ORDER_DELAY = float(os.environ.get("HL_ORDER_DELAY", "0.15"))
 
 def _normalize_symbol_input(sym: str) -> str:
     if not sym: return ""
