@@ -629,9 +629,10 @@ class OrderBookPanel(QtWidgets.QWidget):
         super().__init__(parent)
         self._exchange_name = ""
         self._symbol = ""
-        # 소숫점 자릿수 (기본값, 심볼별로 조정 가능)
+        # 소숫점 자릿수 (기본값, 첫 오더북 수신 시 자동 감지)
         self._price_decimals = 2
         self._size_decimals = 4
+        self._decimals_detected = False
         # 오더북 행-가격 매핑 (오픈오더 인디케이터용)
         self._asks_row_prices: list[tuple[int, float]] = []
         self._bids_row_prices: list[tuple[int, float]] = []
@@ -894,7 +895,9 @@ class OrderBookPanel(QtWidgets.QWidget):
         self._exchange_name = exchange_name
         self._symbol = symbol
         self.title_label.setText(f"[{exchange_name.upper()}] {symbol}")
-        # 심볼에 따라 소숫점 자릿수 자동 조정
+        # 심볼 변경 시 소숫점 자릿수 다시 감지하도록 리셋
+        self._decimals_detected = False
+        # 초기 추정값 (오더북 수신 전까지 사용)
         self._auto_detect_decimals(symbol)
 
     def _auto_detect_decimals(self, symbol: str):
@@ -938,6 +941,11 @@ class OrderBookPanel(QtWidgets.QWidget):
         """오더북 데이터 업데이트"""
         if not orderbook:
             return
+
+        # 첫 로드 시 소숫점 자릿수 자동 감지
+        if not self._decimals_detected:
+            self._price_decimals, self._size_decimals = self._detect_decimals(orderbook)
+            self._decimals_detected = True
 
         bids = orderbook.get("bids", [])
         asks = orderbook.get("asks", [])
@@ -1067,6 +1075,64 @@ class OrderBookPanel(QtWidgets.QWidget):
                 min_diff = diff
                 closest_row = row
         return closest_row
+
+    def _detect_decimals(self, orderbook: dict) -> tuple[int, int]:
+        """오더북에서 적절한 소숫점 자릿수 감지 (틱 사이즈 기반)"""
+        bids = orderbook.get("bids", [])[:self.ORDERBOOK_DEPTH]
+        asks = orderbook.get("asks", [])[:self.ORDERBOOK_DEPTH]
+
+        if not bids and not asks:
+            return 2, 4  # 기본값
+
+        prices = []
+        sizes = []
+        for item in bids + asks:
+            if len(item) >= 2:
+                prices.append(float(item[0]))
+                sizes.append(float(item[1]))
+
+        price_decimals = self._decimals_from_tick(sorted(set(prices)))
+        size_decimals = self._decimals_from_values(sizes)
+
+        return price_decimals, size_decimals
+
+    def _decimals_from_tick(self, sorted_values: list[float]) -> int:
+        """틱 사이즈에서 소숫점 자릿수 계산"""
+        if len(sorted_values) < 2:
+            return 2
+
+        # 최소 가격 차이 (틱 사이즈) 찾기
+        diffs = [
+            sorted_values[i + 1] - sorted_values[i]
+            for i in range(len(sorted_values) - 1)
+            if sorted_values[i + 1] > sorted_values[i]
+        ]
+        if not diffs:
+            return 2
+
+        min_diff = min(diffs)
+        if min_diff <= 0:
+            return 2
+
+        # tick=0.01 → log10=-2 → 2자리
+        import math
+        decimals = max(0, -int(math.floor(math.log10(min_diff))))
+        return min(decimals, 8)  # 최대 8자리
+
+    def _decimals_from_values(self, values: list[float]) -> int:
+        """값의 크기에서 소숫점 자릿수 추정"""
+        if not values:
+            return 4
+
+        avg = sum(values) / len(values)
+        if avg < 0.001:
+            return 8
+        elif avg < 0.1:
+            return 6
+        elif avg < 10:
+            return 4
+        else:
+            return 2
 
     def showEvent(self, event):
         """패널 표시 시 체크박스 위치 업데이트"""
@@ -3390,15 +3456,7 @@ class UiQtApp(QtWidgets.QMainWindow):
         if panel_exchange != ex_name:
             return
 
-        # 기존 구독 해제
-        try:
-            ex = self.mgr.get_exchange(ex_name)
-            if ex and panel_symbol and hasattr(ex, "unsubscribe_orderbook"):
-                await ex.unsubscribe_orderbook(panel_symbol)
-        except Exception as e:
-            self._log(f"[ORDERBOOK] unsubscribe 실패: {e}")
-
-        # 새 심볼로 다시 열기 (_do_exec와 동일한 심볼 생성 방식)
+        # 새 심볼 계산 (_do_exec와 동일한 심볼 생성 방식)
         is_spot = self.market_type_by_ex.get(ex_name, "perp") == "spot"
         is_hl_like = self.mgr.is_hl_like(ex_name)
         if is_hl_like:
@@ -3406,8 +3464,20 @@ class UiQtApp(QtWidgets.QMainWindow):
         else:
             sym = symbol.upper()
 
+        ex = self.mgr.get_exchange(ex_name)
         quote = ex.get_perp_quote(sym)
         native_symbol = self.service._to_native_symbol(ex_name, sym, is_spot, quote=quote)
+
+        # 같은 심볼이면 스킵
+        if native_symbol == panel_symbol:
+            return
+
+        # 기존 구독 해제
+        try:
+            if ex and panel_symbol and hasattr(ex, "unsubscribe_orderbook"):
+                await ex.unsubscribe_orderbook(panel_symbol)
+        except Exception as e:
+            self._log(f"[ORDERBOOK] unsubscribe 실패: {e}")
 
         if direction == "left":
             self._orderbook_panel_symbol_left = native_symbol
