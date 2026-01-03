@@ -1,0 +1,1 @@
+ps aux | grep python | grep -v grep | grep -v claude | grep -v vscode | grep -v pet | grep -v unattended | awk '{print $2}' | xargs -r kill -9

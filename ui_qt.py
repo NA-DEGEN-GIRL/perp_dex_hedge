@@ -2598,6 +2598,21 @@ class UiQtApp(QtWidgets.QMainWindow):
     def __init__(self, manager: ExchangeManager):
         super().__init__()
         self.setWindowTitle("Perp DEX Hedge (Qt)")
+
+        # 아이콘 설정 (icon.png 우선, 없으면 이모지 fallback)
+        import os
+        icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QtGui.QIcon(icon_path))
+        else:
+            pixmap = QtGui.QPixmap(64, 64)
+            pixmap.fill(QtCore.Qt.transparent)
+            painter = QtGui.QPainter(pixmap)
+            painter.setFont(QtGui.QFont("Segoe UI Emoji", 48))
+            painter.drawText(pixmap.rect(), QtCore.Qt.AlignCenter, "🐌")
+            painter.end()
+            self.setWindowIcon(QtGui.QIcon(pixmap))
+
         self.mgr = manager
         self.service = TradingService(self.mgr)
 
@@ -4470,8 +4485,6 @@ class UiQtApp(QtWidgets.QMainWindow):
                 need_open_orders = ws_open_orders or force_update or (now - last_open_orders_at >= open_orders_interval)
 
                 if need_open_orders and hasattr(ex, "get_open_orders"):
-                    if ex_name == 'standx':
-                        print("Fetching open orders...")
                     try:
                         open_orders = await ex.get_open_orders(symbol)
                         panel.update_open_orders(open_orders or [])
