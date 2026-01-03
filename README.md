@@ -419,10 +419,10 @@ initial_setup = xyz:XYZ100, 0.0002, long, perp
 
 #### proxy 옵션 (프록시 설정)
 
-일부 Hyperliquid 기반 거래소에서 **프록시 연결**을 지원합니다.
+`exchange = hyperliquid` (생략 시 기본값) 또는 `exchange = superstack`인 거래소에서 **프록시 연결**을 지원합니다.
 
-**지원 거래소:**
-- HyEna, MASS, Lit, Dexari, Liquid, Supercexy, BasedOne, Dreamcash, Superstack
+**예시 거래소:**
+- HyEna, MASS, Lit, Dexari, Liquid, Supercexy, BasedOne, Dreamcash, Superstack 등
 
 **설정 방법:**
 
@@ -774,7 +774,11 @@ MASS_PROXY=http://user:pass@rotating-proxy.example.com:8080
 
 > 💡 **팁**: Bright Data의 Rotating Proxy를 쓰면 같은 주소를 넣어도 매번 다른 IP가 할당됩니다.
 
-#### 프록시 지원 거래소
+#### 프록시 지원 조건
+
+`exchange = hyperliquid` (생략 시 기본값) 또는 `exchange = superstack`인 거래소에서 프록시를 사용할 수 있습니다.
+
+**예시 거래소 및 환경변수:**
 
 | 거래소 | 환경변수 |
 |--------|----------|
@@ -787,6 +791,8 @@ MASS_PROXY=http://user:pass@rotating-proxy.example.com:8080
 | BasedOne | `BASEDONE_PROXY` |
 | Dreamcash | `DREAMCASH_PROXY` |
 | Superstack | `SUPERSTACK_PROXY` |
+
+> 환경변수 형식: `거래소명_PROXY` (대문자)
 
 ### 어떤 방법을 써야 하나요?
 
