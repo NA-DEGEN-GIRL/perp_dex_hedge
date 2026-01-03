@@ -37,7 +37,7 @@ GitHub: https://github.com/NA-DEGEN-GIRL/perp_dex_hedge
 - **Spot 지원**: Lit, Dexari, Liquid, BasedOne, Supercexy 등 (거래소별 상이)
 
 ### 비-Hyperliquid 거래소
-- Lighter (Spot 지원 ✓), EdgeX, Paradex, GRVT, Backpack (Spot 지원 ✓), Variational, Pacifica
+- Lighter (Spot 지원 ✓), EdgeX, Paradex, GRVT, Backpack (Spot 지원 ✓), Variational, Pacifica, StandX
 
 ---
 
