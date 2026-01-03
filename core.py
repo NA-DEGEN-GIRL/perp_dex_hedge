@@ -450,7 +450,7 @@ class ExchangeManager:
                     pass
         if close_tasks:
             await asyncio.gather(*close_tasks, return_exceptions=True)
-
+            
     def get_exchange(self, name: str):
         return self.exchanges.get(name)
 

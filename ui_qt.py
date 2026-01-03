@@ -4570,10 +4570,21 @@ class UiQtApp(QtWidgets.QMainWindow):
             except:
                 pass
         await self.mgr.close_all()
+        self._shutdown_done = True
 
     def closeEvent(self, e):
-        asyncio.get_event_loop().create_task(self.shutdown())
-        e.accept()
+        if getattr(self, "_shutdown_done", False):
+            # shutdown 완료 후 실제 종료
+            e.accept()
+        else:
+            # shutdown 먼저 실행, 완료 후 다시 close 호출
+            e.ignore()
+            asyncio.get_event_loop().create_task(self._shutdown_and_close())
+
+    async def _shutdown_and_close(self):
+        """shutdown 완료 후 창 닫기"""
+        await self.shutdown()
+        self.close()  # _shutdown_done=True 상태로 다시 closeEvent 호출
 
 def run_qt_app(mgr):
     #set_ui_type("qt")
