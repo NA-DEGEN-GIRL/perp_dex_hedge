@@ -632,6 +632,9 @@ class OrderBookPanel(QtWidgets.QWidget):
         # 소숫점 자릿수 (기본값, 심볼별로 조정 가능)
         self._price_decimals = 2
         self._size_decimals = 4
+        # 오더북 행-가격 매핑 (오픈오더 인디케이터용)
+        self._asks_row_prices: list[tuple[int, float]] = []
+        self._bids_row_prices: list[tuple[int, float]] = []
         self._build_ui()
 
     def _build_ui(self):
@@ -849,7 +852,7 @@ class OrderBookPanel(QtWidgets.QWidget):
         self.setMinimumHeight(880)
 
     def _create_orderbook_table(self, color: str, show_header: bool = True) -> QtWidgets.QTableWidget:
-        """오더북 테이블 생성"""
+        """오더북 테이블 생성 (Price + Size + Total)"""
         table = QtWidgets.QTableWidget()
         table.setColumnCount(3)
         if show_header:
@@ -924,8 +927,8 @@ class OrderBookPanel(QtWidgets.QWidget):
         item = sender.item(row, 0)  # 첫 번째 열이 가격
         if item and item.text():
             try:
-                # 콤마 제거 후 float 변환
-                price_str = item.text().replace(",", "")
+                # 인디케이터(•)와 콤마 제거 후 float 변환
+                price_str = item.text().replace("•", "").replace(",", "").strip()
                 price = float(price_str)
                 self.price_clicked.emit(price)
             except ValueError:
@@ -938,6 +941,10 @@ class OrderBookPanel(QtWidgets.QWidget):
 
         bids = orderbook.get("bids", [])
         asks = orderbook.get("asks", [])
+
+        # 행 -> 가격 매핑 저장 (오픈오더 인디케이터용)
+        self._asks_row_prices: list[tuple[int, float]] = []  # [(row, price), ...]
+        self._bids_row_prices: list[tuple[int, float]] = []
 
         # Asks 테이블 업데이트 (역순: 높은 가격이 아래로, 아래 정렬)
         asks_display = asks[:self.ORDERBOOK_DEPTH]
@@ -959,6 +966,7 @@ class OrderBookPanel(QtWidgets.QWidget):
                 size = float(asks_display[data_idx][1]) if len(asks_display[data_idx]) > 1 else 0
                 total_size = totals[data_idx]
                 self._set_table_row(self.asks_table, i, price, size, total_size)
+                self._asks_row_prices.append((i, price))
 
         # Bids 테이블 업데이트 (정순: 높은 가격이 위로)
         bids_display = bids[:self.ORDERBOOK_DEPTH]
@@ -969,6 +977,7 @@ class OrderBookPanel(QtWidgets.QWidget):
                 size = float(bids_display[i][1]) if len(bids_display[i]) > 1 else 0
                 total += size
                 self._set_table_row(self.bids_table, i, price, size, total)
+                self._bids_row_prices.append((i, price))
             else:
                 self._clear_table_row(self.bids_table, i)
 
@@ -981,6 +990,9 @@ class OrderBookPanel(QtWidgets.QWidget):
             self.spread_label.setText(f"Spread: {spread:.{self._price_decimals}f} ({spread_pct:.3f}%)")
         else:
             self.spread_label.setText("Spread: -")
+
+        # 오픈오더 위치 인디케이터 표시
+        self._mark_order_indicators()
 
     def _set_table_row(self, table: QtWidgets.QTableWidget, row: int, price: float, size: float, total: float):
         """테이블 행 설정 (고정 소숫점 자릿수)"""
@@ -1003,6 +1015,58 @@ class OrderBookPanel(QtWidgets.QWidget):
             item = table.item(row, col)
             if item:
                 item.setText("")
+
+    def _mark_order_indicators(self):
+        """오픈오더 위치에 인디케이터(•) 표시 - 가격 앞에 • 추가"""
+        if not self._open_orders_data:
+            return
+        if not hasattr(self, "_asks_row_prices") or not hasattr(self, "_bids_row_prices"):
+            return
+
+        # SELL/SHORT -> asks, BUY/LONG -> bids
+        sell_prices = []
+        buy_prices = []
+        for order in self._open_orders_data:
+            side = str(order.get("side", "")).upper()
+            price = float(order.get("price", 0))
+            if side in ("SELL", "SHORT"):
+                sell_prices.append(price)
+            elif side in ("BUY", "LONG"):
+                buy_prices.append(price)
+
+        # asks 테이블에 SELL 오더 표시
+        marked_ask_rows = set()
+        for order_price in sell_prices:
+            closest_row = self._find_closest_row(self._asks_row_prices, order_price)
+            if closest_row is not None and closest_row not in marked_ask_rows:
+                marked_ask_rows.add(closest_row)
+                item = self.asks_table.item(closest_row, 0)  # 가격 열
+                if item and not item.text().startswith("•"):
+                    item.setText("• " + item.text())
+
+        # bids 테이블에 BUY 오더 표시
+        marked_bid_rows = set()
+        for order_price in buy_prices:
+            closest_row = self._find_closest_row(self._bids_row_prices, order_price)
+            if closest_row is not None and closest_row not in marked_bid_rows:
+                marked_bid_rows.add(closest_row)
+                item = self.bids_table.item(closest_row, 0)  # 가격 열
+                if item and not item.text().startswith("•"):
+                    item.setText("• " + item.text())
+
+    def _find_closest_row(self, row_prices: list[tuple[int, float]], target_price: float) -> int | None:
+        """주어진 가격에 가장 가까운 행 번호 반환"""
+        if not row_prices:
+            return None
+
+        closest_row = None
+        min_diff = float("inf")
+        for row, price in row_prices:
+            diff = abs(price - target_price)
+            if diff < min_diff:
+                min_diff = diff
+                closest_row = row
+        return closest_row
 
     def showEvent(self, event):
         """패널 표시 시 체크박스 위치 업데이트"""
@@ -1075,10 +1139,10 @@ class OrderBookPanel(QtWidgets.QWidget):
                 checkbox_widget = self._create_row_checkbox(order_id)
                 self.orders_table.setCellWidget(row, 0, checkbox_widget)
 
-                # Side 색상 (열 1)
+                # Side 색상 (열 1) - BUY/LONG은 초록, SELL/SHORT는 빨강
                 side_item = QtWidgets.QTableWidgetItem(side)
                 side_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-                if side == "BUY":
+                if side in ("BUY", "LONG"):
                     side_item.setForeground(QtGui.QColor("#81c784"))
                 else:
                     side_item.setForeground(QtGui.QColor("#ef9a9a"))
@@ -1098,6 +1162,9 @@ class OrderBookPanel(QtWidgets.QWidget):
                 id_item = QtWidgets.QTableWidgetItem(order_id[:12])
                 id_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
                 self.orders_table.setItem(row, 4, id_item)
+
+            # 오더북 인디케이터 업데이트 (오픈오더 변경 시 즉시 반영)
+            self._mark_order_indicators()
 
     def _on_cancel_selected(self):
         """선택된 오더 취소"""
@@ -1128,6 +1195,8 @@ class OrderBookPanel(QtWidgets.QWidget):
         self._current_order_ids = []
         self._row_checkboxes.clear()
         self._select_all_checkbox.setChecked(False)
+        self._asks_row_prices = []
+        self._bids_row_prices = []
 
 
 # ---------------------------------------------------------------------------
