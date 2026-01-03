@@ -303,7 +303,8 @@ _ensure_ts_logger()
 # standx는 rest api 부르면 ws 끊기는 현상이 있어서 폴링 간격을 길게 잡았음.
 # mpdex의 문제가 아닌 standx 서버 문제로 보임.
 RATE = {
-    "GAP_FOR_INF": 0.1,
+    "GAP_FOR_INF": 0.05,
+    "GAP_FOR_ORDERBOOK": 0.05,
     "STATUS_POS_INTERVAL": {"default": 0.5, "standx":10.0},
     "STATUS_OO_INTERVAL": {"default": 0.5, "standx":10.0},
     "STATUS_COLLATERAL_INTERVAL": {"default": 0.5, "standx":10.0},
@@ -314,7 +315,7 @@ RATE = {
 # - 0: 모든 거래소 완전 병렬 실행
 # - 양수(예: 0.05): HL 거래소 간 해당 초만큼 딜레이 (미세 순차)
 # - 음수(예: -1): HL 거래소 완전 순차 실행 (하나 끝나면 다음)
-HL_ORDER_DELAY = 0.15  # 딜레이
+HL_ORDER_DELAY = 0.2  # 딜레이
 
 def _normalize_symbol_input(sym: str) -> str:
     if not sym: return ""
@@ -3253,15 +3254,18 @@ class UiQtApp(QtWidgets.QMainWindow):
         """[CHANGED] 현재 그룹의 HL-like 카드에만 DEX 전파"""
         if self._switching_group:
             return
-        
+
+        if not d:  # None 또는 빈 문자열 방지
+            d = "HL"
+
         self.header_dex = d
         g = self.current_group
-        
+
         for n in self.mgr.visible_names():
             # [ADD] 그룹 필터: 현재 그룹만
             if self.group_by_ex.get(n, 0) != g:
                 continue
-            
+
             if self.mgr.is_hl_like(n):
                 self.dex_by_ex[n] = d
                 self.exchange_state[n].dex = d
@@ -3331,6 +3335,8 @@ class UiQtApp(QtWidgets.QMainWindow):
 
     def _on_card_dex(self, n, d):
         """카드의 DEX 변경 처리 (perp에서만 DEX 선택 가능)"""
+        if not d:  # None 또는 빈 문자열 방지
+            d = "HL"
         self.dex_by_ex[n] = d
         self.exchange_state[n].dex = d
         self._update_fee(n)
@@ -3507,7 +3513,8 @@ class UiQtApp(QtWidgets.QMainWindow):
             is_spot = self.market_type_by_ex.get(n, "perp") == "spot"
 
             if is_hl_like:
-                sym = _compose_symbol(self.dex_by_ex[n], self.symbol_by_ex[n], is_spot)
+                dex = self.dex_by_ex.get(n) or "HL"  # None 방지
+                sym = _compose_symbol(dex, self.symbol_by_ex[n], is_spot)
             else:
                 sym = self.symbol_by_ex[n].upper()
 
@@ -3636,7 +3643,8 @@ class UiQtApp(QtWidgets.QMainWindow):
                 is_hl_like = self.mgr.is_hl_like(n)
                 is_spot = self.market_type_by_ex.get(n, "perp") == "spot"
                 if is_hl_like:
-                    sym = _compose_symbol(self.dex_by_ex[n], self.symbol_by_ex[n], is_spot)
+                    dex = self.dex_by_ex.get(n) or "HL"  # None 방지
+                    sym = _compose_symbol(dex, self.symbol_by_ex[n], is_spot)
                 else:
                     sym = self.symbol_by_ex[n].upper()
 
@@ -3654,7 +3662,7 @@ class UiQtApp(QtWidgets.QMainWindow):
         # HL 거래소와 비-HL 거래소 분리
         hl_items = [(n, sym, hint) for n, sym, hint, is_hl in close_items if is_hl]
         non_hl_items = [(n, sym, hint) for n, sym, hint, is_hl in close_items if not is_hl]
-
+        
         # 비-HL 거래소는 항상 병렬 실행
         if non_hl_items:
             tasks = [self.service.close_position(n, sym, hint) for n, sym, hint in non_hl_items]
@@ -3992,7 +4000,8 @@ class UiQtApp(QtWidgets.QMainWindow):
 
             # [수정] 비-HL은 DEX 무시, HL-like만 DEX 적용
             if is_hl_like:
-                sym = _compose_symbol(self.dex_by_ex[n], self.symbol_by_ex[n], is_spot)
+                dex = self.dex_by_ex.get(n) or "HL"  # None 방지
+                sym = _compose_symbol(dex, self.symbol_by_ex[n], is_spot)
             else:
                 sym = self.symbol_by_ex[n].upper()
 
@@ -4074,18 +4083,18 @@ class UiQtApp(QtWidgets.QMainWindow):
             try:
                 now = time.monotonic()
                 visible_names = self.mgr.visible_names()
-                """
+                
                 # 병렬 업데이트
                 tasks = [
                     self._update_single_card(n, now)
                     for n in visible_names
                 ]
                 await asyncio.gather(*tasks, return_exceptions=True)
-                
+                """
                 for n in visible_names:
                     await self._update_single_card(n, now)
                 self._initial_load_done = True
-                """
+                
                 
                 if not self._initial_load_done:
                     # 초기 로딩: 순차 업데이트 (rate limit 방지)
@@ -4099,7 +4108,7 @@ class UiQtApp(QtWidgets.QMainWindow):
                         for n in visible_names
                     ]
                     await asyncio.gather(*tasks, return_exceptions=True)
-                
+                """
                 
 
             except asyncio.CancelledError:
@@ -4474,7 +4483,7 @@ class UiQtApp(QtWidgets.QMainWindow):
             except Exception as e:
                 self._log(f"[ORDERBOOK] {ex_name} 업데이트 실패: {e}")
 
-            await asyncio.sleep(RATE["GAP_FOR_INF"])
+            await asyncio.sleep(RATE["GAP_FOR_ORDERBOOK"])
 
     async def _do_cancel_all_orders(self, direction: str = "right"):
         """오픈 오더 전체 취소"""
