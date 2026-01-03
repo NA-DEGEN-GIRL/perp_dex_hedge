@@ -372,8 +372,6 @@ class TradingService:
             default_json = {"position": None, "collateral": {"perp": {}, "spot": {}}}
             return "📊 포지션: N/A", "💰 잔고: N/A", 0.0, default_json
 
-        is_ws = hasattr(ex, "fetch_by_ws") and getattr(ex, "fetch_by_ws", False)
-        
         # 직전 캐시 불러오기
         default_json = {"position": None, "collateral": {"perp": {}, "spot": {}}}
         last = self._last_status.get(
@@ -390,15 +388,15 @@ class TradingService:
         
         col_val_perp_available = self._last_collateral.get(exchange_name, 0.0)
         
-        if need_balance or is_ws:
+        if need_balance:
             col_val_perp_available, json_data["collateral"], total_col_val_incl_spot = await self._fetch_collateral(exchange_name, ex, symbol)
 
         # === Spot 모드 ===
         if is_spot:
             coin = symbol.split("/")[0] if "/" in symbol else symbol
             coin_upper = coin.upper()
-            
-            if need_balance or is_ws:
+
+            if need_balance:
                 try:
                     if hasattr(ex, "get_spot_balance"):
                         spot_balance = await ex.get_spot_balance(coin_upper)
@@ -447,7 +445,7 @@ class TradingService:
 
         # 포지션 조회
         pos_str = last[0]
-        if need_position or is_ws:
+        if need_position:
             try:
                 quote = ex.get_perp_quote(symbol) # for tread.fi exception
                 native = self._to_native_symbol(exchange_name, symbol, is_spot=False, quote=quote)

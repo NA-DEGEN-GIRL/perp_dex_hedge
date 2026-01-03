@@ -343,7 +343,6 @@ class ExchangeManager:
                         vault_address=vault_address,
                         builder_code=builder_code,
                         builder_fee_pair=fee_pair,
-                        fetch_by_ws=True,
                         FrontendMarket=frontend_market,
                     )
                 except Exception as e:
@@ -355,7 +354,6 @@ class ExchangeManager:
                     api_key = os.getenv(f"{u_name}_API_KEY"),
                     vault_address = vault_address,
                     builder_fee_pair = fee_pair,
-                    fetch_by_ws = True,
                     FrontendMarket = frontend_market,
                 )
 
@@ -367,7 +365,6 @@ class ExchangeManager:
                     login_wallet_private_key = os.getenv(f"{u_name}_LOGIN_WALLET_PRIVATE_KEY"),
                     trading_wallet_address = os.getenv(f"{u_name}_TRADING_WALLET_ADDRESS"),
                     account_name = os.getenv(f"{u_name}_ACCOUNT_NAME"),
-                    fetch_by_ws = True,
                     trading_wallet_private_key = os.getenv("f{u_name}_TRADING_WALLET_PRIVATE_KEY", None),
                     options = {"builder_fee_pair":fee_pair}
                 )
@@ -380,7 +377,6 @@ class ExchangeManager:
                     login_wallet_private_key = os.getenv(f"{u_name}_LOGIN_WALLET_PRIVATE_KEY"),
                     pacifica_public_key = os.getenv(f"{u_name}_TRADING_WALLET_ADDRESS") or os.getenv(f"{u_name}_PACIFICA_PUBLIC_KEY"),
                     account_name = os.getenv(f"{u_name}_ACCOUNT_NAME"),
-                    fetch_by_ws = True,
                 )
             
             if exchange_platform.lower() == "lighter":

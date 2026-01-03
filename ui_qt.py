@@ -328,6 +328,13 @@ def _compose_symbol(dex: str, coin: str, is_spot: bool = False) -> str:
         return c
     return f"{dex.lower()}:{c}" if dex and dex != "HL" else c
 
+def _ws_supported(ex, operation: str) -> bool:
+    """
+    거래소가 특정 operation에 대해 WS를 지원하는지 확인.
+    """
+    ws_dict = getattr(ex, "ws_supported", None)
+    return ws_dict.get(operation, False)
+
 def _strip_bracket_markup(s: str) -> str:
     # [green]...[/] 제거
     return re.sub(r"\[[a-zA-Z_\/]+\]", "", s)
@@ -3990,11 +3997,13 @@ class UiQtApp(QtWidgets.QMainWindow):
             need_pos = force_update or (now - self._last_pos_at.get(n, 0.0) >= pos_interval)
             need_price = force_update or (now - self._last_price_at.get(n, 0.0) >= price_interval)
 
-            # WS 거래소는 항상 업데이트
+            # WS 지원 여부 확인 (operation별)
             ex = self.mgr.get_exchange(n)
             if not ex:
                 return
-            is_ws = hasattr(ex, "fetch_by_ws") and getattr(ex, "fetch_by_ws", False)
+            ws_price = _ws_supported(ex, "get_mark_price")
+            ws_position = _ws_supported(ex, "get_position")
+            ws_collateral = _ws_supported(ex, "get_collateral")
             is_hl_like = self.mgr.is_hl_like(n)
             is_spot = self.market_type_by_ex.get(n, "perp") == "spot"
 
@@ -4006,7 +4015,7 @@ class UiQtApp(QtWidgets.QMainWindow):
                 sym = self.symbol_by_ex[n].upper()
 
             # 가격 업데이트
-            if need_price or is_ws:
+            if need_price or ws_price:
                 try:
                     p = await self.service.fetch_price(n, sym, is_spot=is_spot)
                     c.set_price_label(p)
@@ -4037,24 +4046,24 @@ class UiQtApp(QtWidgets.QMainWindow):
                 self._update_fee(n)
 
             # 포지션/잔고 업데이트
-            if need_pos or need_collat or is_ws:
+            if need_pos or need_collat or ws_position or ws_collateral:
                 try:
                     is_spot = self.market_type_by_ex.get(n, "perp") == "spot"
                     _pos, _col, total_col_val, json_data = await self.service.fetch_status(
                         n, sym,
-                        need_balance=need_collat or is_ws,
-                        need_position=need_pos or is_ws,
+                        need_balance=need_collat or ws_collateral,
+                        need_position=need_pos or ws_position,
                         is_spot=is_spot
                     )
 
                     c.set_status_info(json_data)
 
-                    if need_collat or is_ws:
+                    if need_collat or ws_collateral:
                         if total_col_val:
                             self.collateral[n] = float(total_col_val)
                         self._last_balance_at[n] = now
 
-                    if need_pos or is_ws:
+                    if need_pos or ws_position:
                         self._last_pos_at[n] = now
 
                     # force update 플래그 해제
@@ -4429,7 +4438,7 @@ class UiQtApp(QtWidgets.QMainWindow):
                     break
 
                 now = time.time()
-                is_ws = hasattr(ex, "fetch_by_ws") and getattr(ex, "fetch_by_ws", False)
+                ws_open_orders = _ws_supported(ex, "get_open_orders")
                 force_update = ex_name in self._force_open_orders_update
 
                 # 오더북 조회 (항상)
@@ -4451,7 +4460,7 @@ class UiQtApp(QtWidgets.QMainWindow):
                     self._last_open_orders_at_left if direction == "left"
                     else self._last_open_orders_at_right
                 )
-                need_open_orders = is_ws or force_update or (now - last_open_orders_at >= open_orders_interval)
+                need_open_orders = ws_open_orders or force_update or (now - last_open_orders_at >= open_orders_interval)
 
                 if need_open_orders and hasattr(ex, "get_open_orders"):
                     if ex_name == 'standx':
