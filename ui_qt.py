@@ -303,8 +303,8 @@ _ensure_ts_logger()
 # standx는 rest api 부르면 ws 끊기는 현상이 있어서 폴링 간격을 길게 잡았음.
 # mpdex의 문제가 아닌 standx 서버 문제로 보임.
 RATE = {
-    "GAP_FOR_INF": 0.05,
-    "GAP_FOR_ORDERBOOK": 0.05,
+    "GAP_FOR_INF": 0.1,
+    "GAP_FOR_ORDERBOOK": 0.1,
     "STATUS_POS_INTERVAL": {"default": 0.5, "standx":10.0},
     "STATUS_OO_INTERVAL": {"default": 0.5, "standx":10.0},
     "STATUS_COLLATERAL_INTERVAL": {"default": 0.5, "standx":10.0},
