@@ -2947,7 +2947,7 @@ class UiQtApp(QtWidgets.QMainWindow):
     def _on_market_type_change(self, n: str, market_type: str):
         """카드의 Perp/Spot 변경 처리"""
         self.market_type_by_ex[n] = market_type
-        
+
         # 심볼 목록 업데이트
         dex = self.dex_by_ex.get(n, "HL")
         self._update_card_symbols(n, dex, market_type)
@@ -2956,7 +2956,7 @@ class UiQtApp(QtWidgets.QMainWindow):
         if n in self.cards:
             card = self.cards[n]
             ex_cache = self._symbol_cache_by_ex.get(n, {})
-            
+
             # 새 목록 가져오기
             if market_type == "spot":
                 symbols = ex_cache.get("spot", [])
@@ -2969,7 +2969,7 @@ class UiQtApp(QtWidgets.QMainWindow):
                     symbols = perp_data
                 else:
                     symbols = []
-            
+
             # 자동 선택 및 적용
             if symbols:
                 selected = card._auto_select_symbol(symbols)
@@ -2980,6 +2980,13 @@ class UiQtApp(QtWidgets.QMainWindow):
                     # 상태 업데이트
                     self.symbol_by_ex[n] = normalized
                     self.exchange_state[n].symbol = normalized
+
+        # 오더북 패널이 열려있으면 새 심볼로 다시 열기
+        for direction in ["left", "right"]:
+            if self._get_panel_exchange(direction) == n:
+                asyncio.get_event_loop().create_task(
+                    self._open_orderbook_panel(n, direction)
+                )
 
     def _is_group_cancelled(self, g: int) -> bool:
         """그룹별 취소 여부"""
