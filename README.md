@@ -896,3 +896,906 @@ A: Rate Limit 문제일 가능성이 높습니다.
 ## 📞 문의
 
 문의 하지마
+
+---
+---
+
+# Daslgi PERP DEX Bot (English Version)
+
+> A program that allows you to trade on multiple Perp DEXs simultaneously from a single screen.
+
+![Screenshot](screenshot_v5.png)
+
+GitHub: https://github.com/NA-DEGEN-GIRL/perp_dex_hedge
+
+---
+
+## ⚠️ Important Notice (Please Read Carefully)
+
+### Disclaimer
+- This program is an **experimental project made by a coding beginner for learning/personal use**
+- **All responsibility for use lies entirely with you**
+- This is not financial/investment advice
+- There may be bugs, so **only use with small amounts you can afford to lose**
+
+### Security Warnings
+- **Never share or expose** your `.env` file (contains personal wallet information needed for trading)
+- For Hyperliquid, **Agent API keys are mandatory** instead of private keys
+- Check log files for sensitive information before sharing
+
+### Pre-Use Checklist
+1. Enter only the exchange information you'll use in `.env` (delete the rest)
+2. Set `show = True` in `config.ini` for exchanges you want to use
+3. Test with **very small amounts** before actual use
+4. Don't put large amounts!
+
+---
+
+## 📌 Supported Exchanges
+
+### Hyperliquid-Based
+- MASS, Lit, Dexari, Liquid, BasedOne, Supercexy, Bullpen, Dreamcash, HyEna
+- Special cases: Superstack, Tread.fi (with Hyperliquid), Tread.fi (with Pacifica)
+- **Spot Support**: Lit, Dexari, Liquid, BasedOne, Supercexy, etc. (varies by exchange)
+
+### Non-Hyperliquid Exchanges
+- Lighter (Spot ✓), EdgeX, Paradex, GRVT, Backpack (Spot ✓), Variational, Pacifica, StandX
+
+---
+
+## 🚀 Quick Start Guide
+
+### Step 1: Install the Program
+
+#### Windows Users (Beginner-Friendly Script)
+
+**Prerequisites: Install Python 3.10**
+```powershell
+# Run PowerShell as Administrator:
+winget install -e --id Python.Python.3.10
+winget install -e --id Git.Git
+
+# Verify installation
+python --version
+git --version
+```
+
+**Run the Script**
+```powershell
+# 1. Download the project
+git clone https://github.com/NA-DEGEN-GIRL/perp_dex_hedge
+cd perp_dex_hedge
+
+# 2. Set execution policy (first time only)
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force
+
+# 3. Install and run
+.\scripts\win\setup.ps1
+```
+
+#### Manual Installation (Windows / Linux / Mac)
+```bash
+# Download the project
+git clone https://github.com/NA-DEGEN-GIRL/perp_dex_hedge
+cd perp_dex_hedge
+
+# Create and activate virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.in
+```
+
+### Step 2: Create Configuration Files
+
+#### .env File (API Key Configuration)
+```bash
+# Copy example files
+# If you can't use cp command, just remove the .example extension and edit
+cp .env.example .env
+cp config.ini.example config.ini
+
+# Edit .env file (keep only exchanges you'll use, delete the rest)
+# Edit config.ini file
+```
+
+#### .env Writing Rules (Important!)
+```env
+# ✅ Correct examples
+LIT_WALLET_ADDRESS=0xabc123...
+LIT_AGENT_API_KEY=0xdef456...
+
+# ❌ Wrong examples
+LIT_WALLET_ADDRESS = 0xabc123...    # No spaces around equals sign
+LIT_WALLET_ADDRESS="0xabc123..."    # No quotes
+LIT_WALLET_ADDRESS=0xabc... # memo  # No comments
+```
+
+### Step 3: Run
+
+#### 3.1 Basic Execution
+```bash
+# Default execution (Qt UI)
+python main.py
+
+# Or for Windows beginners:
+.\scripts\win\run.ps1
+```
+
+#### 3.2 For those familiar with legacy URWID UI
+```bash
+python main.py --ui urwid
+```
+
+#### 3.3 Running Qt UI in WSL (Linux/WSL)
+
+##### 1) Install Required Packages (Qt xcb plugin)
+```bash
+sudo apt update
+sudo apt install -y \
+    libxcb-cursor0 \
+    libxcb-cursor-dev \
+    libxcb-xinerama0 \
+    libxcb-icccm4 \
+    libxcb-image0 \
+    libxcb-keysyms1 \
+    libxcb-render-util0 \
+    libxcb-shape0 \
+    libxcb-xfixes0 \
+    libxcb-xkb1 \
+    libxkbcommon-x11-0
+```
+
+##### 2) Install Korean Fonts (if characters appear as □□□)
+```bash
+sudo apt install -y fonts-noto-cjk fonts-nanum
+fc-cache -fv
+```
+
+##### 3) Run
+```bash
+python main.py
+```
+
+---
+
+## 🔄 Configuration Update Tool
+
+### update_rates.py
+
+A script that automatically applies the latest fee (`*_rate`) settings from `config.ini.example` to `config.ini`.
+
+#### Purpose
+- When **fee settings have changed** after a program update
+- When **rate values have changed** due to new builder codes
+- When you want to apply only the rates from `config.ini.example` to `config.ini`
+
+#### How It Works
+1. Matches sections with **identical `builder_code`**
+2. Exception: `hyena` section matches by **section name**
+3. **Deletes and replaces** existing `*_rate` values with example values for matched sections
+4. **Preserves** other settings like `show`, `initial_setup`
+
+#### Usage
+
+```bash
+# Preview changes (no actual save)
+python update_rates.py --dry-run
+
+# Execute actual update
+python update_rates.py
+```
+
+#### Output Example
+
+```
+============================================================
+Total 2 sections updated:
+============================================================
+
+[lit] (builder_code match: [lit])
+  ~ fee_rate = 30 / 45 → 35 / 50
+
+[hyena] (section name match: [hyena])
+  ~ fee_rate = 5 / 5 → 0 / 0
+  + hyna_fee_rate = 10 / 10 (added)
+
+============================================================
+
+✅ config.ini update complete!
+```
+
+#### Notes
+- **Backup recommended**: Copy `config.ini` before running
+- Sections without `builder_code` (lighter, backpack, etc.) **will not be updated**
+- `show`, `exchange`, `initial_setup`, etc. **will not be changed**
+
+---
+
+## 📁 Configuration Files Detailed Guide
+
+### .env File (Exchange API Keys)
+
+Set only the exchanges you'll use and **delete the rest**.
+
+#### ⚠️ Perp ↔ Spot Asset Transfer Feature (Wallet Private Key Required)
+
+Some exchanges support **transferring collateral (USDC, etc.) between Perp and Spot accounts**.
+**Hyperliquid** exchanges require **wallet private key** for this feature.
+**Beginners are recommended not to use this feature. You might accidentally expose your private key.**
+**Lighter** doesn't require a separate wallet private key.
+
+**Why is the private key needed?**
+- For Hyperliquid (HL) based exchanges, asset transfers between Perp ↔ Spot require **L1 level signing**
+- Regular trading (orders/cancellations) works with Agent API keys, but asset transfers require **actual wallet signatures**
+- Therefore, you need to set the `*_WALLET_PRIVATE_KEY` environment variable to use this feature
+
+**Configuration:**
+
+```env
+# Hyperliquid-based exchanges (Lit, Dexari, Liquid, HyEna, Supercexy, BasedOne, etc.)
+# Basic setup (trading only)
+LIT_WALLET_ADDRESS=0x...
+LIT_AGENT_API_KEY=0x...
+LIT_AGENT_PRIVATE_KEY=0x...
+
+# Add below to use Perp ↔ Spot asset transfer
+LIT_WALLET_PRIVATE_KEY=0x...  # Wallet private key
+
+# For Tread.fi, slightly different
+TREADFI_HL_LOGIN_WALLET_ADDRESS=...
+TREADFI_HL_TRADING_WALLET_ADDRESS=...
+TREADFI_HL_ACCOUNT_NAME=...
+TREADFI_HL_TRADING_WALLET_PRIVATE_KEY=0x...  # Trading wallet private key
+```
+
+**Supported Exchanges:**
+
+| Exchange | Environment Variable | Note |
+|----------|---------------------|------|
+| Lit | `LIT_WALLET_PRIVATE_KEY` | |
+| Dexari | `DEXARI_WALLET_PRIVATE_KEY` | |
+| Liquid | `LIQUID_WALLET_PRIVATE_KEY` | |
+| HyEna | `HYENA_WALLET_PRIVATE_KEY` | |
+| Supercexy | `SUPERCEXY_WALLET_PRIVATE_KEY` | |
+| BasedOne | `BASEDONE_WALLET_PRIVATE_KEY` | |
+| Tread.fi | `TREADFI_HL_TRADING_WALLET_PRIVATE_KEY` | Trading wallet key |
+
+**Warnings:**
+- 🔐 Never share your private key
+- 💡 If you don't need asset transfer, you don't need to set `*_WALLET_PRIVATE_KEY`
+- ⚠️ Be extra careful about security when setting private keys
+
+#### Hyperliquid-Based Exchanges (Common Format)
+```env
+# EXCHANGE_WALLET_ADDRESS = Trading wallet address
+# EXCHANGE_AGENT_API_KEY = Agent API address (generated from HL)
+# EXCHANGE_AGENT_PRIVATE_KEY = Agent private key
+# EXCHANGE_IS_SUB = 1/true if sub account (optional)
+
+# Example: Lit exchange
+LIT_WALLET_ADDRESS=0x...
+LIT_AGENT_API_KEY=0x...
+LIT_AGENT_PRIVATE_KEY=0x...
+
+# Example: Bullpen exchange
+BULLPEN_WALLET_ADDRESS=0x...
+BULLPEN_AGENT_API_KEY=0x...
+BULLPEN_AGENT_PRIVATE_KEY=0x...
+```
+
+**How to Create Agent API Key:**
+1. Go to Hyperliquid website
+2. Portfolio → API → Generate API Key
+3. Copy API address and private key
+
+#### Using Sub Accounts
+```env
+# Add _IS_SUB=1 to use sub accounts
+LIT_WALLET_ADDRESS=0xSubAccountAddress...
+LIT_AGENT_API_KEY=0x...
+LIT_AGENT_PRIVATE_KEY=0x...
+LIT_IS_SUB=1
+```
+
+#### Tread.fi (Hyperliquid) Configuration
+```env
+# For security, follow the login procedure shown when running the program
+TREADFI_HL_LOGIN_WALLET_ADDRESS=LoginWalletAddress
+TREADFI_HL_TRADING_WALLET_ADDRESS=TradingAccountAddress
+TREADFI_HL_ACCOUNT_NAME=AccountNameCreatedOnTreadfi
+# Optional: Set below for auto login
+TREADFI_HL_LOGIN_WALLET_PRIVATE_KEY=LoginWalletPrivateKey
+TREADFI_HL_CSRF_TOKEN=CopyFromCookie
+TREADFI_HL_SESSION_ID=CopyFromCookie
+```
+
+#### Tread.fi (Pacifica) Configuration
+```env
+# Can use same login wallet as Tread.fi Hyperliquid
+TREADFI_PC_LOGIN_WALLET_ADDRESS=LoginWalletAddress
+TREADFI_PC_TRADING_WALLET_ADDRESS=TradingAccountAddress(SolanaAddress)
+TREADFI_PC_ACCOUNT_NAME=PacificaAccountNameCreatedOnTreadfi
+# Optional: Set below for auto login
+TREADFI_PC_LOGIN_WALLET_PRIVATE_KEY=LoginWalletPrivateKey
+TREADFI_PC_CSRF_TOKEN=CopyFromCookie
+TREADFI_PC_SESSION_ID=CopyFromCookie
+```
+
+#### Superstack Configuration
+```env
+SUPERSTACK_WALLET_ADDRESS=0x...
+SUPERSTACK_API_KEY=sk_...
+```
+
+#### Non-Hyperliquid Exchanges
+
+**Backpack:**
+```env
+BACKPACK_API_KEY=apikey
+BACKPACK_SECRET_KEY=secretkey
+# Get from https://backpack.exchange/portfolio/settings/api-keys
+```
+
+**Lighter:**
+```env
+LIGHTER_ACCOUNT_ID=AccountNumber
+LIGHTER_PRIVATE_KEY=ApiPrivateKey
+LIGHTER_API_KEY_ID=2
+LIGHTER_L1_ADDRESS=EVMWalletAddress
+# Get from https://app.lighter.xyz/apikeys
+```
+
+**Variational:**
+```env
+# For security, follow the auto login procedure
+VARIATIONAL_WALLET_ADDRESS=WalletAddress
+VARIATIONAL_JWT_TOKEN=vr-token-cookie-value
+# For auto login, set below
+VARIATIONAL_PRIVATE_KEY=WalletPrivateKey
+```
+
+**Variational Slippage Setting (config.ini):**
+```ini
+[variational]
+exchange = variational
+slippage = 0.01  # Maximum slippage tolerance (0.01 = 1%)
+show = True
+```
+> 💡 If `slippage` is not set, mpdex default (currently 1%) is used.
+
+**Other Exchanges:**
+```env
+# Paradex
+PARADEX_L1_ADDRESS=EVMAddress
+PARADEX_ADDRESS=ParadexAddress
+PARADEX_PRIVATE_KEY=ParadexPrivateKey
+
+# EdgeX
+EDGEX_ACCOUNT_ID=AccountID
+EDGEX_PRIVATE_KEY=PrivateKey
+
+# GRVT
+GRVT_API_KEY=ApiKey
+GRVT_ACCOUNT_ID=AccountID
+GRVT_SECRET_KEY=SecretKey
+
+# Pacifica
+PACIFICA_PUBLIC_KEY=WalletAddress
+PACIFICA_AGENT_PUBLIC_KEY=APIAddress
+PACIFICA_AGENT_PRIVATE_KEY=APIPrivateKey
+```
+
+---
+
+### config.ini File (Exchange Display/Fee Settings)
+
+#### Basic Structure
+```ini
+[exchangename]
+show = True              # Whether to show in UI (True/False/Never)
+exchange = hyperliquid   # Exchange engine type
+builder_code = 0x...     # HL builder code (HL-based only)
+fee_rate = 20 / 25       # Fee (limit / market)
+# [NEW] Card initial value setup (symbol, quantity, long/short, spot/perp)
+initial_setup = xyz:XYZ100, 0.0002, long, perp
+```
+
+#### show Option Description
+
+| Value | Description |
+|-------|-------------|
+| `True` | Displayed as card in UI, exchange client created |
+| `False` | Hidden from UI (card not visible), but exchange client is created. Can be toggled back on |
+| `Never` | Exchange client not created at all. Not shown in selection list. Useful for temporarily disabling while keeping keys in `.env` |
+
+**Never Usage Example:**
+- When you want to disable an exchange temporarily without removing from `.env`
+- Can be reactivated later by changing to `True` or `False`
+
+#### exchange Value Types
+| Value | Description |
+|-------|-------------|
+| `hyperliquid` (or omit) | Standard Hyperliquid |
+| `superstack` | Superstack |
+| `treadfi.hyperliquid` | Tread.fi (HL account) |
+| `treadfi.pacifica` | Tread.fi (Pacifica account) |
+| `lighter` | Lighter |
+| `backpack` | Backpack |
+| `variational` | Variational |
+| `paradex` | Paradex |
+| `edgex` | EdgeX |
+| `grvt` | GRVT |
+| `pacifica` | Pacifica |
+
+#### slippage Option (Variational Only)
+
+Set **maximum slippage tolerance** for Variational exchange.
+
+```ini
+[variational]
+exchange = variational
+slippage = 0.01  # Allow up to 1% slippage
+show = True
+```
+
+| Value | Meaning |
+|-------|---------|
+| `0.01` | Allow up to 1% slippage |
+| `0.005` | Allow up to 0.5% slippage |
+| `0.02` | Allow up to 2% slippage |
+| (omit) | Use mpdex default (currently 1%) |
+
+#### proxy Option (Proxy Settings)
+
+Exchanges with `exchange = hyperliquid` (default if omitted) or `exchange = superstack` support **proxy connections**.
+
+**Example Exchanges:**
+- HyEna, MASS, Lit, Dexari, Liquid, Supercexy, BasedOne, Dreamcash, Superstack, etc.
+
+**Configuration:**
+
+1. **Enable in config.ini:**
+```ini
+[hyena]
+proxy = True  # Use proxy
+show = True
+```
+
+2. **Set proxy address in .env:**
+```env
+HYENA_PROXY=http://your_proxy:port
+# or
+HYENA_PROXY=socks5://your_proxy:port
+```
+
+**Example:**
+```ini
+# config.ini
+[superstack]
+exchange = superstack
+proxy = True
+show = True
+```
+
+```env
+# .env
+SUPERSTACK_PROXY=http://127.0.0.1:8080
+```
+
+> ⚠️ If `proxy = True` is set but no proxy address in `.env`, it will connect without proxy.
+>
+> 💡 For proxy service recommendations, address formats, and detailed setup, see [Rate Limit Issues and Solutions](#-rate-limit-issues-and-solutions) below
+
+#### initial_setup (Card Initial Value Settings) ✅ NEW
+Option to automatically populate default input values (coin/quantity/type) for each exchange card when the program starts.
+
+Format
+```ini
+initial_setup = <symbol>, <amount>, <long|short|off>, <spot|perp>, <group>
+```
+
+- `<symbol>`
+  - Usually enter coin symbols like `BTC`, `ETH`.
+  - **To pre-select a DEX symbol on Hyperliquid (HL)**, use `dex:COIN` format.
+    - Example: `xyz:XYZ100`
+      - Initial setup selects **DEX = xyz**, card input shows only **XYZ100**.
+    - Example: `hyna:BTC`
+      - DEX = hyna selected, coin = BTC
+- `<amount>`
+  - Value to enter in the card's Q (quantity) input field.
+  - Example: `0.0002`
+- `<long|short|off>`
+  - Initializes the card's direction selection.
+  - `long` → Long enabled, `short` → Short enabled, `off` → Disabled (OFF) state
+- `<spot|perp>`
+  - Spot not yet supported, but **values are stored/parsed for future spot/perp separation.**
+  - For now, use `perp`.
+- `<group>`
+  - Group number the card belongs to (0~5)
+  - Example: `0`, `1`, `2` ...
+  - Execute All / Reverse / Close All / Repeat / Burn run independently per group.
+  - Default `0` if omitted
+
+Notes
+- `initial_setup` can only be **specified once per section**.
+- If no value, program defaults (existing logic) apply.
+- Invalid format (missing commas, etc.) will use defaults for that section only.
+
+Examples
+```ini
+# Place in group 0
+initial_setup = BTC, 0.002, long, perp, 0
+
+# Place in group 1
+initial_setup = ETH, 0.01, short, perp, 1
+
+# DEX specified + group 2
+initial_setup = xyz:XYZ100, 0.0002, long, perp, 2
+```
+
+#### Example
+```ini
+# Exchange to use: show = True
+[lit]
+builder_code = 0x24a747628494231347f4f6aead2ec14f50bcc8b7
+fee_rate = 35 / 50
+initial_setup = BTC, 0.002, long, perp, 1
+show = True
+
+# Hidden (can toggle back on): show = False
+[paradex]
+exchange = paradex
+show = False
+
+# Completely disabled (client not created): show = Never
+# Useful for temporarily disabling while keeping keys in .env
+[grvt]
+exchange = grvt
+show = Never
+
+# Non-HL exchanges require exchange
+[backpack]
+exchange = backpack
+show = True
+```
+
+---
+
+## Usage Guide
+
+Look at the buttons and click them
+
+### Main Features
+
+#### Basic Trading
+1. **Symbol Input**: Coin to trade (e.g., BTC, ETH)
+2. **Quantity Input**: Amount to trade
+3. **Long/Short Selection**: Choose direction (unselected = disabled)
+4. **Market/Limit**: Market or limit order
+5. **Execute Order**: Order on that exchange only
+
+#### Details Button (Orderbook / Open Orders)
+
+Click the **[Details]** button on each exchange card to see detailed information for that symbol.
+
+| Tab | Description |
+|-----|-------------|
+| **Orderbook** | Current symbol's bid/ask order book (real-time updates) |
+| **Open Orders** | List of unfilled orders for that symbol |
+
+> ⚠️ Orderbook feature only available when **mpdex supports orderbook for that exchange**.
+> Unsupported exchanges will have disabled [Details] button or no orderbook tab.
+
+**What you can do in Open Orders tab:**
+- View unfilled orders (price, quantity, direction)
+- Cancel individual orders
+
+#### Perp ↔ Spot Asset Transfer
+
+You can transfer collateral (USDC, etc.) between Perp and Spot in the balance row.
+
+| Button | Description |
+|--------|-------------|
+| ◀ | Select Spot → Perp direction |
+| ▶ | Select Perp → Spot direction |
+| MAX | Enter maximum amount for selected direction |
+| Transfer | Execute actual transfer |
+
+> ⚠️ This feature requires `*_WALLET_PRIVATE_KEY` in `.env` (see above)
+
+#### Global Actions
+- **Execute All Orders**: Simultaneous orders on all enabled (Long/Short selected) exchanges
+- **Reverse Long/Short**: Reverse direction of enabled exchanges
+- **Close All Positions**: Market close positions on enabled exchanges
+
+#### Group Feature
+
+You can **group multiple exchanges** to operate independently.
+
+| Feature | Description |
+|---------|-------------|
+| **Group Selection (Header)** | Select one of 0~5 buttons. Header settings (symbol/quantity/DEX) and batch actions apply only to this group |
+| **Group Assignment (Card)** | Change group membership with 0~5 buttons on each card |
+| **Independent Execution** | Execute All / Reverse / Close All / Repeat / Burn targets **only currently selected group** |
+| **Per-Group Cache** | When switching groups, repeat/burn inputs, ticker/qty/dex are saved/restored per group |
+
+**Usage Example:**
+- Group 0: BTC hedging exchanges
+- Group 1: ETH hedging exchanges
+- Group 2: Volume farming exchanges
+
+> 💡 When running Repeat in group 1 and switching to group 2, group 1's Repeat continues running.
+
+#### Repeat Execution
+- **Repeat Count**: How many times to execute
+- **Repeat Wait Time**: Wait between executions (random)
+- **Repeat Execute Button**: Start/Stop
+
+#### Burn Execution
+
+**"Burn" is a feature for farming/volume building.**
+Automatically alternates between Long↔Short repeatedly.
+
+| Setting | Description |
+|---------|-------------|
+| Count | Total rounds to run (-1 for infinite) |
+| min(s) | Minimum wait time between rounds (seconds) |
+| max(s) | Maximum wait time between rounds (seconds) |
+
+**How It Works:**
+1. Run [Repeat Execute] for [Repeat Count] times
+2. Rest for [Burn Wait Time]
+3. Reverse direction (Long→Short or Short→Long)
+4. Run [Repeat Execute] for 2×[Repeat Count] times
+5. Repeat steps 2~4 for [Burn Count] rounds
+
+**Example 1:** Repeat Count=5, Burn Count=3, Start=LONG
+
+| Round | Direction | Count | Note |
+|:-----:|:---------:|:-----:|------|
+| 1 | LONG | 5 | First execution |
+| 2 | SHORT | 10 | Direction reversed, 2x |
+| 3 | LONG | 10 | Direction reversed, end |
+
+**Example 2:** Repeat Count=3, Burn Count=5, Start=SHORT
+
+| Round | Direction | Count | Note |
+|:-----:|:---------:|:-----:|------|
+| 1 | SHORT | 3 | First execution |
+| 2 | LONG | 6 | Direction reversed, 2x |
+| 3 | SHORT | 6 | Direction reversed |
+| 4 | LONG | 6 | Direction reversed |
+| 5 | SHORT | 6 | End |
+
+> 💡 Wait time is randomly determined between min~max.
+
+**Notes:**
+- Pressing [Burn Execute] again stops it (from next round)
+- Uses [Repeat Execute]'s count/min/max settings together
+- Starting direction follows currently selected Long/Short
+
+### HIP-3 DEX Selection (Hyperliquid Only)
+
+Select from DEX dropdown in header:
+- **HL**: Default Hyperliquid
+- **XYZ**: Operated by Unit
+- **FLX**: Operated by Felix (requires USDH)
+- **VNTL**: Operated by Ventuals (requires USDH)
+- **HYNA**: Operated by HyEna (requires USDE)
+
+> ⚠️ For FLX/VNTL trading, **USDH must be in Spot**
+> ⚠️ For HYNA trading, **USDE must be in Spot**
+
+---
+
+## ⚡ Rate Limit Issues and Solutions
+
+### What is Rate Limit?
+
+Hyperliquid (HL) **blocks requests if you send orders too quickly from the same IP**.
+For example, if you "Execute All Orders" with **5+ HL exchanges** simultaneously, some orders may fail.
+
+**Symptoms:**
+- `429` or `rate limit` error in logs
+- Some exchanges succeed while others fail
+- Only some orders fill when executing "Execute All Orders"
+
+### Solution 1: Adjust HL_ORDER_DELAY (Simple)
+
+Set `HL_ORDER_DELAY` in your `.env` file to control **order interval**.
+
+```env
+# Add to .env file
+HL_ORDER_DELAY=0.15
+```
+
+| Value | Behavior | Description |
+|-------|----------|-------------|
+| `0` | Fully parallel | All orders execute simultaneously (fast but may hit rate limit) |
+| `0.15` (default) | Slight sequential | Start orders at 0.15s intervals (recommended) |
+| `0.3` | Slower | Use this if rate limit keeps occurring |
+| `-1` | Fully sequential | Wait for one to finish before next (safest but slow) |
+
+**If Rate Limit keeps occurring:**
+```env
+# Increase the interval
+HL_ORDER_DELAY=0.3
+
+# Or fully sequential execution
+HL_ORDER_DELAY=-1
+```
+
+### Solution 2: Use Proxies (Recommended)
+
+**If using 5+ HL exchanges simultaneously, proxies are strongly recommended.**
+
+Using proxies lets each exchange connect from a **different IP**, avoiding rate limits.
+
+#### Recommended Proxy Services
+
+**Bright Data** (formerly Luminati) - Most stable
+- Sign up: https://brightdata.com
+- Choose "Residential Proxy" or "ISP Proxy"
+- Pricing: Traffic-based billing (cheap for trading use)
+
+**Other Services:**
+- Smartproxy (https://smartproxy.com)
+- Oxylabs (https://oxylabs.io)
+- IPRoyal (https://iproyal.com) - Budget option
+
+#### Proxy Address Format
+
+After signing up for a proxy service, you'll receive an address like this:
+
+```
+http://username:password@proxyserver:port
+```
+
+**Bright Data Example:**
+```env
+# Basic format
+HYENA_PROXY=http://brd-customer-hl_12345678-zone-residential:abcd1234@brd.superproxy.io:22225
+
+# Country specific (US)
+HYENA_PROXY=http://brd-customer-hl_12345678-zone-residential-country-us:abcd1234@brd.superproxy.io:22225
+
+# Session sticky (keep same IP)
+HYENA_PROXY=http://brd-customer-hl_12345678-zone-residential-session-abc123:abcd1234@brd.superproxy.io:22225
+```
+
+**Smartproxy Example:**
+```env
+HYENA_PROXY=http://user123:pass456@gate.smartproxy.com:7000
+```
+
+**SOCKS5 Proxy:**
+```env
+HYENA_PROXY=socks5://user:pass@proxy.example.com:1080
+```
+
+#### Proxy Setup Steps
+
+**Step 1: Enable proxy in config.ini**
+```ini
+[hyena]
+proxy = True
+show = True
+
+[superstack]
+exchange = superstack
+proxy = True
+show = True
+```
+
+**Step 2: Set proxy address in .env**
+```env
+# Use different proxy for each exchange (recommended)
+HYENA_PROXY=http://user:pass@proxy1.example.com:8080
+MASS_PROXY=http://user:pass@proxy2.example.com:8080
+LIT_PROXY=http://user:pass@proxy3.example.com:8080
+DEXARI_PROXY=http://user:pass@proxy4.example.com:8080
+
+# Or use same proxy (OK if it's a Rotating Proxy)
+HYENA_PROXY=http://user:pass@rotating-proxy.example.com:8080
+MASS_PROXY=http://user:pass@rotating-proxy.example.com:8080
+```
+
+> 💡 **Tip**: With Bright Data's Rotating Proxy, entering the same address assigns different IPs each time.
+
+#### Proxy Support Conditions
+
+Proxies can be used with exchanges that have `exchange = hyperliquid` (default if omitted) or `exchange = superstack`.
+
+**Example Exchanges and Environment Variables:**
+
+| Exchange | Environment Variable |
+|----------|---------------------|
+| HyEna | `HYENA_PROXY` |
+| MASS | `MASS_PROXY` |
+| Lit | `LIT_PROXY` |
+| Dexari | `DEXARI_PROXY` |
+| Liquid | `LIQUID_PROXY` |
+| Supercexy | `SUPERCEXY_PROXY` |
+| BasedOne | `BASEDONE_PROXY` |
+| Dreamcash | `DREAMCASH_PROXY` |
+| Superstack | `SUPERSTACK_PROXY` |
+
+> Environment variable format: `EXCHANGE_PROXY` (uppercase)
+
+### Which Method Should I Use?
+
+| Situation | Recommended Method |
+|-----------|-------------------|
+| Using 1~3 HL exchanges | Use default (`HL_ORDER_DELAY=0.15`) |
+| Using 4~5 HL exchanges | Increase `HL_ORDER_DELAY=0.3` |
+| Using 6+ HL exchanges | **Use proxies recommended** |
+| Frequent burn/repeat usage | **Use proxies strongly recommended** |
+
+---
+
+## 🔧 Windows Scripts Summary
+
+| Script | Purpose |
+|--------|---------|
+| `.\scripts\win\setup.ps1` | Initial setup |
+| `.\scripts\win\run.ps1` | Regular execution |
+| `.\scripts\win\update-force.ps1` | Force update (settings backed up) |
+
+---
+
+## ❓ Frequently Asked Questions
+
+### Q: "python not found" error
+A: Check if you checked "Add to PATH" option when installing Python.
+
+### Q: Execution is blocked
+A: Run PowerShell as Administrator:
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force
+```
+
+### Q: Exchange not showing
+A: Check `show` value in `config.ini`
+- `show = True` → Displayed as card
+- `show = False` → Hidden state (can toggle on)
+- `show = Never` → Completely disabled (not in selection list)
+
+### Q: "API key not found" error
+A: Check if the exchange key is correctly entered in `.env` file
+
+### Q: Korean/emojis are broken
+A: Font issue. Check if Korean fonts are installed on your system.
+
+### Q: Getting "429" or "rate limit" errors
+A: Blocked because you're sending orders to Hyperliquid too quickly.
+1. Set `HL_ORDER_DELAY=0.3` or higher in `.env`
+2. If still failing, use proxies
+3. See [Rate Limit Issues and Solutions](#-rate-limit-issues-and-solutions) above for details
+
+### Q: Only some orders succeed when executing all
+A: Most likely a rate limit issue.
+- If using 5+ HL exchanges, proxies are recommended
+- Or increase `HL_ORDER_DELAY` to `0.3` or higher
+
+---
+
+## 📋 Roadmap
+
+- ✅ Qt UI
+- ✅ Multi-DEX simultaneous trading
+- ✅ REPEAT / BURN features
+- ✅ HIP-3 DEX support (XYZ, FLX, VNTL, HYNA)
+- ✅ Non-HL exchange integration
+- ✅ Group feature
+- ✅ Spot support (edgeX not supported due to undisclosed API)
+- 🔜 Detailed order screen
+- 🔜 Limit order management
+- 🔜 More exchange support
+
+---
+
+## 📞 Contact
+
+Don't contact me
