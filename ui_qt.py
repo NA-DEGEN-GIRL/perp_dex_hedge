@@ -633,6 +633,8 @@ class OrderBookPanel(QtWidgets.QWidget):
         self._price_decimals = 2
         self._size_decimals = 4
         self._decimals_detected = False
+        # RFQ 모드
+        self._is_rfq = False
         # 오더북 행-가격 매핑 (오픈오더 인디케이터용)
         self._asks_row_prices: list[tuple[int, float]] = []
         self._bids_row_prices: list[tuple[int, float]] = []
@@ -692,6 +694,13 @@ class OrderBookPanel(QtWidgets.QWidget):
         self.spread_label.setStyleSheet(f"color: #90caf9; font-size: {UI_FONT_SIZE}pt;")
         orderbook_header.addWidget(self.spread_label)
         layout.addLayout(orderbook_header)
+
+        # RFQ 모드 안내 라벨 (기본 숨김)
+        self.rfq_label = QtWidgets.QLabel("⚠️ RFQ 주문 방식입니다. 수량에 따라 가격이 달라집니다.")
+        self.rfq_label.setStyleSheet(f"color: #ffb74d; font-size: {UI_FONT_SIZE - 1}pt; padding: 4px; background-color: #3d3d3d; border-radius: 4px;")
+        self.rfq_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.rfq_label.setVisible(False)
+        layout.addWidget(self.rfq_label)
 
         # 오더북 컬럼 헤더 (한 번만) - 테이블과 바로 붙어야 함
         col_header = QtWidgets.QHBoxLayout()
@@ -937,6 +946,11 @@ class OrderBookPanel(QtWidgets.QWidget):
             except ValueError:
                 pass
 
+    def set_rfq_mode(self, is_rfq: bool):
+        """RFQ 모드 표시 설정"""
+        self._is_rfq = is_rfq
+        self.rfq_label.setVisible(is_rfq)
+
     def update_orderbook(self, orderbook: dict):
         """오더북 데이터 업데이트"""
         if not orderbook:
@@ -1005,8 +1019,13 @@ class OrderBookPanel(QtWidgets.QWidget):
     def _set_table_row(self, table: QtWidgets.QTableWidget, row: int, price: float, size: float, total: float):
         """테이블 행 설정 (고정 소숫점 자릿수)"""
         price_str = f"{price:,.{self._price_decimals}f}"
-        size_str = f"{size:,.{self._size_decimals}f}"
-        total_str = f"{total:,.{self._size_decimals}f}"
+        # RFQ 모드: size를 포맷 없이 그대로 표시
+        if self._is_rfq:
+            size_str = str(size)
+            total_str = str(total)
+        else:
+            size_str = f"{size:,.{self._size_decimals}f}"
+            total_str = f"{total:,.{self._size_decimals}f}"
 
         for col, text in enumerate([price_str, size_str, total_str]):
             item = table.item(row, col)
@@ -4602,10 +4621,25 @@ class UiQtApp(QtWidgets.QMainWindow):
                 ws_open_orders = _ws_supported(ex, "get_open_orders")
                 force_update = ex_name in self._force_open_orders_update
 
+                # RFQ 모드 확인 및 설정
+                is_rfq = getattr(ex, "is_rfq", False)
+                panel.set_rfq_mode(is_rfq)
+
                 # 오더북 조회 (항상)
                 if hasattr(ex, "get_orderbook"):
                     try:
-                        orderbook = await ex.get_orderbook(symbol)
+                        # RFQ 모드면 카드의 수량을 전달해야 정확한 가격이 나옴
+                        if is_rfq:
+                            card = self.cards.get(ex_name)
+                            qty = None
+                            if card:
+                                try:
+                                    qty = float(card.get_qty())
+                                except (ValueError, TypeError):
+                                    qty = None
+                            orderbook = await ex.get_orderbook(symbol, qty=qty)
+                        else:
+                            orderbook = await ex.get_orderbook(symbol)
                         if orderbook and (orderbook.get("bids") or orderbook.get("asks")):
                             panel.update_orderbook(orderbook)
                             error_count = 0
