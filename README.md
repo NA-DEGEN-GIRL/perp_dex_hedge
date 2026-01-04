@@ -353,6 +353,15 @@ VARIATIONAL_JWT_TOKEN=vr-token쿠키값
 VARIATIONAL_PRIVATE_KEY=지갑프라이빗키
 ```
 
+**Variational 슬리피지 설정 (config.ini):**
+```ini
+[variational]
+exchange = variational
+slippage = 0.01  # 최대 슬리피지 허용치 (0.01 = 1%)
+show = True
+```
+> 💡 `slippage` 값을 설정하지 않으면 Variational 기본값이 사용됩니다.
+
 **기타 거래소:**
 ```env
 # Paradex
@@ -416,6 +425,24 @@ initial_setup = xyz:XYZ100, 0.0002, long, perp
 | `edgex` | EdgeX |
 | `grvt` | GRVT |
 | `pacifica` | Pacifica |
+
+#### slippage 옵션 (Variational 전용)
+
+Variational 거래소에서 **최대 슬리피지 허용치**를 설정할 수 있습니다.
+
+```ini
+[variational]
+exchange = variational
+slippage = 0.01  # 1% 슬리피지 허용
+show = True
+```
+
+| 값 | 의미 |
+|----|------|
+| `0.01` | 1% 슬리피지까지 허용 |
+| `0.005` | 0.5% 슬리피지까지 허용 |
+| `0.02` | 2% 슬리피지까지 허용 |
+| (생략) | Variational 기본값 사용 |
 
 #### proxy 옵션 (프록시 설정)
 

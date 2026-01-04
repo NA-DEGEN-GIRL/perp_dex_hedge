@@ -151,6 +151,8 @@ class ExchangeManager:
             proxy_raw = config.get(exchange_name, "proxy", fallback="False")
             use_proxy = (proxy_raw or "").strip().lower() == "true"
 
+            slippage = config.get(exchange_name,"slippage", fallback=None)
+
             raw_setup = config.get(exchange_name, "initial_setup", fallback=None)
             setup_data = {
                 "symbol": "BTC",
@@ -204,6 +206,7 @@ class ExchangeManager:
                 "exchange": exchange_platform,
                 "initial_setup": setup_data,
                 "use_proxy": use_proxy,
+                "slippage": slippage,
             }
 
             self.exchanges[exchange_name] = None
@@ -310,6 +313,7 @@ class ExchangeManager:
         """mpdex 각 거래소별 키를 .env에서 읽어 SimpleNamespace로 생성"""
         u_name = name.upper()
         hl_like = self.meta.get(name, {}).get("hl")
+        slippage = self.meta.get(name,{}).get("slippage")
         #print(u_name,hl_like,exchange_platform)
             
         if hl_like:
@@ -420,10 +424,17 @@ class ExchangeManager:
                 )
             
             if exchange_platform.lower() == "variational":
+                options = None
+                if slippage is not None:
+                    options = {
+                        'slippage':slippage
+                    }
+                
                 return SimpleNamespace(
                     evm_wallet_address=os.getenv(f"{u_name}_WALLET_ADDRESS"),
                     session_cookies={"vr_token":os.getenv(f"{u_name}_JWT_TOKEN")},
                     evm_private_key=os.getenv(f"{u_name}_PRIVATE_KEY"),
+                    options=options
                 )
             
             if exchange_platform.lower() == "pacifica":

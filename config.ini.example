@@ -106,6 +106,7 @@ show = False
 
 [variational]
 exchange = variational
+slippage = 0.01 # 최대 슬리피지 허용치를 바꾸고 싶으면 이걸 수정하셈. 0.01 = 1%
 show = False
 
 [pacifica]
