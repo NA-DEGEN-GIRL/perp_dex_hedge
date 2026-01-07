@@ -1080,10 +1080,24 @@ class OrderBookPanel(QtWidgets.QWidget):
                     item.setText("• " + item.text())
 
     def _find_closest_row(self, row_prices: list[tuple[int, float]], target_price: float) -> int | None:
-        """주어진 가격에 가장 가까운 행 번호 반환"""
+        """주어진 가격에 가장 가까운 행 번호 반환 (오더북 범위 0.5bps 이내만)"""
         if not row_prices:
             return None
 
+        # 오더북 가격 범위 계산
+        prices = [p for _, p in row_prices]
+        min_price = min(prices)
+        max_price = max(prices)
+
+        # target이 오더북 범위 밖인 경우, 경계 가격과 0.5bps(0.00005) 이내인지 확인
+        if target_price < min_price:
+            if min_price > 0 and abs(target_price - min_price) / min_price > 0.00005:
+                return None
+        elif target_price > max_price:
+            if max_price > 0 and abs(target_price - max_price) / max_price > 0.00005:
+                return None
+
+        # 범위 내 또는 0.5bps 이내면 가장 가까운 행 찾기
         closest_row = None
         min_diff = float("inf")
         for row, price in row_prices:
@@ -2805,8 +2819,10 @@ class UiQtApp(QtWidgets.QMainWindow):
         self.header = HeaderWidget()
         self.log_edit = QtWidgets.QPlainTextEdit()
         self.log_edit.setReadOnly(True)
+        self.log_edit.setMaximumBlockCount(5000)  # 메모리 누수 방지
         self.console_edit = QtWidgets.QPlainTextEdit()
         self.console_edit.setReadOnly(True)
+        self.console_edit.setMaximumBlockCount(3000)  # 메모리 누수 방지
 
         self.exchange_switch_container = QtWidgets.QWidget()
         self.exchange_switch_layout = QtWidgets.QGridLayout(self.exchange_switch_container)
@@ -3248,8 +3264,31 @@ class UiQtApp(QtWidgets.QMainWindow):
         for name in to_remove:
             card = self.cards.pop(name, None)
             if card:
+                # Signal 연결 해제 (메모리 누수 방지)
+                try:
+                    card.execute_clicked.disconnect()
+                    card.long_clicked.disconnect()
+                    card.short_clicked.disconnect()
+                    card.off_clicked.disconnect()
+                    card.order_type_changed.disconnect()
+                    card.dex_changed.disconnect()
+                    card.ticker_changed.disconnect()
+                    card.group_changed.disconnect()
+                    card.market_type_changed.disconnect()
+                    card.transfer_execute.disconnect()
+                    card.detail_order_clicked.disconnect()
+                    card.close_position_clicked.disconnect()
+                except (RuntimeError, TypeError):
+                    pass  # 이미 연결 해제되었거나 연결되지 않은 경우
                 card.setParent(None)
                 card.deleteLater()
+            # 캐시 딕셔너리 정리 (메모리 누수 방지)
+            self._last_price_at.pop(name, None)
+            self._last_balance_at.pop(name, None)
+            self._last_pos_at.pop(name, None)
+            self._symbol_cache_by_ex.pop(name, None)
+            self._force_status_update.discard(name)
+            self._force_open_orders_update.discard(name)
         
         # 새로 추가할 카드
         to_add = visible_names - current_names
@@ -4133,7 +4172,10 @@ class UiQtApp(QtWidgets.QMainWindow):
                     if self.enabled.get(n, False)
                 )
                 self.header.set_total(tot)
-            except: pass
+            except asyncio.CancelledError:
+                break  # 종료 요청 시 루프 탈출
+            except Exception as e:
+                logger.debug(f"_price_loop 예외: {e}")
             await asyncio.sleep(RATE["GAP_FOR_INF"])
 
     async def _update_single_card(self, n: str, now: float):
@@ -4724,21 +4766,53 @@ class UiQtApp(QtWidgets.QMainWindow):
         if self._console_redirect_installed:
             sys.stdout = self._stdout_orig
             sys.stderr = self._stderr_orig
-        # Cancel tasks...
-        if self._price_task: self._price_task.cancel()
-        if self._status_task: self._status_task.cancel()
+
+        # 모든 태스크 수집
+        tasks_to_cancel = []
+
+        # 메인 태스크
+        if self._price_task:
+            self._price_task.cancel()
+            tasks_to_cancel.append(self._price_task)
+        if self._status_task:
+            self._status_task.cancel()
+            tasks_to_cancel.append(self._status_task)
+
+        # 오더북 태스크
+        if self._orderbook_task_left:
+            self._orderbook_task_left.cancel()
+            tasks_to_cancel.append(self._orderbook_task_left)
+        if self._orderbook_task_right:
+            self._orderbook_task_right.cancel()
+            tasks_to_cancel.append(self._orderbook_task_right)
+
+        # 그룹별 repeat/burn 태스크
+        for g in range(GROUP_COUNT):
+            rt = self.repeat_task_by_group.get(g)
+            if rt and not rt.done():
+                self.repeat_cancel_by_group[g].set()
+                rt.cancel()
+                tasks_to_cancel.append(rt)
+            bt = self.burn_task_by_group.get(g)
+            if bt and not bt.done():
+                self.burn_cancel_by_group[g].set()
+                bt.cancel()
+                tasks_to_cancel.append(bt)
+
+        # 모든 취소된 태스크 대기 (CancelledError 무시)
+        if tasks_to_cancel:
+            await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
+
         # 오더북 패널 정리 (왼쪽/오른쪽 모두)
-        if self._orderbook_task_left: self._orderbook_task_left.cancel()
-        if self._orderbook_task_right: self._orderbook_task_right.cancel()
         if self._orderbook_panel_exchange_left:
             try:
                 await self._close_orderbook_panel("left")
-            except:
+            except Exception:
                 pass
         if self._orderbook_panel_exchange_right:
             try:
                 await self._close_orderbook_panel("right")
-            except:
+            except Exception:
                 pass
         await self.mgr.close_all()
         self._shutdown_done = True
