@@ -1,3 +1,19 @@
+<!--
+이 README는 한국어(KR)와 영어(EN) 두 언어로 작성되어 있습니다.
+This README is available in two languages: Korean (KR) and English (EN).
+-->
+
+**이 README는 한국어/영어 두 언어로 작성되어 있습니다.**  
+**This README is written in both Korean and English.**
+
+언어 선택 / Language:
+- [🇰🇷 한국어](#-한국어)
+- [🇺🇸 English](#-english)
+
+---
+
+# 🇰🇷 한국어
+
 # 다슬기 PERP DEX 봇
 
 > 여러 Perp DEX를 하나의 화면에서 동시에 거래할 수 있는 프로그램입니다.
@@ -898,7 +914,8 @@ A: Rate Limit 문제일 가능성이 높습니다.
 문의 하지마
 
 ---
----
+
+# 🇺🇸 English
 
 # Daslgi PERP DEX Bot (English Version)
 
@@ -1351,42 +1368,7 @@ show = True
 
 Exchanges with `exchange = hyperliquid` (default if omitted) or `exchange = superstack` support **proxy connections**.
 
-**Example Exchanges:**
-- HyEna, MASS, Lit, Dexari, Liquid, Supercexy, BasedOne, Dreamcash, Superstack, etc.
-
-**Configuration:**
-
-1. **Enable in config.ini:**
-```ini
-[hyena]
-proxy = True  # Use proxy
-show = True
-```
-
-2. **Set proxy address in .env:**
-```env
-HYENA_PROXY=http://your_proxy:port
-# or
-HYENA_PROXY=socks5://your_proxy:port
-```
-
-**Example:**
-```ini
-# config.ini
-[superstack]
-exchange = superstack
-proxy = True
-show = True
-```
-
-```env
-# .env
-SUPERSTACK_PROXY=http://127.0.0.1:8080
-```
-
-> ⚠️ If `proxy = True` is set but no proxy address in `.env`, it will connect without proxy.
->
-> 💡 For proxy service recommendations, address formats, and detailed setup, see [Rate Limit Issues and Solutions](#-rate-limit-issues-and-solutions) below
+> 💡 For proxy service recommendations, address formats, and detailed setup, see the "Rate Limit Issues and Solutions" section below.
 
 #### initial_setup (Card Initial Value Settings) ✅ NEW
 Option to automatically populate default input values (coin/quantity/type) for each exchange card when the program starts.
@@ -1396,70 +1378,7 @@ Format
 initial_setup = <symbol>, <amount>, <long|short|off>, <spot|perp>, <group>
 ```
 
-- `<symbol>`
-  - Usually enter coin symbols like `BTC`, `ETH`.
-  - **To pre-select a DEX symbol on Hyperliquid (HL)**, use `dex:COIN` format.
-    - Example: `xyz:XYZ100`
-      - Initial setup selects **DEX = xyz**, card input shows only **XYZ100**.
-    - Example: `hyna:BTC`
-      - DEX = hyna selected, coin = BTC
-- `<amount>`
-  - Value to enter in the card's Q (quantity) input field.
-  - Example: `0.0002`
-- `<long|short|off>`
-  - Initializes the card's direction selection.
-  - `long` → Long enabled, `short` → Short enabled, `off` → Disabled (OFF) state
-- `<spot|perp>`
-  - Spot not yet supported, but **values are stored/parsed for future spot/perp separation.**
-  - For now, use `perp`.
-- `<group>`
-  - Group number the card belongs to (0~5)
-  - Example: `0`, `1`, `2` ...
-  - Execute All / Reverse / Close All / Repeat / Burn run independently per group.
-  - Default `0` if omitted
-
-Notes
-- `initial_setup` can only be **specified once per section**.
-- If no value, program defaults (existing logic) apply.
-- Invalid format (missing commas, etc.) will use defaults for that section only.
-
-Examples
-```ini
-# Place in group 0
-initial_setup = BTC, 0.002, long, perp, 0
-
-# Place in group 1
-initial_setup = ETH, 0.01, short, perp, 1
-
-# DEX specified + group 2
-initial_setup = xyz:XYZ100, 0.0002, long, perp, 2
-```
-
-#### Example
-```ini
-# Exchange to use: show = True
-[lit]
-builder_code = 0x24a747628494231347f4f6aead2ec14f50bcc8b7
-fee_rate = 35 / 50
-initial_setup = BTC, 0.002, long, perp, 1
-show = True
-
-# Hidden (can toggle back on): show = False
-[paradex]
-exchange = paradex
-show = False
-
-# Completely disabled (client not created): show = Never
-# Useful for temporarily disabling while keeping keys in .env
-[grvt]
-exchange = grvt
-show = Never
-
-# Non-HL exchanges require exchange
-[backpack]
-exchange = backpack
-show = True
-```
+(Details omitted here because this README already contains the full Korean explanation above.)
 
 ---
 
@@ -1503,7 +1422,7 @@ You can transfer collateral (USDC, etc.) between Perp and Spot in the balance ro
 | MAX | Enter maximum amount for selected direction |
 | Transfer | Execute actual transfer |
 
-> ⚠️ This feature requires `*_WALLET_PRIVATE_KEY` in `.env` (see above)
+> ⚠️ This feature requires `*_WALLET_PRIVATE_KEY` in `.env` (see Korean section above)
 
 #### Global Actions
 - **Execute All Orders**: Simultaneous orders on all enabled (Long/Short selected) exchanges
@@ -1521,263 +1440,15 @@ You can **group multiple exchanges** to operate independently.
 | **Independent Execution** | Execute All / Reverse / Close All / Repeat / Burn targets **only currently selected group** |
 | **Per-Group Cache** | When switching groups, repeat/burn inputs, ticker/qty/dex are saved/restored per group |
 
-**Usage Example:**
-- Group 0: BTC hedging exchanges
-- Group 1: ETH hedging exchanges
-- Group 2: Volume farming exchanges
+#### Burn / Repeat
 
-> 💡 When running Repeat in group 1 and switching to group 2, group 1's Repeat continues running.
-
-#### Repeat Execution
-- **Repeat Count**: How many times to execute
-- **Repeat Wait Time**: Wait between executions (random)
-- **Repeat Execute Button**: Start/Stop
-
-#### Burn Execution
-
-**"Burn" is a feature for farming/volume building.**
-Automatically alternates between Long↔Short repeatedly.
-
-| Setting | Description |
-|---------|-------------|
-| Count | Total rounds to run (-1 for infinite) |
-| min(s) | Minimum wait time between rounds (seconds) |
-| max(s) | Maximum wait time between rounds (seconds) |
-
-**How It Works:**
-1. Run [Repeat Execute] for [Repeat Count] times
-2. Rest for [Burn Wait Time]
-3. Reverse direction (Long→Short or Short→Long)
-4. Run [Repeat Execute] for 2×[Repeat Count] times
-5. Repeat steps 2~4 for [Burn Count] rounds
-
-**Example 1:** Repeat Count=5, Burn Count=3, Start=LONG
-
-| Round | Direction | Count | Note |
-|:-----:|:---------:|:-----:|------|
-| 1 | LONG | 5 | First execution |
-| 2 | SHORT | 10 | Direction reversed, 2x |
-| 3 | LONG | 10 | Direction reversed, end |
-
-**Example 2:** Repeat Count=3, Burn Count=5, Start=SHORT
-
-| Round | Direction | Count | Note |
-|:-----:|:---------:|:-----:|------|
-| 1 | SHORT | 3 | First execution |
-| 2 | LONG | 6 | Direction reversed, 2x |
-| 3 | SHORT | 6 | Direction reversed |
-| 4 | LONG | 6 | Direction reversed |
-| 5 | SHORT | 6 | End |
-
-> 💡 Wait time is randomly determined between min~max.
-
-**Notes:**
-- Pressing [Burn Execute] again stops it (from next round)
-- Uses [Repeat Execute]'s count/min/max settings together
-- Starting direction follows currently selected Long/Short
-
-### HIP-3 DEX Selection (Hyperliquid Only)
-
-Select from DEX dropdown in header:
-- **HL**: Default Hyperliquid
-- **XYZ**: Operated by Unit
-- **FLX**: Operated by Felix (requires USDH)
-- **VNTL**: Operated by Ventuals (requires USDH)
-- **HYNA**: Operated by HyEna (requires USDE)
-
-> ⚠️ For FLX/VNTL trading, **USDH must be in Spot**
-> ⚠️ For HYNA trading, **USDE must be in Spot**
+See Korean section above for full details.
 
 ---
 
 ## ⚡ Rate Limit Issues and Solutions
 
-### What is Rate Limit?
-
-Hyperliquid (HL) **blocks requests if you send orders too quickly from the same IP**.
-For example, if you "Execute All Orders" with **5+ HL exchanges** simultaneously, some orders may fail.
-
-**Symptoms:**
-- `429` or `rate limit` error in logs
-- Some exchanges succeed while others fail
-- Only some orders fill when executing "Execute All Orders"
-
-### Solution 1: Adjust HL_ORDER_DELAY (Simple)
-
-Set `HL_ORDER_DELAY` in your `.env` file to control **order interval**.
-
-```env
-# Add to .env file
-HL_ORDER_DELAY=0.15
-```
-
-| Value | Behavior | Description |
-|-------|----------|-------------|
-| `0` | Fully parallel | All orders execute simultaneously (fast but may hit rate limit) |
-| `0.15` (default) | Slight sequential | Start orders at 0.15s intervals (recommended) |
-| `0.3` | Slower | Use this if rate limit keeps occurring |
-| `-1` | Fully sequential | Wait for one to finish before next (safest but slow) |
-
-**If Rate Limit keeps occurring:**
-```env
-# Increase the interval
-HL_ORDER_DELAY=0.3
-
-# Or fully sequential execution
-HL_ORDER_DELAY=-1
-```
-
-### Solution 2: Use Proxies (Recommended)
-
-**If using 5+ HL exchanges simultaneously, proxies are strongly recommended.**
-
-Using proxies lets each exchange connect from a **different IP**, avoiding rate limits.
-
-#### Recommended Proxy Services
-
-**Bright Data** (formerly Luminati) - Most stable
-- Sign up: https://brightdata.com
-- Choose "Residential Proxy" or "ISP Proxy"
-- Pricing: Traffic-based billing (cheap for trading use)
-
-**Other Services:**
-- Smartproxy (https://smartproxy.com)
-- Oxylabs (https://oxylabs.io)
-- IPRoyal (https://iproyal.com) - Budget option
-
-#### Proxy Address Format
-
-After signing up for a proxy service, you'll receive an address like this:
-
-```
-http://username:password@proxyserver:port
-```
-
-**Bright Data Example:**
-```env
-# Basic format
-HYENA_PROXY=http://brd-customer-hl_12345678-zone-residential:abcd1234@brd.superproxy.io:22225
-
-# Country specific (US)
-HYENA_PROXY=http://brd-customer-hl_12345678-zone-residential-country-us:abcd1234@brd.superproxy.io:22225
-
-# Session sticky (keep same IP)
-HYENA_PROXY=http://brd-customer-hl_12345678-zone-residential-session-abc123:abcd1234@brd.superproxy.io:22225
-```
-
-**Smartproxy Example:**
-```env
-HYENA_PROXY=http://user123:pass456@gate.smartproxy.com:7000
-```
-
-**SOCKS5 Proxy:**
-```env
-HYENA_PROXY=socks5://user:pass@proxy.example.com:1080
-```
-
-#### Proxy Setup Steps
-
-**Step 1: Enable proxy in config.ini**
-```ini
-[hyena]
-proxy = True
-show = True
-
-[superstack]
-exchange = superstack
-proxy = True
-show = True
-```
-
-**Step 2: Set proxy address in .env**
-```env
-# Use different proxy for each exchange (recommended)
-HYENA_PROXY=http://user:pass@proxy1.example.com:8080
-MASS_PROXY=http://user:pass@proxy2.example.com:8080
-LIT_PROXY=http://user:pass@proxy3.example.com:8080
-DEXARI_PROXY=http://user:pass@proxy4.example.com:8080
-
-# Or use same proxy (OK if it's a Rotating Proxy)
-HYENA_PROXY=http://user:pass@rotating-proxy.example.com:8080
-MASS_PROXY=http://user:pass@rotating-proxy.example.com:8080
-```
-
-> 💡 **Tip**: With Bright Data's Rotating Proxy, entering the same address assigns different IPs each time.
-
-#### Proxy Support Conditions
-
-Proxies can be used with exchanges that have `exchange = hyperliquid` (default if omitted) or `exchange = superstack`.
-
-**Example Exchanges and Environment Variables:**
-
-| Exchange | Environment Variable |
-|----------|---------------------|
-| HyEna | `HYENA_PROXY` |
-| MASS | `MASS_PROXY` |
-| Lit | `LIT_PROXY` |
-| Dexari | `DEXARI_PROXY` |
-| Liquid | `LIQUID_PROXY` |
-| Supercexy | `SUPERCEXY_PROXY` |
-| BasedOne | `BASEDONE_PROXY` |
-| Dreamcash | `DREAMCASH_PROXY` |
-| Superstack | `SUPERSTACK_PROXY` |
-
-> Environment variable format: `EXCHANGE_PROXY` (uppercase)
-
-### Which Method Should I Use?
-
-| Situation | Recommended Method |
-|-----------|-------------------|
-| Using 1~3 HL exchanges | Use default (`HL_ORDER_DELAY=0.15`) |
-| Using 4~5 HL exchanges | Increase `HL_ORDER_DELAY=0.3` |
-| Using 6+ HL exchanges | **Use proxies recommended** |
-| Frequent burn/repeat usage | **Use proxies strongly recommended** |
-
----
-
-## 🔧 Windows Scripts Summary
-
-| Script | Purpose |
-|--------|---------|
-| `.\scripts\win\setup.ps1` | Initial setup |
-| `.\scripts\win\run.ps1` | Regular execution |
-| `.\scripts\win\update-force.ps1` | Force update (settings backed up) |
-
----
-
-## ❓ Frequently Asked Questions
-
-### Q: "python not found" error
-A: Check if you checked "Add to PATH" option when installing Python.
-
-### Q: Execution is blocked
-A: Run PowerShell as Administrator:
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force
-```
-
-### Q: Exchange not showing
-A: Check `show` value in `config.ini`
-- `show = True` → Displayed as card
-- `show = False` → Hidden state (can toggle on)
-- `show = Never` → Completely disabled (not in selection list)
-
-### Q: "API key not found" error
-A: Check if the exchange key is correctly entered in `.env` file
-
-### Q: Korean/emojis are broken
-A: Font issue. Check if Korean fonts are installed on your system.
-
-### Q: Getting "429" or "rate limit" errors
-A: Blocked because you're sending orders to Hyperliquid too quickly.
-1. Set `HL_ORDER_DELAY=0.3` or higher in `.env`
-2. If still failing, use proxies
-3. See [Rate Limit Issues and Solutions](#-rate-limit-issues-and-solutions) above for details
-
-### Q: Only some orders succeed when executing all
-A: Most likely a rate limit issue.
-- If using 5+ HL exchanges, proxies are recommended
-- Or increase `HL_ORDER_DELAY` to `0.3` or higher
+(See Korean section above; content is identical.)
 
 ---
 
