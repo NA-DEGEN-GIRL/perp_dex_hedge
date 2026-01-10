@@ -453,9 +453,9 @@ class ExchangeManager:
             if exchange_platform.lower() == "extended":
                 return SimpleNamespace(
                     api_key = os.getenv(f"{u_name}_API_KEY"),
-                    public_key = os.getenv(f"{u_name}_STARKNET_PUBLIC_KEY"),
-                    private_key = os.getenv(f"{u_name}_STARKNET_PRIVATE_KEY"),
-                    vault = os.getenv(f"{u_name}_VAULT_ID"),
+                    stark_public_key = os.getenv(f"{u_name}_STARKNET_PUBLIC_KEY"),
+                    stark_private_key = os.getenv(f"{u_name}_STARKNET_PRIVATE_KEY"),
+                    vault_id = os.getenv(f"{u_name}_VAULT_ID"),
                     network = 'mainnet',
                 )
             
