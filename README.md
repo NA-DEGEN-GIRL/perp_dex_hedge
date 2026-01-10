@@ -53,7 +53,7 @@ GitHub: https://github.com/NA-DEGEN-GIRL/perp_dex_hedge
 - **Spot 지원**: Lit, Dexari, Liquid, BasedOne, Supercexy 등 (거래소별 상이)
 
 ### 비-Hyperliquid 거래소
-- Lighter (Spot 지원 ✓), EdgeX, Paradex, GRVT, Backpack (Spot 지원 ✓), Variational, Pacifica, StandX
+- Lighter (Spot 지원 ✓), EdgeX, Paradex, GRVT, Backpack (Spot 지원 ✓), Variational, Pacifica, StandX, Extended
 
 ---
 
@@ -398,6 +398,12 @@ GRVT_SECRET_KEY=시크릿키
 PACIFICA_PUBLIC_KEY=지갑주소
 PACIFICA_AGENT_PUBLIC_KEY=API주소
 PACIFICA_AGENT_PRIVATE_KEY=API프라이빗키
+
+# Extended
+EXTENDED_API_KEY=API키
+EXTENDED_STARKNET_PUBLIC_KEY=0x스타크넷_퍼블릭키
+EXTENDED_STARKNET_PRIVATE_KEY=0x스타크넷_프라이빗키
+EXTENDED_VAULT_ID=볼트ID
 ```
 
 ---
@@ -956,7 +962,7 @@ GitHub: https://github.com/NA-DEGEN-GIRL/perp_dex_hedge
 - **Spot Support**: Lit, Dexari, Liquid, BasedOne, Supercexy, etc. (varies by exchange)
 
 ### Non-Hyperliquid Exchanges
-- Lighter (Spot ✓), EdgeX, Paradex, GRVT, Backpack (Spot ✓), Variational, Pacifica, StandX
+- Lighter (Spot ✓), EdgeX, Paradex, GRVT, Backpack (Spot ✓), Variational, Pacifica, StandX, Extended
 
 ---
 
@@ -1302,6 +1308,12 @@ GRVT_SECRET_KEY=SecretKey
 PACIFICA_PUBLIC_KEY=WalletAddress
 PACIFICA_AGENT_PUBLIC_KEY=APIAddress
 PACIFICA_AGENT_PRIVATE_KEY=APIPrivateKey
+
+# Extended
+EXTENDED_API_KEY=ApiKey
+EXTENDED_STARKNET_PUBLIC_KEY=0xStarknetPublicKey
+EXTENDED_STARKNET_PRIVATE_KEY=0xStarknetPrivateKey
+EXTENDED_VAULT_ID=VaultID
 ```
 
 ---
