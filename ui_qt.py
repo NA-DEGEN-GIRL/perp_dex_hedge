@@ -112,6 +112,9 @@ UI_THEME = os.getenv("PDEX_UI_THEME", "dark").lower()
 UI_WINDOW_WIDTH = int(os.getenv("PDEX_UI_WIDTH", "1400"))
 UI_WINDOW_HEIGHT = int(os.getenv("PDEX_UI_HEIGHT", "1600"))
 
+# 창 표시 모니터 선택: "cursor" (커서 위치, 기본값) 또는 "primary" (메인 모니터)
+UI_MONITOR = os.getenv("PDEX_UI_MONITOR", "cursor").lower()
+
 def _format_size(value: float) -> str:
     """
     사이즈 포맷팅 - 값 크기에 따라 적절한 소수점 자릿수 사용
@@ -4846,32 +4849,35 @@ def run_qt_app(mgr):
     loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)
     win = UiQtApp(mgr)
-    def position_window_on_cursor_screen():
-        cursor_pos = QtGui.QCursor.pos()
-        
-        # 커서가 있는 스크린 찾기
+    def position_window_on_screen():
         target_screen = None
-        for screen in app.screens():
-            if screen.geometry().contains(cursor_pos):
-                target_screen = screen
-                break
-        
-        # 못 찾으면 기본 스크린 사용
-        if target_screen is None:
+
+        if UI_MONITOR == "primary":
+            # 메인 모니터 사용
             target_screen = app.primaryScreen()
-        
+        else:
+            # 커서가 있는 스크린 찾기 (기본값)
+            cursor_pos = QtGui.QCursor.pos()
+            for screen in app.screens():
+                if screen.geometry().contains(cursor_pos):
+                    target_screen = screen
+                    break
+            # 못 찾으면 기본 스크린 사용
+            if target_screen is None:
+                target_screen = app.primaryScreen()
+
         if target_screen:
             screen_geo = target_screen.availableGeometry()
-            
+
             # 창을 해당 스크린 중앙에 배치
             x = screen_geo.x() + (screen_geo.width() - win.width()) // 2
             y = screen_geo.y() + (screen_geo.height() - win.height()) // 2
-            
+
             win.move(x, y)
     
     async def starter():
         await win.async_init()
-        position_window_on_cursor_screen()  # 위치 설정
+        position_window_on_screen()  # 위치 설정
         win.show()
         win.install_console_redirect()
     

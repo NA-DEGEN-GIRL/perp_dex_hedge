@@ -450,6 +450,15 @@ class ExchangeManager:
                     evm_private_key=os.getenv(f"{u_name}_WALLET_PRIVATE_KEY"),
                 )
             
+            if exchange_platform.lower() == "extended":
+                return SimpleNamespace(
+                    api_key = os.getenv(f"{u_name}_API_KEY"),
+                    public_key = os.getenv(f"{u_name}_STARKNET_PUBLIC_KEY"),
+                    private_key = os.getenv(f"{u_name}_STARKNET_PRIVATE_KEY"),
+                    vault = os.getenv(f"{u_name}_VAULT_ID"),
+                    network = 'mainnet',
+                )
+            
         except Exception as e:
             logger.warning(f"[{name}] env key parse failed: {e}")
             return None

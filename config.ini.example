@@ -116,3 +116,7 @@ show = False
 [standx]
 exchange = standx
 show = False
+
+[extended]
+exchange = extended
+show = False
