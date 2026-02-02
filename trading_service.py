@@ -458,14 +458,16 @@ class TradingService:
                     side = "LONG" if side_raw == "long" else "SHORT"
                     size = float(pos.get("size") or 0.0)
                     pnl = float(pos.get("unrealized_pnl") or 0.0)
+                    liq_price = pos.get("liquidation_price")  # None이면 None
                     side_color = "green" if side == "LONG" else "red"
                     pnl_color = "green" if pnl >= 0 else "red"
                     pos_str = f"📊 [{side_color}]{side}[/] {size:.5f} PnL: [{pnl_color}]{pnl:,.1f}[/]"
-                    
+
                     json_data["position"] = {
                         "side": side,
                         "size": size,
                         "unrealized_pnl": pnl,
+                        "liquidation_price": liq_price,
                     }
             except Exception as e:
                 logger.info(f"[{exchange_name}] position fetch error: {e}")

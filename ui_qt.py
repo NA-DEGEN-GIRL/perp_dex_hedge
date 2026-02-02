@@ -1332,11 +1332,13 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         self.title_label.setStyleSheet(f"color: rgba(186, 160, 85, 1); font-size: {UI_FONT_SIZE}pt;")
         
         self._current_price: Optional[float] = None
+        self._price_decimals: int = 2  # 가격 소숫점 자릿수 (set_price_label에서 갱신)
 
         # 포지션 행
         self.pos_side_label = QtWidgets.QLabel("")
         self.pos_size_label = QtWidgets.QLabel("")
         self.pos_pnl_label = QtWidgets.QLabel("")
+        self.pos_liq_label = QtWidgets.QLabel("")  # 청산가
         
         # 잔고 행 (Perp | Spot)
         self.collat_perp_label = QtWidgets.QLabel("")
@@ -1975,6 +1977,8 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         pos_row.addWidget(self.pos_size_label)
         pos_row.addSpacing(20)
         pos_row.addWidget(self.pos_pnl_label)
+        pos_row.addSpacing(15)
+        pos_row.addWidget(self.pos_liq_label)
         pos_row.addStretch()
 
         pos_row.addWidget(QtWidgets.QLabel("그룹"))
@@ -2247,10 +2251,16 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
     def get_qty(self): return self.qty_edit.text().strip()
     def get_price_text(self): return self.price_edit.text().strip()
     
-    def set_price_label(self, px): 
+    def set_price_label(self, px):
         self.price_label.setText(f"{px}")
         try:
-            self._current_price = float(str(px).replace(",", ""))
+            px_str = str(px).replace(",", "")
+            self._current_price = float(px_str)
+            # 소숫점 자릿수 감지
+            if "." in px_str:
+                self._price_decimals = len(px_str.split(".")[1])
+            else:
+                self._price_decimals = 0
         except:
             self._current_price = None
         self._update_qty_value()
@@ -2285,6 +2295,8 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         self.pos_size_label.setStyleSheet(f"color: {CLR_MUTED};")
         self.pos_pnl_label.setText("")
         self.pos_pnl_label.setStyleSheet(f"color: {CLR_MUTED};")
+        self.pos_liq_label.setText("")
+        self.pos_liq_label.setStyleSheet(f"color: {CLR_MUTED};")
 
     def set_status_info(self, json_data: dict):
         """
@@ -2359,9 +2371,11 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
             self.pos_size_label.setText("")
             self.pos_size_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
             self.pos_size_label.setStyleSheet(f"color: {CLR_MUTED};")
-            
+
             self.pos_pnl_label.setText("")
             self.pos_pnl_label.setStyleSheet(f"color: {CLR_MUTED};")
+
+            self.pos_liq_label.setText("")  # Spot은 청산가 없음
             
             # 잔고 행: 기존 perp/spot collateral 처리
             collateral = json_data.get("collateral")
@@ -2402,6 +2416,24 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
             pnl_sign = "+" if pnl >= 0 else ""
             self.pos_pnl_label.setText(f"PNL: {pnl_sign}{pnl:,.1f}")
             self.pos_pnl_label.setStyleSheet(f"color: {pnl_color};")
+
+            # 청산가 표시 (있는 경우만)
+            liq_price = position.get("liquidation_price")
+            if liq_price is not None:
+                dec = self._price_decimals
+                liq_str = f"{liq_price:,.{dec}f}"
+                # 현재가 대비 퍼센트 계산 (청산가까지 남은 거리)
+                if self._current_price and self._current_price > 0:
+                    pct = (liq_price - self._current_price) / self._current_price * 100
+                    pct_sign = "+" if pct >= 0 else ""
+                    self.pos_liq_label.setText(f"청산가: {liq_str} <span style='color:{CLR_MUTED};'>({pct_sign}{pct:.1f}%)</span>")
+                    self.pos_liq_label.setTextFormat(QtCore.Qt.TextFormat.RichText)
+                else:
+                    self.pos_liq_label.setText(f"청산가: {liq_str}")
+                    self.pos_liq_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+                self.pos_liq_label.setStyleSheet("color: #ffab91;")  # 주황색 계열
+            else:
+                self.pos_liq_label.setText("")
         else:
             self.pos_side_label.setText("")
             self.pos_side_label.setStyleSheet(f"color: {CLR_MUTED};")
@@ -2410,6 +2442,7 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
             self.pos_size_label.setStyleSheet(f"color: {CLR_MUTED};")
             self.pos_pnl_label.setText("")
             self.pos_pnl_label.setStyleSheet(f"color: {CLR_MUTED};")
+            self.pos_liq_label.setText("")
         
         # 잔고 처리
         collateral = json_data.get("collateral")
