@@ -1316,6 +1316,7 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
     transfer_execute = QtCore.Signal(str, dict)  # [ADD] (ex_name, transfer_info)
     detail_order_clicked = QtCore.Signal(str, str)  # [ADD] 상세 주문 버튼 클릭 (ex_name, direction: "left" or "right")
     close_position_clicked = QtCore.Signal(str)  # 포지션 종료 버튼 클릭 (ex_name)
+    leverage_changed = QtCore.Signal(str, object, object)  # (ex_name, leverage: int|None, margin_mode: str|None)
 
     def __init__(self, ex_name: str, dex_choices: List[str], is_hl_like: bool = True, parent=None):
         super().__init__(parent)
@@ -1423,6 +1424,60 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         """
         self.perp_btn.setStyleSheet(BTN_MARKET_TYPE)
         self.spot_btn.setStyleSheet(BTN_MARKET_TYPE)
+
+        # 레버리지 컨트롤
+        self.cross_btn = QtWidgets.QPushButton("C")
+        self.isolated_btn = QtWidgets.QPushButton("I")
+        self.leverage_combo = QtWidgets.QComboBox()
+        self.leverage_combo.setMinimumWidth(60)
+        self.leverage_combo.setMaxVisibleItems(10)  # 스크롤 가능하도록 최대 표시 항목 제한
+        self.leverage_combo.setStyleSheet("QComboBox { combobox-popup: 0; }")  # 팝업 스타일 강제
+        self.leverage_combo.view().setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self._max_leverage = 1
+        self._available_margin_modes: list[str] = []
+
+        BTN_MARGIN_MODE = """
+            QPushButton {
+                background-color: #3a3a3a;
+                color: #e0e0e0;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 4px 8px;
+                min-width: 24px;
+            }
+            QPushButton:hover {
+                background-color: #4a4a4a;
+                border-color: #666;
+            }
+            QPushButton:checked {
+                background-color: #1b3146;
+                border: 2px solid #64b5f6;
+                color: #64b5f6;
+            }
+            QPushButton:disabled {
+                background-color: #2a2a2a;
+                color: #444;
+                border-color: #333;
+            }
+        """
+        self.cross_btn.setCheckable(True)
+        self.isolated_btn.setCheckable(True)
+        self.cross_btn.setStyleSheet(BTN_MARGIN_MODE)
+        self.isolated_btn.setStyleSheet(BTN_MARGIN_MODE)
+        self.cross_btn.setEnabled(False)
+        self.isolated_btn.setEnabled(False)
+        self.leverage_combo.setEnabled(False)
+
+        # C/I 버튼 상호 배타적으로 설정
+        self._margin_btn_group = QtWidgets.QButtonGroup(self)
+        self._margin_btn_group.setExclusive(True)
+        self._margin_btn_group.addButton(self.cross_btn, 0)
+        self._margin_btn_group.addButton(self.isolated_btn, 1)
+
+        # 레버리지 컨트롤 시그널 연결
+        self.cross_btn.clicked.connect(lambda: self._on_margin_mode_clicked("cross"))
+        self.isolated_btn.clicked.connect(lambda: self._on_margin_mode_clicked("isolated"))
+        self.leverage_combo.currentIndexChanged.connect(self._on_leverage_combo_changed)
 
         # 버튼
         self.long_btn = QtWidgets.QPushButton("Long")
@@ -1920,8 +1975,15 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
             header_row.addWidget(self.fee_label, stretch=2)
         else:
             header_row.addWidget(QtWidgets.QWidget(), stretch=2)
-        
-        header_row.addStretch(4)
+
+        header_row.addStretch(1)
+
+        # 레버리지 컨트롤
+        header_row.addWidget(self.cross_btn)
+        header_row.addWidget(self.isolated_btn)
+        header_row.addWidget(self.leverage_combo)
+
+        header_row.addStretch(1)
 
         # Perp/Spot 버튼
         header_row.addWidget(self.perp_btn, stretch=1)
@@ -2276,6 +2338,64 @@ class ExchangeCardWidget(QtWidgets.QGroupBox):
         self.detail_btn.setEnabled(has_orderbook)
         self.detail_left_btn.setEnabled(has_orderbook)
         self.detail_right_btn.setEnabled(has_orderbook)
+
+    def set_leverage_info(self, info: dict):
+        """레버리지 정보 업데이트
+        info format: {
+            'symbol': 'BTC-USD', 'leverage': 40, 'margin_mode': 'cross',
+            'status': 'ok', 'max_leverage': 40, 'available_margin_modes': ['cross', 'isolated']
+        }
+        """
+        status = info.get("status", "not_implemented")
+        if status != "ok":
+            # 미구현: 비활성화
+            self.cross_btn.setEnabled(False)
+            self.isolated_btn.setEnabled(False)
+            self.leverage_combo.setEnabled(False)
+            self.cross_btn.setChecked(False)
+            self.isolated_btn.setChecked(False)
+            self.leverage_combo.clear()
+            return
+
+        # margin mode 버튼 상태
+        available_modes = info.get("available_margin_modes", [])
+        self._available_margin_modes = available_modes
+        margin_mode = info.get("margin_mode", "")
+
+        self.cross_btn.setEnabled("cross" in available_modes)
+        self.isolated_btn.setEnabled("isolated" in available_modes)
+        self.cross_btn.setChecked(margin_mode == "cross")
+        self.isolated_btn.setChecked(margin_mode == "isolated")
+
+        # leverage combo
+        max_lev = info.get("max_leverage") or 1
+        current_lev = info.get("leverage") or 1
+        self._max_leverage = max_lev
+
+        self.leverage_combo.blockSignals(True)
+        self.leverage_combo.clear()
+        for lev in range(1, max_lev + 1):
+            self.leverage_combo.addItem(f"{lev}x", lev)
+        # 현재 레버리지 선택
+        idx = self.leverage_combo.findData(current_lev)
+        if idx >= 0:
+            self.leverage_combo.setCurrentIndex(idx)
+        self.leverage_combo.setEnabled(True)
+        self.leverage_combo.blockSignals(False)
+
+    def _on_margin_mode_clicked(self, mode: str):
+        """마진 모드 버튼 클릭"""
+        if mode not in self._available_margin_modes:
+            return
+        self.leverage_changed.emit(self.ex_name, None, mode)
+
+    def _on_leverage_combo_changed(self, index: int):
+        """레버리지 콤보 변경"""
+        if index < 0:
+            return
+        lev = self.leverage_combo.itemData(index)
+        if lev:
+            self.leverage_changed.emit(self.ex_name, lev, None)
 
     def _adjust_pos_label_width(self, is_spot: bool):
         """[ADD] 포지션 라벨 너비를 모드에 따라 조정"""
@@ -2850,6 +2970,7 @@ class UiQtApp(QtWidgets.QMainWindow):
         self._force_status_update: set[str] = set()  # 잔고/포지션 즉시 업데이트용
         self._force_open_orders_update: set[str] = set()  # 오픈오더 즉시 업데이트용
         self._initial_load_done: bool = False  # 초기 로딩 완료 여부
+        self._leverage_fetched: set[str] = set()  # 레버리지 정보 조회 완료 여부
 
         # Components
         self.header = HeaderWidget()
@@ -3207,6 +3328,9 @@ class UiQtApp(QtWidgets.QMainWindow):
                     self._open_orderbook_panel(n, direction)
                 )
 
+        # 레버리지 정보 업데이트
+        asyncio.get_event_loop().create_task(self._update_leverage_info(n))
+
     def _is_group_cancelled(self, g: int) -> bool:
         """그룹별 취소 여부"""
         return (self.repeat_cancel_by_group[g].is_set() or 
@@ -3325,6 +3449,7 @@ class UiQtApp(QtWidgets.QMainWindow):
             self._symbol_cache_by_ex.pop(name, None)
             self._force_status_update.discard(name)
             self._force_open_orders_update.discard(name)
+            self._leverage_fetched.discard(name)
         
         # 새로 추가할 카드
         to_add = visible_names - current_names
@@ -3419,6 +3544,7 @@ class UiQtApp(QtWidgets.QMainWindow):
                     card.transfer_execute.connect(self._on_transfer_execute)
                     card.detail_order_clicked.connect(self._on_detail_order)
                     card.close_position_clicked.connect(self._on_close_position)
+                    card.leverage_changed.connect(self._on_leverage_change)
 
                     self.cards[name] = card
                     '''
@@ -3538,6 +3664,8 @@ class UiQtApp(QtWidgets.QMainWindow):
             asyncio.get_event_loop().create_task(self._refresh_orderbook_for_symbol(n, s, "left"))
         if self._orderbook_panel_exchange_right == n:
             asyncio.get_event_loop().create_task(self._refresh_orderbook_for_symbol(n, s, "right"))
+        # 레버리지 정보 업데이트
+        asyncio.get_event_loop().create_task(self._update_leverage_info(n))
 
     async def _refresh_orderbook_for_symbol(self, ex_name: str, symbol: str, direction: str = "right"):
         """심볼 변경 시 오더북 갱신 (WS 재구독)"""
@@ -3639,6 +3767,9 @@ class UiQtApp(QtWidgets.QMainWindow):
                             self._refresh_orderbook_for_symbol(n, normalized, "right")
                         )
 
+        # 레버리지 정보 업데이트
+        asyncio.get_event_loop().create_task(self._update_leverage_info(n))
+
     def _on_long(self, n): self._set_side(n, "buy")
     def _on_short(self, n): self._set_side(n, "sell")
     def _on_off(self, n): self._set_side(n, None)
@@ -3682,6 +3813,74 @@ class UiQtApp(QtWidgets.QMainWindow):
     def _on_close_position(self, n: str):
         """개별 거래소 포지션 종료 핸들러"""
         asyncio.get_running_loop().create_task(self._do_close_position(n))
+
+    def _on_leverage_change(self, n: str, leverage, margin_mode):
+        """레버리지/마진모드 변경 핸들러"""
+        asyncio.get_running_loop().create_task(self._do_update_leverage(n, leverage, margin_mode))
+
+    async def _do_update_leverage(self, n: str, leverage, margin_mode):
+        """레버리지/마진모드 업데이트"""
+        try:
+            ex = self.mgr.get_exchange(n)
+            if not ex:
+                return
+
+            # 심볼 계산 (native_symbol로 변환)
+            is_hl_like = self.mgr.is_hl_like(n)
+            if is_hl_like:
+                sym = _compose_symbol(self.dex_by_ex.get(n, "HL"), self.symbol_by_ex.get(n, "BTC"), False)
+            else:
+                sym = self.symbol_by_ex.get(n, "BTC").upper()
+            quote = ex.get_perp_quote(sym)
+            native_symbol = self.service._to_native_symbol(n, sym, False, quote=quote)
+
+            if margin_mode:
+                self._log(f"[{n.upper()}] 마진 모드 변경: {margin_mode}")
+            if leverage:
+                self._log(f"[{n.upper()}] 레버리지 변경: {leverage}x")
+
+            result = await ex.update_leverage(native_symbol, leverage, margin_mode)
+
+            if result.get("status") == "ok":
+                if margin_mode:
+                    self._log(f"[{n.upper()}] 마진 모드 변경 완료: {margin_mode}")
+                if leverage:
+                    self._log(f"[{n.upper()}] 레버리지 변경 완료: {leverage}x")
+                # 레버리지 정보 다시 조회하여 UI 업데이트 (딜레이 후)
+                await asyncio.sleep(0.5)
+                await self._update_leverage_info(n)
+            else:
+                err = result.get("error", "unknown error")
+                self._log(f"[{n.upper()}] 레버리지 업데이트 실패: {err}")
+        except Exception as e:
+            self._log(f"[{n.upper()}] 레버리지 업데이트 오류: {e}")
+
+    async def _update_leverage_info(self, n: str):
+        """레버리지 정보 조회 및 카드 업데이트"""
+        try:
+            ex = self.mgr.get_exchange(n)
+            card = self.cards.get(n)
+            if not ex or not card:
+                return
+
+            is_spot = self.market_type_by_ex.get(n, "perp") == "spot"
+            if is_spot:
+                # Spot 모드에서는 레버리지 비활성화
+                card.set_leverage_info({"status": "not_implemented"})
+                return
+
+            is_hl_like = self.mgr.is_hl_like(n)
+            if is_hl_like:
+                sym = _compose_symbol(self.dex_by_ex.get(n, "HL"), self.symbol_by_ex.get(n, "BTC"), False)
+            else:
+                sym = self.symbol_by_ex.get(n, "BTC").upper()
+            quote = ex.get_perp_quote(sym)
+            native_symbol = self.service._to_native_symbol(n, sym, False, quote=quote)
+
+            info = await ex.get_leverage_info(native_symbol)
+            card.set_leverage_info(info)
+        except Exception as e:
+            logger.debug(f"[{n}] get_leverage_info error: {e}")
 
     async def _do_close_position(self, n: str):
         """개별 거래소 포지션 종료"""
@@ -4324,6 +4523,11 @@ class UiQtApp(QtWidgets.QMainWindow):
 
                     # force update 플래그 해제
                     self._force_status_update.discard(n)
+
+                    # 레버리지 정보 초기 조회 (첫 번째만)
+                    if n not in self._leverage_fetched and not is_spot:
+                        self._leverage_fetched.add(n)
+                        await self._update_leverage_info(n)
 
                 except RuntimeError:
                     return
