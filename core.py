@@ -432,7 +432,10 @@ class ExchangeManager:
                 
                 return SimpleNamespace(
                     evm_wallet_address=os.getenv(f"{u_name}_WALLET_ADDRESS"),
-                    session_cookies={"vr_token":os.getenv(f"{u_name}_JWT_TOKEN")},
+                    session_cookies={
+                        "vr_token": os.getenv(f"{u_name}_JWT_TOKEN"),
+                        "vr_ll_token": os.getenv(f"{u_name}_LL_TOKEN"),  # 7일짜리 refresh용 쿠키
+                    },
                     evm_private_key=os.getenv(f"{u_name}_PRIVATE_KEY"),
                     options=options
                 )
