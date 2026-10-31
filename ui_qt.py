@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 import re
+import signal
 import sys
 import time
 from dataclasses import dataclass
@@ -3571,7 +3572,7 @@ class UiQtApp(QtWidgets.QMainWindow):
                         card.set_has_transfer(False)
 
                     # 오더북 지원 여부 확인
-                    has_orderbook = ex and hasattr(ex, "get_orderbook")
+                    has_orderbook = bool(ex) and hasattr(ex, "get_orderbook")
                     card.set_has_orderbook(has_orderbook)
 
                     if name in self._symbol_cache_by_ex:
@@ -5118,8 +5119,36 @@ def run_qt_app(mgr):
         win.show()
         win.install_console_redirect()
     
-    loop.create_task(starter())
-    
+    starter_task = loop.create_task(starter())
+
+    # Ctrl+C 처리: 기본 SIGINT는 qasync 콜백(Qt 슬롯) 안에서 KeyboardInterrupt를 던지는데
+    # PySide6가 이를 출력만 하고 삼켜버림 → init 태스크만 죽고 WS 루프 등은 계속 돌아 종료 불가.
+    # 대신 루프에 graceful 종료를 예약. 두 번째 Ctrl+C는 강제 종료.
+    quit_state = {"requested": False}
+
+    async def _graceful_quit():
+        print("\n[Ctrl+C] 종료 중... (다시 누르면 강제 종료)", flush=True)
+        if not starter_task.done():
+            starter_task.cancel()
+            await asyncio.gather(starter_task, return_exceptions=True)
+        try:
+            await asyncio.wait_for(win.shutdown(), timeout=5.0)
+        except Exception as e:
+            logging.warning("[Ctrl+C] shutdown 미완료: %r", e)
+        loop.stop()
+
+    def _on_sigint(signum, frame):
+        if quit_state["requested"]:
+            os._exit(130)
+        quit_state["requested"] = True
+        loop.call_soon_threadsafe(lambda: loop.create_task(_graceful_quit()))
+
+    signal.signal(signal.SIGINT, _on_sigint)
+    # Qt 네이티브 루프가 idle이면 파이썬 시그널 핸들러가 실행되지 않으므로 주기적으로 깨움
+    sigint_timer = QtCore.QTimer()
+    sigint_timer.timeout.connect(lambda: None)
+    sigint_timer.start(200)
+
     with loop:
         loop.run_forever()
 
